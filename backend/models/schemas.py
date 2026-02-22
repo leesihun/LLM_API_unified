@@ -28,8 +28,11 @@ class TokenResponse(BaseModel):
 # Chat Schemas (OpenAI Compatible)
 # ============================================================================
 class ChatMessage(BaseModel):
-    role: Literal["system", "user", "assistant"]
-    content: str
+    role: Literal["system", "user", "assistant", "tool"]
+    content: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
 
 
 class ChatCompletionRequest(BaseModel):
@@ -39,7 +42,6 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = 0.7
     max_tokens: Optional[int] = None
     session_id: Optional[str] = None
-    agent_type: str = "chat"
 
 
 class ChatCompletionChoice(BaseModel):
@@ -54,12 +56,13 @@ class ChatCompletionResponse(BaseModel):
     created: int
     model: str
     choices: List[ChatCompletionChoice]
-    x_session_id: str  # Custom field for session tracking
+    x_session_id: str
 
 
 class ChatCompletionChunkDelta(BaseModel):
     role: Optional[str] = None
     content: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 
 class ChatCompletionChunkChoice(BaseModel):
@@ -75,6 +78,15 @@ class ChatCompletionChunk(BaseModel):
     model: str
     choices: List[ChatCompletionChunkChoice]
     x_session_id: Optional[str] = None
+
+
+class ToolStatusChunk(BaseModel):
+    """Streamed event for tool execution visibility."""
+    object: str = "tool.status"
+    tool_name: str
+    tool_call_id: str = ""
+    status: str  # "started" | "completed" | "failed"
+    duration: float = 0.0
 
 
 # ============================================================================

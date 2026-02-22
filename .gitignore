@@ -33,6 +33,11 @@ node_modules/
 
 # Model files (too large for GitHub)
 offline_models/
+*.gguf
+
+# llama.cpp binaries and downloaded models
+llamacpp/
+models/
 
 # Data directories
 data/

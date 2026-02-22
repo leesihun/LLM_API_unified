@@ -55,9 +55,8 @@ class OpenCodeExecutor(BasePythonExecutor):
 
     def execute(
         self,
-        code: str,
+        instruction: str,
         timeout: Optional[int] = None,
-        context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Execute natural language instruction using two-stage approach:
@@ -65,14 +64,12 @@ class OpenCodeExecutor(BasePythonExecutor):
         2. Python subprocess runs the generated code
 
         Args:
-            code: Natural language instruction
+            instruction: Natural language description of the task
             timeout: Execution timeout in seconds
-            context: Additional context (unused)
 
         Returns:
             Standardized execution result dictionary with combined outputs
         """
-        instruction = code
         exec_timeout = timeout or self.timeout
         start_time = time.time()
 
@@ -342,8 +339,8 @@ class OpenCodeExecutor(BasePythonExecutor):
                 f"{base_url}/session/{opencode_session_id}/message",
                 json={
                     "model": {
-                        "providerID": config.OPENCODE_PROVIDER,
-                        "modelID": config.OPENCODE_MODEL,
+                        "providerID": "llama.cpp",
+                        "modelID": config.LLAMACPP_MODEL,
                     },
                     "parts": [{"type": "text", "text": instruction}],
                 },
@@ -360,6 +357,8 @@ class OpenCodeExecutor(BasePythonExecutor):
 
             text = "\n".join(text_parts).strip()
             self._log_stage(f"HTTP response received ({len(text)} chars)")
+            for line in text.split('\n'):
+                log_to_prompts_file(f"  {line}")
 
             return {
                 "success": True,
@@ -441,7 +440,7 @@ class OpenCodeExecutor(BasePythonExecutor):
             "run",
             instruction,
             "--format", "default",
-            "--model", f"{config.OPENCODE_PROVIDER}/{config.OPENCODE_MODEL}",
+            "--model", f"llama.cpp/{config.LLAMACPP_MODEL}",
         ]
 
         # Continue existing session if available

@@ -1,6 +1,0 @@
-Continue from step {step_num}: {description}
-
-Previous steps completed:
-{previous_results}
-
-The step failed or returned an error. Create a new plan to handle this and continue toward the goal.

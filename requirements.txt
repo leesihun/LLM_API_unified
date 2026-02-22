@@ -63,7 +63,6 @@ langchain
 langchain-classic
 langchain-community
 langchain-core
-langchain-ollama
 langchain-text-splitters
 langgraph
 langgraph-checkpoint
@@ -89,7 +88,6 @@ nltk
 numexpr
 numpy
 oauthlib
-ollama
 onnxruntime
 openpyxl
 opentelemetry-api
@@ -157,6 +155,7 @@ six
 sniffio
 soupsieve
 SQLAlchemy
+sse-starlette
 starlette
 statsmodels
 sympy

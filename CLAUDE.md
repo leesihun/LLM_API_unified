@@ -4,26 +4,25 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is an **LLM API server** that provides OpenAI-compatible endpoints with support for multiple LLM backends (Ollama, llama.cpp). The system features a sophisticated agent-based architecture with tool calling capabilities, including web search, Python code execution, and RAG (Retrieval Augmented Generation).
+This is an **LLM API server** that provides OpenAI-compatible endpoints backed by **llama.cpp** with native tool calling. The system uses a single agent loop architecture where the LLM decides when to call tools using structured JSON (not free-text parsing).
 
-**Key Architecture Pattern**: Dual-server architecture to prevent deadlock:
-- **Main API Server** (port 10007): Handles chat, authentication, sessions
-- **Tools API Server** (port 10006): Handles tool execution (websearch, python_coder, rag)
-
-The separation is critical because agents running on the main server make HTTP calls to tools on the tools server. Running tools on the same server would cause deadlock.
+**Key Architecture**: Single server, single agent loop, native tool calling.
+- **One server** on port 10007 handles everything: chat, auth, sessions, tools
+- **One agent loop** (`backend/agent.py`) replaces the old 5-agent hierarchy
+- **Native tool calling** via llama.cpp's `/v1/chat/completions` with `tools` parameter
+- **In-process tool execution** — no HTTP calls between agent and tools
 
 ## Development Commands
 
-### Starting the Servers
+### Starting the Server
 
-**Start servers individually** (must start tools server first):
 ```bash
-# Terminal 1 - Tools API (must start first)
-python tools_server.py
-
-# Terminal 2 - Main API
 python run_backend.py
 ```
+
+Single server on port 10007. No separate tools server needed.
+
+**Important**: Your llama.cpp server must be started with `--jinja` flag for native tool calling to work.
 
 ### Dependencies
 
@@ -31,19 +30,12 @@ python run_backend.py
 pip install -r requirements.txt
 ```
 
-**Important**: The project uses both `bcrypt==4.0.1` and `passlib==1.7.4` for password hashing. Bcrypt has a 72-byte password limit (not 72 characters).
-
 ### Testing
 
-Tests are in `tests/` and require both servers running (for API tests) or can run direct tests standalone:
 ```bash
-# Direct RAG tool tests (no servers needed)
-python tests/test_rag.py
-
-# RAG upload performance tests
-python tests/test_rag_upload_performance.py
+python tests/test_rag.py                    # Direct RAG tool tests (no server needed)
+python tests/test_rag_upload_performance.py  # RAG upload performance tests
 ```
-Tests use `requests` against `http://localhost:10007`, not pytest. They create test users/collections and clean up after themselves.
 
 ### Utility Scripts
 
@@ -57,180 +49,161 @@ python clear_rag_data.py        # Clear RAG indices, documents, metadata
 ### Configuration
 
 All configuration is centralized in `config.py`. Key settings:
-- `LLM_BACKEND`: Choose "ollama", "llamacpp", or "auto"
-- `TOOLS_HOST`/`TOOLS_PORT`: Tools server location
-- `PYTHON_EXECUTOR_MODE`: "native" or "opencode" for code execution
-- `SERVER_WORKERS`/`TOOLS_SERVER_WORKERS`: Multi-worker uvicorn (default 4)
-- `PRELOAD_MODEL_ON_STARTUP`: Preload LLM model at server start
-- `PYTHON_CODER_SMART_EDIT`: LLM-based code merging with existing .py files
+- `LLAMACPP_HOST`: llama.cpp server URL (default: `http://localhost:5904`)
+- `LLAMACPP_MODEL`: Model name (default: `"default"`)
+- `AGENT_MAX_ITERATIONS`: Max tool-calling loop iterations (default: 8)
+- `AGENT_SYSTEM_PROMPT`: System prompt file in `prompts/` (default: `"system.txt"`)
+- `PYTHON_EXECUTOR_MODE`: `"native"` or `"opencode"` for code execution
 
-## High-Level Architecture
+## Architecture
 
-### 1. Agent System
+### Agent Loop (`backend/agent.py`)
 
-All agents inherit from `backend/agents/base_agent.py`:
+Single `AgentLoop` class with a while-loop following modern agent patterns (Anthropic, Claude Code, OpenAI):
 
-| Agent | Purpose | Prompts |
-|-------|---------|---------|
-| **ChatAgent** | Simple conversational (no tools) | `chat_system.txt` |
-| **ReActAgent** | Reasoning + Acting with tools | `react_*.txt` |
-| **PlanExecuteAgent** | Multi-step planning | `plan_*.txt` |
-| **UltraworkAgent** | Iterative refinement via OpenCode | `ultrawork_*.txt` |
-| **AutoAgent** | Auto-selects best agent | `auto_router.txt` |
-
-**Note**: When `PYTHON_EXECUTOR_MODE="opencode"`, the `plan_execute` agent is automatically replaced with `ultrawork`.
-
-**Agent Base Class** provides:
-- `call_tool()` - HTTP requests to tools API
-- `load_prompt()` - Load from `prompts/` directory
-- Conversation history formatting and file attachment handling
-
-### 2. Tool System
-
-Tools run as separate services on port 10006:
-
-| Tool | Location | Description |
-|------|----------|-------------|
-| **websearch** | `tools/web_search/tool.py` | Tavily API web search |
-| **python_coder** | `tools/python_coder/` | Code execution (native or opencode mode) |
-| **rag** | `tools/rag/` | FAISS-based document retrieval (basic or enhanced) |
-
-**RAG Tool Selection** (`tools/rag/__init__.py`): At import time, `EnhancedRAGTool` is auto-selected if any of `RAG_USE_HYBRID_SEARCH`, `RAG_USE_RERANKING`, or `RAG_CHUNKING_STRATEGY != "fixed"` are set. Otherwise `BaseRAGTool` is used. EnhancedRAGTool adds hybrid BM25+FAISS search with RRF fusion, cross-encoder reranking, semantic chunking, multi-query expansion, and context window retrieval.
-
-**Tool Call Flow**:
-1. Agent calls `self.call_tool(tool_name, parameters, context)`
-2. `base_agent.py` makes HTTP POST to `http://{TOOLS_HOST}:{TOOLS_PORT}/api/tools/{tool_name}`
-3. `backend/api/routes/tools.py` routes to appropriate tool
-4. Tool returns `{"success": bool, "answer": str, "data": dict, "metadata": dict}`
-
-### 3. ReAct Agent Flow
-
-Strict 2-step loop:
-
-**Step 1** - LLM generates:
 ```
-Thought: [reasoning]
-Action: [tool_name]
-Action Input: [string input]
+User Input → [cached system prompt + cached tool schemas + messages] → LLM
+         ↓
+    tool_calls in response?
+         ├── Yes → execute tool(s) in PARALLEL → microcompact old results → loop back to LLM
+         └── No  → return text response
 ```
 
-**Step 2** - After tool execution, LLM generates:
+The LLM receives tool schemas via the `tools` parameter and returns structured `tool_calls` with `function.name` and `function.arguments` as JSON. No regex parsing, no "Thought/Action/Action Input" format.
+
+**Key features**:
+- **Parallel tool execution**: multiple tool calls in one turn run via `asyncio.gather`
+- **Microcompaction**: large tool results saved to disk, old iteration results compressed to summaries
+- **Prompt caching**: system prompt and tool schemas cached at module load for llama.cpp KV reuse
+- **Tool status streaming**: `ToolStatusEvent` emitted during tool execution for client visibility
+
+**Key methods**:
+- `run()` — non-streaming, returns final text
+- `run_stream()` — streaming, yields `TextEvent`, `ToolStatusEvent`, and `ToolCallDeltaEvent`
+- `_execute_tools_parallel()` — runs multiple tools concurrently
+- `_compress_old_iterations()` — microcompaction of old tool results
+
+### LLM Backend (`backend/core/llm_backend.py`)
+
+Fully async `LlamaCppBackend` using `httpx.AsyncClient`:
+- `chat(messages, model, temperature, tools)` → `LLMResponse` (content + tool_calls)
+- `chat_stream(messages, model, temperature, tools)` → `AsyncIterator[StreamEvent]`
+- Wrapped by `LLMInterceptor` for logging to `data/logs/prompts.log`
+
+**Response types**: `LLMResponse`, `TextEvent`, `ToolCallDeltaEvent`, `ToolStatusEvent`, `ToolCall`, `ToolCallFunction`
+
+### Tool System
+
+Tools run **in-process** (no HTTP between agent and tools):
+
+| Tool | Implementation | Interface |
+|------|---------------|-----------|
+| **websearch** | `tools/web_search/tool.py` | `WebSearchTool().search(query, max_results)` |
+| **python_coder** | `tools/python_coder/` | `PythonCoderTool(session_id).execute(instruction, timeout)` |
+| **rag** | `tools/rag/` | `RAGTool(username).retrieve(collection_name, query, max_results)` |
+| **file_reader** | `tools/file_ops/reader.py` | `FileReaderTool(username, session_id).read(path, offset, limit)` |
+| **file_writer** | `tools/file_ops/writer.py` | `FileWriterTool(session_id).write(path, content, mode)` |
+| **file_navigator** | `tools/file_ops/navigator.py` | `FileNavigatorTool(username, session_id).navigate(operation, path, pattern)` |
+| **shell_exec** | `tools/shell/tool.py` | `ShellExecTool(session_id).execute(command, timeout, working_directory)` |
+| **memory** | `tools/memory/tool.py` | `MemoryTool(username).execute(operation, key, value)` |
+
+Tool schemas are defined in `tools_config.py`. Schemas are cached at module load time in `agent.py` for llama.cpp KV cache stability, automatically excluding `session_id` (injected by the agent).
+
+**RAG Tool Selection** (`tools/rag/__init__.py`): `EnhancedRAGTool` is auto-selected if `RAG_USE_HYBRID_SEARCH`, `RAG_USE_RERANKING`, or `RAG_CHUNKING_STRATEGY != "fixed"` are set.
+
+### Native Tool Calling Wire Format
+
+**Request** to llama.cpp:
+```json
+{
+  "messages": [...],
+  "tools": [{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}],
+  "temperature": 0.7,
+  "stream": false
+}
 ```
-final_answer: true/false
-Observation: [analysis of tool result]
+
+**Response** with tool call:
+```json
+{
+  "choices": [{"message": {"role": "assistant", "content": null, "tool_calls": [{"function": {"name": "websearch", "arguments": "{\"query\": \"...\"}"}}]}, "finish_reason": "tool"}]
+}
 ```
 
-Loop continues until `final_answer: true`. Parsing uses regex in `_parse_action()` and `_step2_generate_observation()`.
+**Tool result** sent back:
+```json
+{"role": "tool", "name": "websearch", "content": "{...}", "tool_call_id": "call_0"}
+```
 
-### 4. LLM Backend Abstraction
+### Streaming
 
-`backend/core/llm_backend.py` provides unified interface:
-- **Auto-fallback**: Tries Ollama first, falls back to llama.cpp
-- **SSL handling**: Three-tier fallback: corporate cert (`C:/DigitalCity.crt`) → default SSL → disabled SSL (with warning)
-- All LLM calls logged via `llm_interceptor.py` to `data/logs/prompts.log`
+Both `stream=true` and `stream=false` go through the `AgentLoop`. Streaming yields `TextEvent` tokens in real-time. `ToolStatusEvent` is emitted when tools start/complete/fail. When tool calls appear in the stream, they're buffered, executed in parallel, and a new streaming LLM call resumes.
 
-### 5. Streaming vs Agent Mode
-
-**Streaming** (`stream=true` in `/v1/chat/completions`) bypasses the entire agent system and calls `llm_backend.chat_stream()` directly. This means streaming mode has **no tool calling** — no websearch, python_coder, or RAG. Only non-streaming mode uses agents with tool capabilities.
-
-### 6. File Attachments
-
-Files attached to messages get **automatic** rich metadata extraction (no tool call needed):
-- **JSON**: Structure, keys, sample data
-- **CSV/Excel**: Headers, row count, sample rows
-- **Python**: Imports, function/class definitions
-
-Handled by `extract_file_metadata()` in `backend/utils/file_handler.py`, formatted via `format_attached_files()` in `base_agent.py`.
-
-### 7. Database & Storage
-
-**SQLite** (`data/app.db`):
-- `users`: Authentication with bcrypt hashed passwords
-- `sessions`: Lightweight metadata only (no conversation data)
-
-**Conversations**: Stored as JSON in `data/sessions/{session_id}.json` for easy debugging. Uses `filelock.FileLock` for concurrent read/write safety.
-
-**File Storage**:
-- User uploads: `data/uploads/{username}/`
-- Session scratch: `data/scratch/{session_id}/`
-- RAG: `data/rag_documents/`, `data/rag_indices/`, `data/rag_metadata/`
-
-### 8. API Routes
+### API Routes
 
 | File | Endpoints |
 |------|-----------|
 | `auth.py` | `/api/auth/signup`, `/api/auth/login`, `/api/auth/me` |
-| `chat.py` | `/v1/chat/completions` (OpenAI-compatible) |
+| `chat.py` | `/v1/chat/completions` (OpenAI-compatible, streaming + tools) |
 | `sessions.py` | `/api/chat/sessions`, `/api/chat/history` |
 | `models.py` | `/v1/models` (OpenAI-compatible) |
 | `admin.py` | `/api/admin/*` (user management) |
-| `tools.py` | `/api/tools/*` (tool execution) |
+| `tools.py` | `/api/tools/*` (direct tool access + RAG management) |
+
+### Database & Storage
+
+- **SQLite** (`data/app.db`): users, sessions
+- **Conversations**: JSON in `data/sessions/{session_id}.json` (with `FileLock`)
+- **Uploads**: `data/uploads/{username}/`
+- **Scratch**: `data/scratch/{session_id}/`
+- **RAG**: `data/rag_documents/`, `data/rag_indices/`, `data/rag_metadata/`
+- **Tool Results**: `data/tool_results/{session_id}/` (microcompaction disk storage)
+- **Memory**: `data/memory/{username}.json` (persistent per-user key-value store)
 
 ## Adding New Tools
 
-1. **Create implementation** in `tools/{tool_name}/tool.py`
-   - Return: `{"success": bool, "answer": str, "data": dict, "metadata": dict}`
-
-2. **Add schema** to `tools_config.py` `TOOL_SCHEMAS` dict
-
-3. **Add API endpoint** in `backend/api/routes/tools.py`
-
-4. **Add parameter parsing** in `backend/agents/react_agent.py` `_convert_string_to_params()`
-
-5. **Update config** in `config.py`:
-   - Add to `AVAILABLE_TOOLS`
-   - Add to `TOOL_MODELS` and `TOOL_PARAMETERS`
-
-## Key Configuration Reference
-
-| Category | Variables |
-|----------|-----------|
-| Agent behavior | `REACT_MAX_ITERATIONS`, `REACT_RETRY_ON_ERROR`, `PLAN_*`, `ULTRAWORK_*` |
-| Tool settings | `TOOL_MODELS`, `TOOL_PARAMETERS`, `DEFAULT_TOOL_TIMEOUT` |
-| Code execution | `PYTHON_EXECUTOR_MODE`, `OPENCODE_*` |
-| Web search | `TAVILY_API_KEY`, `TAVILY_SEARCH_DEPTH` |
-| RAG | `RAG_EMBEDDING_MODEL`, `RAG_CHUNK_SIZE`, `RAG_INDEX_TYPE` |
-| LLM | `LLM_BACKEND`, `OLLAMA_MODEL`, `DEFAULT_TEMPERATURE` |
-
-## Common Gotchas
-
-1. **Always start tools server before main server** - Main server will fail health checks otherwise
-2. **Password byte length != character length** - Bcrypt limit is 72 BYTES (emoji/CJK use multiple bytes)
-3. **Session IDs must be unique** - Used for workspace isolation in python_coder
-4. **Tool timeouts** - Default is 10 days (864000s) for long-running operations
-5. **Conversation history** - Limited by `MAX_CONVERSATION_HISTORY` (default 50)
-6. **Windows UTF-8** - Both servers set explicit UTF-8 encoding for console emoji support
-7. **Streaming loses tools** - `stream=true` bypasses agents entirely; only direct LLM chat
-8. **RAG score semantics** - FAISS `IndexFlatIP` returns cosine similarity (0-1, higher=better), NOT L2 distance. Use `dist` directly as score. Hybrid RRF scores must be normalized to 0-1 range before threshold filtering
-9. **AutoAgent eager init** - All agent types are instantiated in `__init__`, not lazily
-10. **Multi-worker string import** - uvicorn uses `"tools_server:app"` string format (not app object) when `workers > 1`
-11. **`data/` is gitignored** - The entire `data/` directory (DB, sessions, uploads, RAG indices, logs) is excluded from version control
+1. **Create implementation** in `tools/{tool_name}/tool.py` — return `{"success": bool, ...}`
+2. **Add schema** to `TOOL_SCHEMAS` in `tools_config.py`
+3. **Add dispatch** in `backend/agent.py` `_dispatch_tool()` method
+4. **Add to** `config.AVAILABLE_TOOLS`
+5. **Add budget** to `config.TOOL_RESULT_BUDGET` (chars limit for microcompaction)
+6. **Call** `reload_prompt_cache()` if schemas change at runtime
 
 ## File Organization
 
 ```
 backend/
-  agents/          - Agent implementations (base, chat, react, plan_execute, ultrawork, auto)
-  api/routes/      - FastAPI route handlers
-  core/            - Core services (llm_backend, database)
-  models/          - Pydantic schemas
-  utils/           - Utilities (auth, file_handler, conversation_store)
+  agent.py            - Unified agent loop (parallel exec, microcompaction, caching)
+  api/routes/         - FastAPI route handlers
+  core/               - LLM backend, database, interceptor
+  models/             - Pydantic schemas
+  utils/              - Auth, file handling, conversation store, stop signal
 tools/
-  web_search/      - Tavily integration
-  python_coder/    - Code execution (native_tool, opencode_tool)
-  rag/             - FAISS document retrieval
+  web_search/         - Tavily integration
+  python_coder/       - Code execution (native or opencode)
+  rag/                - FAISS document retrieval
+  file_ops/           - File reader, writer, navigator
+  shell/              - Shell command execution
+  memory/             - Persistent key-value store
 prompts/
-  agents/          - Agent system prompts
-  tools/           - Tool-specific prompts
-data/
-  sessions/        - Conversation JSON files
-  uploads/         - User persistent uploads
-  scratch/         - Session temporary files
-  rag_*/           - RAG storage
-  logs/            - LLM interaction logs
+  system.txt          - Structured ACI agent prompt (all 8 tools)
+  tools/              - Tool-specific prompts (rag_synthesize, rag_query)
+data/                 - Runtime data (gitignored)
+  tool_results/       - Microcompaction disk storage
+  memory/             - Per-user persistent memory
 ```
+
+## Common Gotchas
+
+1. **llama.cpp needs `--jinja`** — native tool calling requires jinja template support
+2. **Password byte length != character length** — bcrypt limit is 72 BYTES
+3. **Session IDs must be unique** — used for workspace isolation in python_coder
+4. **Tool timeouts** — default is 10 days (864000s) for long-running operations
+5. **Windows UTF-8** — server sets explicit UTF-8 encoding for console
+6. **RAG score semantics** — FAISS `IndexFlatIP` returns cosine similarity (0-1, higher=better)
+7. **`data/` is gitignored** — entire data directory excluded from version control
+8. **tool_call id may be absent** — llama.cpp may not return `id` on tool_calls; agent generates one if missing
 
 ## Default Credentials
 
 - **Admin**: `admin` / `administrator` (change in production via `config.py`)
-- See `use_cases/USER_MANAGEMENT.md` for user management API reference

@@ -1,6 +1,7 @@
 """
 Tools API endpoints
-Provides API access to web search, Python execution, and RAG tools
+HTTP endpoints for external access to tools (RAG management, file listing, etc.)
+Agent loop calls tools in-process; these endpoints are for direct API use.
 """
 import time
 from pathlib import Path
@@ -23,105 +24,34 @@ router = APIRouter(prefix="/api/tools", tags=["tools"])
 # Request/Response Schemas
 # ============================================================================
 
-class ToolContext(BaseModel):
-    """Context information passed to tools"""
-    chat_history: Optional[List[Dict[str, str]]] = None
-    react_scratchpad: Optional[str] = None
-    current_thought: Optional[str] = None
-    current_action: Optional[str] = None
-    user_query: Optional[str] = None
-    plan: Optional[Dict[str, Any]] = None
-    plan_history: Optional[List[Dict[str, Any]]] = None
-    session_id: Optional[str] = None
-    username: Optional[str] = None
-
-
 class ToolResponse(BaseModel):
-    """Standard tool response format"""
     success: bool
-    answer: str  # Human-readable answer for agent observation
-    data: Dict[str, Any]  # Structured data
-    metadata: Dict[str, Any]  # Execution metadata
+    answer: str
+    data: Dict[str, Any]
+    metadata: Dict[str, Any]
     error: Optional[str] = None
 
 
 class WebSearchRequest(BaseModel):
-    """Web search request"""
     query: str
     max_results: Optional[int] = None
-    context: Optional[ToolContext] = None
 
 
 class PythonCoderRequest(BaseModel):
-    """Python code execution request"""
-    code: str
+    instruction: str
     session_id: str
     timeout: Optional[int] = None
-    context: Optional[ToolContext] = None
 
 
 class RAGQueryRequest(BaseModel):
-    """RAG retrieval request"""
     query: str
     collection_name: str
     max_results: Optional[int] = None
-    context: Optional[ToolContext] = None
+    username: Optional[str] = None
 
 
 class RAGCollectionRequest(BaseModel):
-    """RAG collection management"""
     collection_name: str
-
-
-class RAGUploadRequest(BaseModel):
-    """RAG document upload request"""
-    collection_name: str
-
-
-# ============================================================================
-# Helper Functions
-# ============================================================================
-
-def load_prompt(prompt_name: str, **kwargs) -> str:
-    """Load and format prompt template"""
-    prompt_path = config.PROMPTS_DIR / "tools" / prompt_name
-
-    if not prompt_path.exists():
-        raise FileNotFoundError(f"Prompt not found: {prompt_path}")
-
-    with open(prompt_path, 'r', encoding='utf-8') as f:
-        template = f.read()
-
-    return template.format(**kwargs)
-
-
-def format_context(context: Optional[ToolContext]) -> str:
-    """Format context for LLM prompts"""
-    if not context:
-        return "No additional context provided."
-
-    parts = []
-
-    if context.user_query:
-        parts.append(f"User Query: {context.user_query}")
-
-    if context.chat_history:
-        history_str = "\n".join([
-            f"{msg['role']}: {msg['content']}"
-            for msg in context.chat_history[-5:]  # Last 5 messages
-        ])
-        parts.append(f"Recent Chat History:\n{history_str}")
-
-    if context.current_thought:
-        parts.append(f"Current Thought: {context.current_thought}")
-
-    if context.react_scratchpad:
-        parts.append(f"ReAct History:\n{context.react_scratchpad[-500:]}")  # Last 500 chars
-
-    if context.plan:
-        parts.append(f"Current Plan: {context.plan}")
-
-    return "\n\n".join(parts) if parts else "No context provided."
 
 
 # ============================================================================
@@ -130,737 +60,255 @@ def format_context(context: Optional[ToolContext]) -> str:
 
 @router.get("/list")
 def list_tools(current_user: Optional[dict] = Depends(get_optional_user)):
-    """
-    List all available tools
-
-    Returns:
-        List of tool metadata
-    """
-    tools = [
-        {
-            "name": "websearch",
-            "description": "Search the web for current information",
-            "enabled": True
-        },
-        {
-            "name": "python_coder",
-            "description": "Execute Python code in sandboxed environment",
-            "enabled": True
-        },
-        {
-            "name": "rag",
-            "description": "Retrieve information from document collections",
-            "enabled": True
-        }
-    ]
-
-    return {"tools": tools}
+    return {
+        "tools": [
+            {"name": "websearch", "description": "Search the web for current information", "enabled": True},
+            {"name": "python_coder", "description": "Execute coding tasks from natural language instructions", "enabled": True},
+            {"name": "rag", "description": "Retrieve information from document collections", "enabled": True},
+        ]
+    }
 
 
 @router.post("/websearch", response_model=ToolResponse)
-async def websearch(
-    request: WebSearchRequest,
-    current_user: Optional[dict] = Depends(get_optional_user)
-):
-    """
-    Pure web search - no LLM processing
-    Returns raw Tavily results for agent to interpret
-
-    Args:
-        request: Search request with query
-        current_user: Authenticated user (optional)
-
-    Returns:
-        Raw search results in data field, no answer field
-    """
-    print("\n" + "=" * 80)
-    print("[TOOLS API] /api/tools/websearch endpoint called")
-    print("=" * 80)
-    print(f"User: {current_user['username'] if current_user else 'guest'}")
-    print(f"Query: {request.query}")
-    print(f"Max results: {request.max_results or 'default'}")
-
+async def websearch(request: WebSearchRequest, current_user: Optional[dict] = Depends(get_optional_user)):
+    """Pure web search — returns raw Tavily results."""
     start_time = time.time()
-
     try:
-        # Perform search using tool (no LLM calls)
         tool = WebSearchTool()
-        search_result = tool.search(
-            query=request.query,
-            max_results=request.max_results
-        )
+        search_result = tool.search(query=request.query, max_results=request.max_results)
 
         if not search_result["success"]:
             return ToolResponse(
-                success=False,
-                answer="",
-                data={},
+                success=False, answer="", data={},
                 metadata={"execution_time": time.time() - start_time},
-                error=search_result.get("error", "Unknown error")
+                error=search_result.get("error", "Unknown error"),
             )
 
-        execution_time = time.time() - start_time
-
-        # Return raw results without any LLM processing
         return ToolResponse(
-            success=True,
-            answer="",  # No answer - agent will interpret raw data
-            data={
-                "query": request.query,
-                "results": search_result["results"],
-                "num_results": search_result["num_results"]
-            },
-            metadata={
-                "execution_time": execution_time
-            }
+            success=True, answer="",
+            data={"query": request.query, "results": search_result["results"], "num_results": search_result["num_results"]},
+            metadata={"execution_time": time.time() - start_time},
         )
-
     except Exception as e:
         return ToolResponse(
-            success=False,
-            answer="",
-            data={},
-            metadata={"execution_time": time.time() - start_time},
-            error=str(e)
+            success=False, answer="", data={},
+            metadata={"execution_time": time.time() - start_time}, error=str(e),
         )
 
 
 @router.post("/python_coder", response_model=ToolResponse)
-async def python_coder(
-    request: PythonCoderRequest,
-    current_user: Optional[dict] = Depends(get_optional_user)
-):
-    """
-    Execute Python code in sandboxed environment
-    
-    NEVER raises HTTP exceptions - always returns ToolResponse with error details
-    Even on failure, stdout/stderr are included in the response
-
-    Args:
-        request: Code execution request
-        current_user: Authenticated user (optional)
-
-    Returns:
-        Execution results with stdout/stderr always included
-    """
-    print("\n" + "=" * 80)
-    print("[TOOLS API] /api/tools/python_coder endpoint called")
-    print("=" * 80)
-    print(f"User: {current_user['username'] if current_user else 'guest'}")
-    print(f"Session ID: {request.session_id}")
-    print(f"Code length: {len(request.code)} chars")
-    print(f"Timeout: {request.timeout or 'default'}s")
-    print(f"Context provided: {bool(request.context)}")
-    
+async def python_coder(request: PythonCoderRequest, current_user: Optional[dict] = Depends(get_optional_user)):
+    """Execute a coding task from natural language instruction."""
     start_time = time.time()
     tool = None
-    result = None
 
     try:
-        # Initialize tool with session ID (factory automatically selects backend)
-        print(f"\n[TOOLS API] Initializing PythonCoderTool...")
-        print(f"[TOOLS API] Mode: {config.PYTHON_EXECUTOR_MODE}")
         tool = PythonCoderTool(session_id=request.session_id)
-        print(f"[TOOLS API] [OK] Tool initialized ({type(tool).__name__})")
-
     except Exception as e:
-        # Tool initialization failed - return immediately
-        error_msg = f"Failed to initialize Python executor: {str(e)}"
-        print(f"[TOOLS API] ERROR: {error_msg}")
-        execution_time = time.time() - start_time
-        
         return ToolResponse(
-            success=False,
-            answer=f"Tool initialization error: {str(e)}",
-            data={
-                "stdout": "",
-                "stderr": error_msg,
-                "files": {},
-                "workspace": "",
-                "returncode": -1
-            },
-            metadata={"execution_time": execution_time},
-            error=str(e)
+            success=False, answer=f"Tool initialization error: {e}",
+            data={"stdout": "", "stderr": str(e), "files": {}, "workspace": "", "returncode": -1},
+            metadata={"execution_time": time.time() - start_time}, error=str(e),
         )
 
     try:
-        # Execute code - this should handle all execution errors internally
-        print(f"\n[TOOLS API] Calling tool.execute()...")
-        result = tool.execute(
-            code=request.code,
-            timeout=request.timeout,
-            context=request.context.dict() if request.context else None
-        )
-        print(f"[TOOLS API] [OK] Execution completed: {'SUCCESS' if result['success'] else 'FAILED'}")
+        result = tool.execute(instruction=request.instruction, timeout=request.timeout)
 
-        # Format human-readable answer
         if result["success"]:
-            # Success - show output and files
             answer = "Code executed successfully."
             if result['stdout']:
                 answer += f"\n\nOutput:\n{result['stdout']}"
-            else:
-                answer += "\n\n(No output)"
-                
-            if result['files']:
-                file_list = ", ".join(result['files'].keys())
-                answer += f"\n\nFiles in workspace: {file_list}"
+            if result.get('files'):
+                answer += f"\n\nFiles in workspace: {', '.join(result['files'].keys())}"
         else:
-            # Failure - show both stdout and stderr
             answer = "Code execution failed."
-            
             if result['stdout']:
                 answer += f"\n\nOutput (before error):\n{result['stdout']}"
-                
             if result['stderr']:
                 answer += f"\n\nError:\n{result['stderr']}"
-            else:
-                answer += "\n\n(No error message)"
-
-        execution_time = time.time() - start_time
 
         return ToolResponse(
-            success=result["success"],
-            answer=answer,
+            success=result["success"], answer=answer,
             data={
-                "stdout": result["stdout"],
-                "stderr": result["stderr"],
-                "files": result["files"],
-                "workspace": result["workspace"],
-                "returncode": result["returncode"]
+                "stdout": result["stdout"], "stderr": result["stderr"],
+                "files": result["files"], "workspace": result["workspace"],
+                "returncode": result["returncode"],
             },
-            metadata={
-                "execution_time": execution_time,
-                "code_execution_time": result["execution_time"]
-            },
-            error=result.get("error")
+            metadata={"execution_time": time.time() - start_time, "code_execution_time": result["execution_time"]},
+            error=result.get("error"),
         )
-
     except Exception as e:
-        # Unexpected error during execution or response formatting
-        # This should rarely happen since tool.execute() handles its own errors
-        error_msg = f"Unexpected error in Python executor: {str(e)}"
-        print(f"[TOOLS API] CRITICAL ERROR: {error_msg}")
-        execution_time = time.time() - start_time
-        
-        # Try to extract any partial results from the tool if available
-        stdout = ""
-        stderr = error_msg
-        files = {}
-        workspace = str(tool.workspace) if tool else ""
-        
-        # If we got a partial result before the error, include it
-        if result and isinstance(result, dict):
-            stdout = result.get("stdout", "")
-            stderr = result.get("stderr", "") + f"\n\nAdditional error: {error_msg}"
-            files = result.get("files", {})
-            workspace = result.get("workspace", workspace)
-        
         return ToolResponse(
-            success=False,
-            answer=f"Unexpected execution error: {str(e)}",
-            data={
-                "stdout": stdout,
-                "stderr": stderr,
-                "files": files,
-                "workspace": workspace,
-                "returncode": -1
-            },
-            metadata={"execution_time": execution_time},
-            error=str(e)
+            success=False, answer=f"Unexpected execution error: {e}",
+            data={"stdout": "", "stderr": str(e), "files": {}, "workspace": str(tool.workspace) if tool else "", "returncode": -1},
+            metadata={"execution_time": time.time() - start_time}, error=str(e),
         )
 
 
 @router.get("/python_coder/files/{session_id}")
-async def list_python_files(
-    session_id: str,
-    current_user: Optional[dict] = Depends(get_optional_user)
-):
-    """
-    List files in Python coder workspace
-    
-    Returns success response even on errors (no HTTP exceptions)
-    """
+async def list_python_files(session_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
     try:
         tool = PythonCoderTool(session_id=session_id)
         files = tool.list_files()
         return {"success": True, "files": files, "error": None}
     except Exception as e:
-        print(f"[TOOLS API] ERROR listing Python files: {str(e)}")
         return {"success": False, "files": [], "error": str(e)}
 
 
 @router.get("/python_coder/files/{session_id}/{filename}")
-async def read_python_file(
-    session_id: str,
-    filename: str,
-    current_user: Optional[dict] = Depends(get_optional_user)
-):
-    """
-    Read a file from Python coder workspace
-    
-    Returns success response even on errors (no HTTP exceptions)
-    """
+async def read_python_file(session_id: str, filename: str, current_user: Optional[dict] = Depends(get_optional_user)):
     try:
         tool = PythonCoderTool(session_id=session_id)
         content = tool.read_file(filename)
-
         if content is None:
-            return {
-                "success": False,
-                "filename": filename,
-                "content": "",
-                "error": f"File '{filename}' not found in workspace"
-            }
-
-        return {
-            "success": True,
-            "filename": filename,
-            "content": content,
-            "error": None
-        }
+            return {"success": False, "filename": filename, "content": "", "error": f"File '{filename}' not found"}
+        return {"success": True, "filename": filename, "content": content, "error": None}
     except Exception as e:
-        print(f"[TOOLS API] ERROR reading Python file '{filename}': {str(e)}")
-        return {
-            "success": False,
-            "filename": filename,
-            "content": "",
-            "error": str(e)
-        }
+        return {"success": False, "filename": filename, "content": "", "error": str(e)}
 
+
+# ============================================================================
+# RAG Management Endpoints
+# ============================================================================
 
 @router.post("/rag/collections", response_model=ToolResponse)
-async def create_rag_collection(
-    request: RAGCollectionRequest,
-    current_user: dict = Depends(get_current_user)
-):
-    """Create a new RAG collection (requires authentication)"""
+async def create_rag_collection(request: RAGCollectionRequest, current_user: dict = Depends(get_current_user)):
     username = current_user["username"]
-
     try:
         tool = RAGTool(username=username)
         result = tool.create_collection(request.collection_name)
-
-        if result["success"]:
-            answer = f"Collection '{request.collection_name}' created successfully."
-        else:
-            answer = f"Failed to create collection: {result.get('error', 'Unknown error')}"
-
-        return ToolResponse(
-            success=result["success"],
-            answer=answer,
-            data=result,
-            metadata={}
-        )
+        answer = f"Collection '{request.collection_name}' created." if result["success"] else f"Failed: {result.get('error', 'Unknown')}"
+        return ToolResponse(success=result["success"], answer=answer, data=result, metadata={})
     except Exception as e:
-        return ToolResponse(
-            success=False,
-            answer=f"Error creating collection: {str(e)}",
-            data={},
-            metadata={},
-            error=str(e)
-        )
+        return ToolResponse(success=False, answer=str(e), data={}, metadata={}, error=str(e))
 
 
 @router.get("/rag/collections")
-async def list_rag_collections(
-    current_user: dict = Depends(get_current_user)
-):
-    """List all RAG collections for user (requires authentication)"""
-    username = current_user["username"]
-
-    try:
-        tool = RAGTool(username=username)
-        result = tool.list_collections()
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def list_rag_collections(current_user: dict = Depends(get_current_user)):
+    tool = RAGTool(username=current_user["username"])
+    return tool.list_collections()
 
 
 @router.delete("/rag/collections/{collection_name}")
-async def delete_rag_collection(
-    collection_name: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Delete a RAG collection (requires authentication)"""
-    username = current_user["username"]
-
-    try:
-        tool = RAGTool(username=username)
-        result = tool.delete_collection(collection_name)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def delete_rag_collection(collection_name: str, current_user: dict = Depends(get_current_user)):
+    tool = RAGTool(username=current_user["username"])
+    return tool.delete_collection(collection_name)
 
 
 @router.post("/rag/upload")
 async def upload_to_rag(
     collection_name: str = Form(...),
     file: UploadFile = File(...),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
 ):
-    """Upload document to RAG collection (requires authentication)
-
-    Supports text files (txt, md, json, csv) and binary files (pdf, docx).
-    Binary files are saved to temp location for processing.
-    """
+    """Upload document to RAG collection."""
     import tempfile
     import os
 
     username = current_user["username"]
 
-    print(f"\n[RAG UPLOAD] Uploading file: {file.filename}")
-    print(f"[RAG UPLOAD] Collection: {collection_name}")
-    print(f"[RAG UPLOAD] User: {username}")
-
     try:
         tool = RAGTool(username=username)
-
-        # Read file content
         content = await file.read()
-
-        # Get file extension
         file_ext = Path(file.filename).suffix.lower()
 
-        # Binary formats that need file-based processing
         binary_formats = ['.pdf', '.docx']
-
         if file_ext in binary_formats:
-            # Save to temp file for binary processing
-            print(f"[RAG UPLOAD] Binary format detected ({file_ext}), saving to temp file")
-
-            # Create temp file with proper extension
-            with tempfile.NamedTemporaryFile(
-                mode='wb',
-                suffix=file_ext,
-                delete=False
-            ) as tmp_file:
+            with tempfile.NamedTemporaryFile(mode='wb', suffix=file_ext, delete=False) as tmp_file:
                 tmp_file.write(content)
                 tmp_path = tmp_file.name
-
-            print(f"[RAG UPLOAD] Temp file created: {tmp_path}")
-
             try:
-                # Upload from file path (RAGTool will read the binary file)
                 result = tool.upload_document(
-                    collection_name=collection_name,
-                    document_path=tmp_path,
-                    document_content=None,  # Let tool read from file
-                    document_name=file.filename  # Use original filename
+                    collection_name=collection_name, document_path=tmp_path,
+                    document_content=None, document_name=file.filename,
                 )
             finally:
-                # Clean up temp file
                 try:
                     os.unlink(tmp_path)
-                    print(f"[RAG UPLOAD] Temp file cleaned up")
-                except Exception as cleanup_error:
-                    print(f"[RAG UPLOAD] Warning: Failed to clean up temp file: {cleanup_error}")
+                except Exception:
+                    pass
         else:
-            # Text-based formats can be passed directly
-            print(f"[RAG UPLOAD] Text format detected ({file_ext}), decoding as UTF-8")
             try:
                 content_str = content.decode('utf-8')
             except UnicodeDecodeError:
-                # Try with latin-1 as fallback
                 content_str = content.decode('latin-1')
-
-            # Upload with content string
             result = tool.upload_document(
-                collection_name=collection_name,
-                document_path=file.filename,
-                document_content=content_str
+                collection_name=collection_name, document_path=file.filename,
+                document_content=content_str,
             )
 
-        print(f"[RAG UPLOAD] Upload result: {result}")
         return result
     except Exception as e:
-        print(f"[RAG UPLOAD] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/rag/collections/{collection_name}/documents")
-async def list_rag_documents(
-    collection_name: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """List all documents in a RAG collection (requires authentication)"""
-    username = current_user["username"]
-
-    try:
-        tool = RAGTool(username=username)
-        result = tool.list_documents(collection_name)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+async def list_rag_documents(collection_name: str, current_user: dict = Depends(get_current_user)):
+    tool = RAGTool(username=current_user["username"])
+    return tool.list_documents(collection_name)
 
 
 @router.delete("/rag/collections/{collection_name}/documents/{document_id}")
-async def delete_rag_document(
-    collection_name: str,
-    document_id: str,
-    current_user: dict = Depends(get_current_user)
-):
-    """Delete a specific document from a RAG collection (requires authentication)"""
-    username = current_user["username"]
-
-    try:
-        tool = RAGTool(username=username)
-        result = tool.delete_document(collection_name, document_id)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-def _deduplicate_results(results: List[Dict[str, Any]], overlap_threshold: float = 0.5) -> List[Dict[str, Any]]:
-    """
-    Remove near-duplicate results caused by overlapping context windows.
-    Two results are considered duplicates if their text overlap exceeds the threshold.
-    Keeps the higher-scored result.
-    """
-    if len(results) <= 1:
-        return results
-
-    deduplicated = [results[0]]
-    for candidate in results[1:]:
-        candidate_words = set(candidate["chunk"].split())
-        is_duplicate = False
-
-        for existing in deduplicated:
-            existing_words = set(existing["chunk"].split())
-            if not candidate_words or not existing_words:
-                continue
-            overlap = len(candidate_words & existing_words) / min(len(candidate_words), len(existing_words))
-            if overlap > overlap_threshold:
-                is_duplicate = True
-                break
-
-        if not is_duplicate:
-            deduplicated.append(candidate)
-
-    return deduplicated
-
-
-def _reorder_lost_in_middle(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Reorder results to mitigate the 'lost in the middle' problem.
-    Places the most relevant documents at the START and END of the list,
-    with lower-relevance ones in the middle. This matches how LLMs attend
-    to context -- boundaries get more attention than the middle.
-    """
-    if len(results) <= 2:
-        return results
-
-    # Results should already be sorted by score descending
-    reordered = []
-    for i, doc in enumerate(results):
-        if i % 2 == 0:
-            reordered.insert(0, doc)  # Even ranks -> front (most relevant first)
-        else:
-            reordered.append(doc)     # Odd ranks -> back
-
-    return reordered
-
-
-def _merge_multi_query_results(
-    all_results: List[List[Dict[str, Any]]],
-    max_results: int
-) -> List[Dict[str, Any]]:
-    """
-    Merge results from multiple query variants using Reciprocal Rank Fusion.
-    Each result list is treated as a ranked list; RRF produces a unified ranking.
-    """
-    RRF_K = 60
-    rrf_scores: Dict[str, float] = {}
-    result_map: Dict[str, Dict[str, Any]] = {}
-
-    for query_results in all_results:
-        for rank, doc in enumerate(query_results):
-            # Use chunk text hash as dedup key
-            key = f"{doc['document']}::{doc['chunk_index']}"
-            rrf_scores[key] = rrf_scores.get(key, 0.0) + 1.0 / (RRF_K + rank + 1)
-            # Keep the version with the highest individual score
-            if key not in result_map or doc.get("score", 0) > result_map[key].get("score", 0):
-                result_map[key] = doc
-
-    # Sort by RRF score and take top results
-    sorted_keys = sorted(rrf_scores.keys(), key=lambda k: rrf_scores[k], reverse=True)[:max_results]
-    merged = []
-    for key in sorted_keys:
-        doc = result_map[key]
-        doc["rrf_score"] = rrf_scores[key]
-        merged.append(doc)
-
-    return merged
+async def delete_rag_document(collection_name: str, document_id: str, current_user: dict = Depends(get_current_user)):
+    tool = RAGTool(username=current_user["username"])
+    return tool.delete_document(collection_name, document_id)
 
 
 @router.post("/rag/query", response_model=ToolResponse)
-async def query_rag(
-    request: RAGQueryRequest,
-    current_user: Optional[dict] = Depends(get_optional_user)
-):
-    """Query RAG collection with multi-query retrieval, deduplication, and LLM synthesis"""
-    username = current_user["username"] if current_user else None
-    # Fallback: use username from context (passed by agents in server-to-server calls)
-    if not username and request.context and request.context.username:
-        username = request.context.username
-    if not username:
-        username = "guest"
-    
-    print("\n" + "=" * 80)
-    print("[TOOLS API] /api/tools/rag/query endpoint called")
-    print("=" * 80)
-    print(f"User: {username}")
-    print(f"Collection: {request.collection_name}")
-    print(f"Query: {request.query}")
-    print(f"Max results: {request.max_results or 'default'}")
-    print(f"Context provided: {bool(request.context)}")
-    print(f"Multi-query: {config.RAG_USE_MULTI_QUERY}")
-    
+async def query_rag(request: RAGQueryRequest, current_user: Optional[dict] = Depends(get_optional_user)):
+    """RAG query — retrieval + LLM synthesis (for direct API use, not agent loop)."""
+    username = current_user["username"] if current_user else request.username or "guest"
     start_time = time.time()
 
     try:
-        # Step 1: Generate query variants
-        context_str = format_context(request.context)
         tool = RAGTool(username=username)
         final_max = request.max_results or config.RAG_MAX_RESULTS
 
-        if config.RAG_USE_MULTI_QUERY:
-            # Generate multiple diverse queries via LLM
-            print(f"\n[TOOLS API] Step 1: Generating {config.RAG_MULTI_QUERY_COUNT} query variants...")
-            query_prompt = load_prompt(
-                "rag_query.txt",
-                user_query=request.query,
-                context=context_str
-            )
-            messages = [{"role": "user", "content": query_prompt}]
-            raw_queries = llm_backend.chat(
-                messages,
-                config.TOOL_MODELS.get("rag", config.OLLAMA_MODEL),
-                0.5  # Moderate temperature for diverse but coherent variants
-            ).strip()
+        retrieval_result = tool.retrieve(
+            collection_name=request.collection_name,
+            query=request.query,
+            max_results=final_max,
+        )
 
-            # Parse query variants (one per line)
-            query_variants = [q.strip() for q in raw_queries.split("\n") if q.strip()]
-            # Always include the original query as a variant
-            query_variants = [request.query] + query_variants[:config.RAG_MULTI_QUERY_COUNT]
-            print(f"[TOOLS API] [OK] Query variants ({len(query_variants)}):")
-            for i, qv in enumerate(query_variants):
-                print(f"  [{i}] {qv}")
-
-            # Step 2: Retrieve for each query variant
-            print(f"\n[TOOLS API] Step 2: Multi-query retrieval...")
-            all_results = []
-            for i, qv in enumerate(query_variants):
-                result = tool.retrieve(
-                    collection_name=request.collection_name,
-                    query=qv,
-                    max_results=final_max
-                )
-                if result["success"] and result.get("documents"):
-                    all_results.append(result["documents"])
-                    print(f"  Query [{i}]: {result.get('num_results', 0)} results")
-
-            if not all_results:
-                return ToolResponse(
-                    success=False,
-                    answer="RAG retrieval failed: no results from any query variant",
-                    data={},
-                    metadata={"execution_time": time.time() - start_time},
-                    error="No results from any query variant"
-                )
-
-            # Step 3: Merge via RRF
-            print(f"\n[TOOLS API] Step 3: Merging results via RRF...")
-            merged_results = _merge_multi_query_results(all_results, max_results=final_max * 2)
-            print(f"  Merged: {len(merged_results)} unique results")
-
-            # Deduplicate overlapping context windows
-            merged_results = _deduplicate_results(merged_results)
-            merged_results = merged_results[:final_max]
-            print(f"  After dedup: {len(merged_results)} results")
-
-            retrieval_documents = merged_results
-            optimized_query = " | ".join(query_variants)
-        else:
-            # Single-query mode: optimize query via LLM
-            print(f"\n[TOOLS API] Step 1: Single-query optimization...")
-            query_prompt = load_prompt(
-                "rag_query.txt",
-                user_query=request.query,
-                context=context_str
-            )
-            messages = [{"role": "user", "content": query_prompt}]
-            optimized_query = llm_backend.chat(
-                messages,
-                config.TOOL_MODELS.get("rag", config.OLLAMA_MODEL),
-                0.3
-            ).strip()
-            print(f"[TOOLS API] [OK] Optimized query: '{optimized_query}'")
-
-            retrieval_result = tool.retrieve(
-                collection_name=request.collection_name,
-                query=optimized_query,
-                max_results=request.max_results
+        if not retrieval_result["success"]:
+            return ToolResponse(
+                success=False, answer="RAG retrieval failed", data={},
+                metadata={"execution_time": time.time() - start_time},
+                error=retrieval_result.get("error", "Unknown error"),
             )
 
-            if not retrieval_result["success"]:
-                return ToolResponse(
-                    success=False,
-                    answer="RAG retrieval failed",
-                    data={},
-                    metadata={"execution_time": time.time() - start_time},
-                    error=retrieval_result.get("error", "Unknown error")
-                )
-
-            retrieval_documents = retrieval_result["documents"]
-
-        # Step 4: Reorder for lost-in-the-middle mitigation
-        retrieval_documents = _reorder_lost_in_middle(retrieval_documents)
-
-        # Step 5: Format documents for LLM synthesis
-        score_key = "rerank_score" if any("rerank_score" in d for d in retrieval_documents) else "score"
+        documents = retrieval_result.get("documents", [])
+        score_key = "rerank_score" if any("rerank_score" in d for d in documents) else "score"
         docs_formatted = "\n\n".join([
             f"[Document {i+1}] Source: {doc['document']}, Chunk {doc['chunk_index']} (Score: {doc.get(score_key, 0):.2f}):\n{doc['chunk']}"
-            for i, doc in enumerate(retrieval_documents)
+            for i, doc in enumerate(documents)
         ])
 
-        # Step 6: Synthesize answer
-        synthesis_prompt = load_prompt(
-            "rag_synthesize.txt",
-            user_query=request.query,
-            documents=docs_formatted,
-            context=context_str
-        )
+        prompt_path = config.PROMPTS_DIR / "tools" / "rag_synthesize.txt"
+        if prompt_path.exists():
+            with open(prompt_path, 'r', encoding='utf-8') as f:
+                template = f.read()
+            synthesis_prompt = template.format(
+                user_query=request.query, documents=docs_formatted, context="Direct API query",
+            )
+        else:
+            synthesis_prompt = f"Based on these documents:\n\n{docs_formatted}\n\nAnswer: {request.query}"
 
-        messages = [{"role": "user", "content": synthesis_prompt}]
-        answer = llm_backend.chat(
-            messages,
-            config.TOOL_MODELS.get("rag", config.OLLAMA_MODEL),
-            config.TOOL_PARAMETERS.get("rag", {}).get("temperature", 0.5)
+        from backend.core.llm_backend import llm_backend
+        llm_response = await llm_backend.chat(
+            [{"role": "user", "content": synthesis_prompt}],
+            config.LLAMACPP_MODEL,
+            config.TOOL_PARAMETERS.get("rag", {}).get("temperature", 0.5),
         )
-
-        execution_time = time.time() - start_time
+        answer = llm_response.content or ""
 
         return ToolResponse(
-            success=True,
-            answer=answer,
-            data={
-                "optimized_query": optimized_query,
-                "documents": retrieval_documents,
-                "num_results": len(retrieval_documents)
-            },
-            metadata={
-                "execution_time": execution_time,
-                "collection": request.collection_name,
-                "multi_query": config.RAG_USE_MULTI_QUERY
-            }
+            success=True, answer=answer,
+            data={"query": request.query, "documents": documents, "num_results": len(documents)},
+            metadata={"execution_time": time.time() - start_time, "collection": request.collection_name},
         )
-
     except Exception as e:
         return ToolResponse(
-            success=False,
-            answer=f"RAG query error: {str(e)}",
-            data={},
-            metadata={"execution_time": time.time() - start_time},
-            error=str(e)
+            success=False, answer=f"RAG query error: {e}", data={},
+            metadata={"execution_time": time.time() - start_time}, error=str(e),
         )

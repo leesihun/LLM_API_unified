@@ -1,45 +1,10 @@
 """
 Tool Configuration and Schemas
-Define all available tools with their schemas for LLM understanding
+Define all available tools with their schemas for LLM native tool calling.
 """
 from typing import List, Dict, Any
 
 import config
-
-
-# ============================================================================
-# Mode-Aware Tool Description Functions
-# ============================================================================
-
-def get_python_coder_description() -> str:
-    """Get python_coder description based on executor mode"""
-    if config.PYTHON_EXECUTOR_MODE == "opencode":
-        return (
-            "Execute code tasks using an AI coding agent. Provide detailed natural language "
-            "instructions describing what code to write and execute. The agent will generate "
-            "Python code, execute it, handle errors, and iterate as needed. "
-            "Example: 'Create a function to calculate factorial of numbers 1-10, test it, "
-            "and save the results to a file called results.txt'"
-        )
-    else:  # native mode
-        return (
-            "Execute Python code in a sandboxed environment. Provide the complete Python "
-            "code to execute. Can access files created in previous executions within the "
-            "same session. Use for calculations, data analysis, visualizations, or any "
-            "computational task."
-        )
-
-
-def get_python_coder_input_description() -> str:
-    """Get python_coder input parameter description based on executor mode"""
-    if config.PYTHON_EXECUTOR_MODE == "opencode":
-        return (
-            "Detailed natural language instruction describing the code task. "
-            "Be specific about: what the code should do, expected outputs, "
-            "files to create, and any constraints."
-        )
-    else:  # native mode
-        return "The Python code to execute"
 
 
 # ============================================================================
@@ -50,8 +15,6 @@ TOOL_SCHEMAS = {
     "websearch": {
         "name": "websearch",
         "description": "Search the web for current information and get answers to questions. Use this when you need up-to-date information, facts, news, or information not in your knowledge base.",
-        "endpoint": "/api/tools/websearch",
-        "method": "POST",
         "parameters": {
             "type": "object",
             "properties": {
@@ -67,29 +30,30 @@ TOOL_SCHEMAS = {
             },
             "required": ["query"]
         },
-        "returns": {
-            "success": "True or False Boolean indicating if search succeeded",
-            "answer": "LLM-generated answer based on search results",
-            "data": "Dictionary with search_query, results, and num_results",
-            "metadata": "Execution metadata including timing"
-        }
     },
 
     "python_coder": {
         "name": "python_coder",
-        "description": get_python_coder_description(),
-        "endpoint": "/api/tools/python_coder",
-        "method": "POST",
+        "description": (
+            "Execute a coding task by providing natural language instructions. "
+            "An AI coding agent will generate Python code, execute it, and return the results. "
+            "Describe WHAT you want done — not HOW. "
+            "Example: 'Read sales.csv, compute monthly totals, and save a bar chart to chart.png'"
+        ),
         "parameters": {
             "type": "object",
             "properties": {
-                "code": {
+                "instruction": {
                     "type": "string",
-                    "description": get_python_coder_input_description()
+                    "description": (
+                        "Natural language instruction describing the task. "
+                        "Be specific about: what to compute, expected outputs, "
+                        "files to read/create, and any constraints."
+                    )
                 },
                 "session_id": {
                     "type": "string",
-                    "description": "Session ID for workspace isolation (required)"
+                    "description": "Session ID for workspace isolation (injected by agent)"
                 },
                 "timeout": {
                     "type": "integer",
@@ -97,21 +61,13 @@ TOOL_SCHEMAS = {
                     "default": 30
                 }
             },
-            "required": ["code", "session_id"]
+            "required": ["instruction", "session_id"]
         },
-        "returns": {
-            "success": "Boolean indicating if execution succeeded",
-            "answer": "Human-readable execution result",
-            "data": "Dictionary with stdout, stderr, files, workspace, returncode",
-            "metadata": "Execution metadata including timing"
-        }
     },
 
     "rag": {
         "name": "rag",
         "description": "Retrieve relevant information from document collections using semantic search. Query user-specific document collections. Documents must be uploaded first using the RAG upload API.",
-        "endpoint": "/api/tools/rag/query",
-        "method": "POST",
         "parameters": {
             "type": "object",
             "properties": {
@@ -131,13 +87,143 @@ TOOL_SCHEMAS = {
             },
             "required": ["query", "collection_name"]
         },
-        "returns": {
-            "success": "Boolean indicating if retrieval succeeded",
-            "answer": "LLM-generated answer based on retrieved documents",
-            "data": "Dictionary with optimized_query, documents, and num_results",
-            "metadata": "Execution metadata including timing and collection name"
-        }
-    }
+    },
+
+    "file_reader": {
+        "name": "file_reader",
+        "description": "Read the contents of a file from the user's uploads or scratch workspace. Use this for viewing text files, code, CSV data, logs, configs, etc. Prefer this over python_coder for simple file reading. Supports offset and limit for large files.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path — relative to workspace (e.g. 'data.csv') or absolute within allowed directories"
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Start reading from this line number (1-based). Optional."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of lines to return. Optional."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID for workspace resolution (injected by agent)"
+                }
+            },
+            "required": ["path", "session_id"]
+        },
+    },
+
+    "file_writer": {
+        "name": "file_writer",
+        "description": "Write or append text content to a file in the scratch workspace. Use this for creating text files, saving results, writing code files, etc. Prefer this over python_coder for simple file creation.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path relative to scratch workspace (e.g. 'output.txt', 'scripts/run.py')"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The text content to write to the file"
+                },
+                "mode": {
+                    "type": "string",
+                    "description": "Write mode: 'write' to overwrite (default), 'append' to add to end",
+                    "enum": ["write", "append"],
+                    "default": "write"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID for workspace resolution (injected by agent)"
+                }
+            },
+            "required": ["path", "content", "session_id"]
+        },
+    },
+
+    "file_navigator": {
+        "name": "file_navigator",
+        "description": "List directory contents or search for files using glob patterns in the user's uploads and scratch workspace. Use this to explore available files before reading them.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "description": "Operation: 'list' to list a directory, 'find' to search with glob pattern",
+                    "enum": ["list", "find"]
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Directory path for 'list' operation. Omit to see workspace roots."
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob pattern for 'find' operation (e.g. '*.csv', '**/*.py')"
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID for workspace resolution (injected by agent)"
+                }
+            },
+            "required": ["operation", "session_id"]
+        },
+    },
+
+    "shell_exec": {
+        "name": "shell_exec",
+        "description": "Execute a shell command in the scratch workspace. Use this for running scripts, installing packages, git operations, or any command-line task. Prefer this over python_coder with subprocess.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "string",
+                    "description": "The shell command to execute"
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Maximum execution time in seconds (default: 30)",
+                    "default": 30
+                },
+                "working_directory": {
+                    "type": "string",
+                    "description": "Working directory relative to scratch workspace. Optional."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Session ID for workspace isolation (injected by agent)"
+                }
+            },
+            "required": ["command", "session_id"]
+        },
+    },
+
+    "memory": {
+        "name": "memory",
+        "description": "Persistent key-value store for remembering information across sessions. Use this to store user preferences, project context, frequently used settings, or any information that should persist between conversations.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "description": "Operation: 'set' to store, 'get' to retrieve, 'delete' to remove, 'list' to see all keys",
+                    "enum": ["set", "get", "delete", "list"]
+                },
+                "key": {
+                    "type": "string",
+                    "description": "The key to operate on (required for set/get/delete)"
+                },
+                "value": {
+                    "type": "string",
+                    "description": "The value to store (required for set)"
+                }
+            },
+            "required": ["operation"]
+        },
+    },
 }
 
 
@@ -146,70 +232,46 @@ TOOL_SCHEMAS = {
 # ============================================================================
 
 def get_tool_schema(tool_name: str) -> Dict[str, Any]:
-    """
-    Get schema for a specific tool
-
-    Args:
-        tool_name: Name of the tool
-
-    Returns:
-        Tool schema dictionary
-    """
     return TOOL_SCHEMAS.get(tool_name)
 
 
 def get_all_tool_schemas() -> Dict[str, Dict[str, Any]]:
-    """
-    Get all tool schemas
-
-    Returns:
-        Dictionary of all tool schemas
-    """
     return TOOL_SCHEMAS
 
 
 def get_available_tools() -> List[str]:
-    """
-    Get list of available tool names
-
-    Returns:
-        List of tool names
-    """
     return list(TOOL_SCHEMAS.keys())
 
 
-def format_tools_for_llm() -> str:
+def get_native_tool_schemas(exclude_injected: bool = True) -> List[Dict[str, Any]]:
     """
-    Format tool schemas as a string for LLM context
-    Now emphasizes string input format instead of JSON parameters
-
-    Returns:
-        Formatted string describing all available tools
-    """
-    tools = []
-    tools.append('websearch, python_coder, rag')
-
-    return "\n\n".join(tools)
-
-
-def format_tools_for_ollama_native() -> List[Dict[str, Any]]:
-    """
-    Format tool schemas for Ollama native tool calling
-
-    Returns:
-        List of tool schemas in Ollama format
+    Format tool schemas for llama.cpp native tool calling.
+    When exclude_injected=True, removes session_id from python_coder
+    (agent injects it automatically).
     """
     tools = []
 
     for tool_name, schema in TOOL_SCHEMAS.items():
-        tool = {
+        params = dict(schema["parameters"])
+        props = dict(params.get("properties", {}))
+        required = list(params.get("required", []))
+
+        if exclude_injected:
+            props.pop("session_id", None)
+            if "session_id" in required:
+                required.remove("session_id")
+
+        tools.append({
             "type": "function",
             "function": {
                 "name": schema["name"],
                 "description": schema["description"],
-                "parameters": schema["parameters"]
-            }
-        }
-        tools.append(tool)
+                "parameters": {
+                    "type": "object",
+                    "properties": props,
+                    "required": required,
+                },
+            },
+        })
 
     return tools

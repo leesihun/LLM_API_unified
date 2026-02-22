@@ -28,17 +28,15 @@ class BasePythonExecutor(ABC):
     @abstractmethod
     def execute(
         self,
-        code: str,
+        instruction: str,
         timeout: Optional[int] = None,
-        context: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Execute Python code
+        Generate and execute Python code from a natural language instruction.
 
         Args:
-            code: Python code to execute
+            instruction: Natural language description of the task
             timeout: Execution timeout in seconds (optional)
-            context: Additional context dictionary (optional)
 
         Returns:
             Execution result dictionary with standardized format:

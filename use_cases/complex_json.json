@@ -1,0 +1,78 @@
+{
+  "company": "TechMart Inc",
+  "quarter": "Q3 2025",
+  "departments": [
+    {
+      "name": "Electronics",
+      "employees": 45,
+      "sales": [
+        {
+          "product": "Laptop",
+          "units_sold": 320,
+          "price": 1200,
+          "revenue": 384000
+        },
+        {
+          "product": "Smartphone",
+          "units_sold": 856,
+          "price": 800,
+          "revenue": 684800
+        },
+        {
+          "product": "Tablet",
+          "units_sold": 142,
+          "price": 500,
+          "revenue": 71000
+        }
+      ]
+    },
+    {
+      "name": "Home Appliances",
+      "employees": 32,
+      "sales": [
+        {
+          "product": "Refrigerator",
+          "units_sold": 89,
+          "price": 1500,
+          "revenue": 133500
+        },
+        {
+          "product": "Washing Machine",
+          "units_sold": 124,
+          "price": 900,
+          "revenue": 111600
+        },
+        {
+          "product": "Microwave",
+          "units_sold": 267,
+          "price": 200,
+          "revenue": 53400
+        }
+      ]
+    },
+    {
+      "name": "Furniture",
+      "employees": 28,
+      "sales": [
+        {
+          "product": "Desk",
+          "units_sold": 178,
+          "price": 450,
+          "revenue": 80100
+        },
+        {
+          "product": "Chair",
+          "units_sold": 432,
+          "price": 150,
+          "revenue": 64800
+        },
+        {
+          "product": "Bookshelf",
+          "units_sold": 95,
+          "price": 300,
+          "revenue": 28500
+        }
+      ]
+    }
+  ]
+}

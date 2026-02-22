@@ -1,8 +1,0 @@
-Continue working on: {user_input}
-
-Previous steps completed:
-{previous_steps}
-
-{continuation_reason}
-
-Create a NEW plan to gather the missing information or complete the task.

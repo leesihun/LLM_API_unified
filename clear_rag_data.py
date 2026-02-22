@@ -178,7 +178,7 @@ Examples:
     print("  1. Ensure multilingual models are in place:")
     print(f"     - {config.RAG_EMBEDDING_MODEL}")
     print(f"     - {config.RAG_RERANKER_MODEL}")
-    print("  2. Restart the servers (server.py and tools_server.py)")
+    print("  2. Restart the server (python run_backend.py)")
     print("  3. Re-upload documents to rebuild collections")
     print("=" * 80)
 
