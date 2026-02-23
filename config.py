@@ -159,7 +159,7 @@ RAG_INDEX_DIR = Path("data/rag_indices")
 RAG_METADATA_DIR = Path("data/rag_metadata")
 
 RAG_EMBEDDING_MODEL = "/scratch0/LLM_models/offline_models/bge-m3"
-RAG_EMBEDDING_DEVICE = "cuda"
+RAG_EMBEDDING_DEVICE = "cpu"
 RAG_EMBEDDING_BATCH_SIZE = 16
 
 RAG_INDEX_TYPE = "Flat"
