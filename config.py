@@ -17,8 +17,9 @@ LOG_LEVEL = "INFO"
 # ============================================================================
 # llama.cpp Backend
 # ============================================================================
-LLAMACPP_HOST = "http://localhost:5904"
+LLAMACPP_HOST = "http://localhost:5905"
 LLAMACPP_MODEL = "default"
+OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "llama.cpp/default", "opencode/minimax-m2.5-free")
 
 # ============================================================================
 # Model Parameters (Default LLM Inference Settings)
@@ -147,7 +148,6 @@ OPENCODE_PATH: str = "opencode"
 OPENCODE_SERVER_PORT: int = 37254
 OPENCODE_SERVER_HOST: str = "127.0.0.1"
 OPENCODE_TIMEOUT: int = 864000
-OPENCODE_MODEL: str = "opencode/minimax-m2.5-free"  # "provider/model" format (e.g., "llama.cpp/default", "opencode/minimax-m2.5-free")
 
 PYTHON_CODER_SMART_EDIT = True
 
