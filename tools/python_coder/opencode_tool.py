@@ -73,11 +73,14 @@ class OpenCodeExecutor(BasePythonExecutor):
         exec_timeout = timeout or self.timeout
         start_time = time.time()
 
+        workspace_abs = str(self.workspace.resolve())
         prefix = (
             "ULTRAWORK MODE - Complete the following task entirely. Do NOT stop until ALL steps are done.\n\n"
+            f"WORKING DIRECTORY: {workspace_abs}\n"
+            f"You MUST `cd {workspace_abs}` before creating or running any files.\n\n"
             "MANDATORY STEPS (complete all before stopping):\n"
             "1. Plan: Identify prerequisites, dependencies, and what the final output should look like\n"
-            "2. Write: Create a complete single long .py file in the current working directory\n"
+            f"2. Write: Create a complete single long .py file in {workspace_abs}\n"
             "   - Include descriptive print statements for every major step\n"
             "   - The LAST lines of the script MUST print a completion summary:\n"
             "     print('=== TASK COMPLETE ===')\n"
@@ -91,7 +94,7 @@ class OpenCodeExecutor(BasePythonExecutor):
             "- Do not stop after planning or writing — you MUST run the script\n"
             "- Include informative prints throughout the script\n"
             "- Explain all results clearly in the summary\n"
-            "- Python file must be saved in the current working directory\n"
+            f"- Python file must be saved in {workspace_abs}\n"
             "- Use absolute paths when accessing files in other directories\n\n"
             "TASK: "
         )
@@ -103,6 +106,8 @@ class OpenCodeExecutor(BasePythonExecutor):
 
         # Track files before OpenCode runs
         files_before = set(self._get_python_files())
+        project_root = Path(config.__file__).resolve().parent
+        root_py_before = set(project_root.glob("*.py"))
 
         # =====================================================================
         # STAGE 1: OpenCode generates Python code
@@ -111,6 +116,9 @@ class OpenCodeExecutor(BasePythonExecutor):
         self._log_stage("STAGE 1: CODE GENERATION (OpenCode)")
 
         opencode_result = self._run_opencode(instruction, exec_timeout)
+
+        # Relocate .py files that landed in the project root (HTTP server mode)
+        self._relocate_stray_files(root_py_before, project_root)
 
         if not opencode_result["success"]:
             # OpenCode failed - return error
@@ -335,28 +343,44 @@ class OpenCodeExecutor(BasePythonExecutor):
 
         # --- Send prompt, wait for full response ---
         try:
+            provider, model = config.OPENCODE_MODEL.split("/", 1)
             resp = _req.post(
                 f"{base_url}/session/{opencode_session_id}/message",
                 json={
                     "model": {
-                        "providerID": "llama.cpp",
-                        "modelID": config.LLAMACPP_MODEL,
+                        "providerID": provider,
+                        "modelID": model,
                     },
                     "parts": [{"type": "text", "text": instruction}],
                 },
-                timeout=(10, timeout),  # (connect_timeout, read_timeout)
+                timeout=(10, timeout),
             )
             resp.raise_for_status()
             result = resp.json()
 
-            # Extract all text parts from the assistant response
-            text_parts = []
-            for part in result.get("parts", []):
-                if isinstance(part, dict) and part.get("type") == "text":
-                    text_parts.append(part.get("text", ""))
+            import json as _json
+            raw_dump = _json.dumps(result, indent=2, ensure_ascii=False, default=str)
+            self._log_stage(f"RAW HTTP RESPONSE ({len(raw_dump)} chars)")
+            for line in raw_dump.split('\n')[:200]:
+                log_to_prompts_file(f"  {line}")
 
-            text = "\n".join(text_parts).strip()
-            self._log_stage(f"HTTP response received ({len(text)} chars)")
+            # Check for OpenCode-level errors (HTTP 200 but execution failed)
+            info = result.get("info", {})
+            oc_error = info.get("error")
+            if isinstance(oc_error, dict) and oc_error.get("data", {}).get("message"):
+                error_msg = oc_error["data"]["message"].strip('"')
+                self._log_stage(f"OpenCode error: {error_msg}")
+                # Discard the broken session so the next call starts fresh
+                OpenCodeExecutor._session_map.pop(self.session_id, None)
+                return {
+                    "success": False,
+                    "output": "",
+                    "session_id": opencode_session_id,
+                    "error": f"OpenCode error: {error_msg}",
+                }
+
+            text = self._extract_opencode_text(result)
+            self._log_stage(f"Extracted text ({len(text)} chars)")
             for line in text.split('\n'):
                 log_to_prompts_file(f"  {line}")
 
@@ -379,6 +403,49 @@ class OpenCodeExecutor(BasePythonExecutor):
                 "session_id": opencode_session_id,
                 "error": f"OpenCode HTTP error: {e}",
             }
+
+    @staticmethod
+    def _extract_opencode_text(result: Dict[str, Any]) -> str:
+        """
+        Extract all meaningful text from an OpenCode HTTP response.
+
+        Walks the response recursively to find text in any of these structures:
+          - result["parts"][*]["text"]          (flat parts)
+          - result["messages"][*]["content"]    (chat-style)
+          - result["result"] or result["text"]  (simple wrappers)
+          - nested "parts" inside messages
+        """
+        texts: List[str] = []
+
+        def _collect_parts(parts: list) -> None:
+            for p in parts:
+                if not isinstance(p, dict):
+                    continue
+                if "text" in p and isinstance(p["text"], str):
+                    texts.append(p["text"])
+                if "content" in p and isinstance(p["content"], str):
+                    texts.append(p["content"])
+                if "parts" in p and isinstance(p["parts"], list):
+                    _collect_parts(p["parts"])
+
+        if isinstance(result.get("parts"), list):
+            _collect_parts(result["parts"])
+
+        if isinstance(result.get("messages"), list):
+            for msg in result["messages"]:
+                if not isinstance(msg, dict):
+                    continue
+                if isinstance(msg.get("content"), str) and msg["content"]:
+                    texts.append(msg["content"])
+                if isinstance(msg.get("parts"), list):
+                    _collect_parts(msg["parts"])
+
+        for key in ("result", "text", "output", "content"):
+            val = result.get(key)
+            if isinstance(val, str) and val:
+                texts.append(val)
+
+        return "\n".join(texts).strip()
 
     def _run_python_file(self, python_file: Path, timeout: int) -> Dict[str, Any]:
         """
@@ -440,7 +507,7 @@ class OpenCodeExecutor(BasePythonExecutor):
             "run",
             instruction,
             "--format", "default",
-            "--model", f"llama.cpp/{config.LLAMACPP_MODEL}",
+            "--model", config.OPENCODE_MODEL,
         ]
 
         # Continue existing session if available
@@ -487,6 +554,30 @@ class OpenCodeExecutor(BasePythonExecutor):
             return list(self.workspace.glob("*.py"))
         except Exception:
             return []
+
+    def _relocate_stray_files(self, root_py_before: set, project_root: Path) -> int:
+        """
+        Move .py files that OpenCode's HTTP server wrote to the project root
+        into self.workspace.  Only files that appeared DURING execution are moved.
+
+        Returns the number of files relocated.
+        """
+        workspace_resolved = self.workspace.resolve()
+        if project_root == workspace_resolved:
+            return 0
+
+        moved = 0
+        try:
+            new_files = set(project_root.glob("*.py")) - root_py_before
+            for src in new_files:
+                dest = self.workspace / src.name
+                src.rename(dest)
+                print(f"[OPENCODE] Relocated {src.name} -> {dest}")
+                moved += 1
+        except Exception as e:
+            print(f"[OPENCODE] Warning: File relocation failed: {e}")
+
+        return moved
 
     def _find_python_file_to_run(self, new_files: set, opencode_output: str) -> Optional[Path]:
         """

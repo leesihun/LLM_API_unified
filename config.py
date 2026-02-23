@@ -147,6 +147,7 @@ OPENCODE_PATH: str = "opencode"
 OPENCODE_SERVER_PORT: int = 37254
 OPENCODE_SERVER_HOST: str = "127.0.0.1"
 OPENCODE_TIMEOUT: int = 864000
+OPENCODE_MODEL: str = "opencode/minimax-m2.5-free"  # "provider/model" format (e.g., "llama.cpp/default", "opencode/minimax-m2.5-free")
 
 PYTHON_CODER_SMART_EDIT = True
 
