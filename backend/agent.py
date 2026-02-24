@@ -104,6 +104,7 @@ class AgentLoop:
         self.enabled_tools = tools or config.AVAILABLE_TOOLS
         self.tool_calls_log: List[Dict[str, Any]] = []
         self._iteration_boundaries: List[int] = []
+        self._available_rag_collections: Optional[List[str]] = None
 
     # ------------------------------------------------------------------
     # System prompt (cached, with per-request file attachments appended)
@@ -111,9 +112,53 @@ class AgentLoop:
 
     def _build_system_prompt(self, attached_files: Optional[List[Dict[str, Any]]] = None) -> str:
         prompt = _CACHED_SYSTEM_PROMPT
+        prompt += self._format_rag_collections_context()
         if attached_files:
             prompt += self._format_attached_files(attached_files)
         return prompt
+
+    def _refresh_available_rag_collections(self):
+        """Load available RAG collections for the current user."""
+        self._available_rag_collections = []
+
+        if "rag" not in self.enabled_tools or not self.username:
+            return
+
+        try:
+            from tools.rag import RAGTool
+            tool = RAGTool(username=self.username)
+            result = tool.list_collections()
+            if not result.get("success"):
+                return
+
+            collections = result.get("collections", [])
+            names = sorted({
+                c.get("name")
+                for c in collections
+                if isinstance(c, dict) and isinstance(c.get("name"), str) and c.get("name")
+            })
+            self._available_rag_collections = names
+        except Exception as e:
+            print(f"[RAG] Failed to load available collections for prompt context: {e}")
+
+    def _get_available_rag_collections(self) -> List[str]:
+        if self._available_rag_collections is None:
+            self._refresh_available_rag_collections()
+        return self._available_rag_collections or []
+
+    def _format_rag_collections_context(self) -> str:
+        if "rag" not in self.enabled_tools:
+            return ""
+
+        available = self._get_available_rag_collections()
+        lines = ["\n\n## RAG COLLECTIONS"]
+        lines.append("Use only existing collection_name values from this list when calling the rag tool.")
+        if available:
+            lines.append(f"Available collection_name values: {json.dumps(available, ensure_ascii=False)}")
+        else:
+            lines.append("Available collection_name values: []")
+            lines.append("No collection exists yet. Ask the user to create a collection before using rag.")
+        return "\n".join(lines)
 
     def _format_attached_files(self, attached_files: List[Dict[str, Any]]) -> str:
         if not attached_files:
@@ -211,8 +256,28 @@ class AgentLoop:
         elif name == "rag":
             from tools.rag import RAGTool
             tool = RAGTool(username=self.username)
+            available_collections = self._get_available_rag_collections()
+            requested_collection = arguments.get("collection_name")
+
+            if not available_collections:
+                return {
+                    "success": False,
+                    "error": "No RAG collections are available for this user. Create a collection first.",
+                    "available_collections": [],
+                }
+
+            if requested_collection not in available_collections:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Invalid collection_name '{requested_collection}'. "
+                        "Use one of the available collections."
+                    ),
+                    "available_collections": available_collections,
+                }
+
             return tool.retrieve(
-                collection_name=arguments["collection_name"],
+                collection_name=requested_collection,
                 query=arguments["query"],
                 max_results=arguments.get("max_results"),
             )
@@ -357,6 +422,7 @@ class AgentLoop:
         messages: List[Dict[str, Any]],
         attached_files: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
+        self._refresh_available_rag_collections()
         system_prompt = self._build_system_prompt(attached_files)
         msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}] + list(messages)
         tool_schemas = self._get_tool_schemas()
@@ -407,6 +473,7 @@ class AgentLoop:
         messages: List[Dict[str, Any]],
         attached_files: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[StreamEvent]:
+        self._refresh_available_rag_collections()
         system_prompt = self._build_system_prompt(attached_files)
         msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}] + list(messages)
         tool_schemas = self._get_tool_schemas()

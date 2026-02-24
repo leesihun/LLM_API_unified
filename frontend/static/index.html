@@ -1016,6 +1016,14 @@
                 if (!response.ok) throw new Error(`Web search failed: ${response.statusText}`);
                 return await response.json();
             }
+
+            async listRagCollections() {
+                const response = await fetch(`${this.baseUrl}/api/tools/rag/collections`, {
+                    headers: this._headers()
+                });
+                if (!response.ok) throw new Error(`Failed to list RAG collections: ${response.statusText}`);
+                return await response.json();
+            }
         }
 
         // ============================================================================
@@ -1025,6 +1033,7 @@
         let currentSessionId = null;
         let currentModel = '';
         let availableModels = [];
+        let availableRagCollections = [];
         let userData = null;
         let selectedFiles = [];
 
@@ -1059,6 +1068,9 @@
 
             // Load sessions
             await loadSessions();
+
+            // Load available RAG collections for this login.
+            await refreshRagCollections(false);
 
             // Setup file input
             document.getElementById('fileInput').addEventListener('change', handleFileSelect);
@@ -1184,6 +1196,28 @@
             }
         }
 
+        async function refreshRagCollections(showErrorToast = false) {
+            try {
+                const result = await client.listRagCollections();
+                if (!result.success || !Array.isArray(result.collections)) {
+                    throw new Error(result.error || 'Invalid response format');
+                }
+
+                availableRagCollections = result.collections
+                    .map(c => c && c.name)
+                    .filter(name => typeof name === 'string' && name.length > 0)
+                    .sort((a, b) => a.localeCompare(b));
+                return availableRagCollections;
+            } catch (error) {
+                console.error('Failed to refresh RAG collections:', error);
+                availableRagCollections = [];
+                if (showErrorToast) {
+                    showToast('Failed to refresh RAG collections: ' + error.message, 'error');
+                }
+                return [];
+            }
+        }
+
         function newChat() {
             currentSessionId = null;
             const chatContainer = document.getElementById('chatContainer');
@@ -1258,6 +1292,7 @@
             }
 
             const agentType = document.getElementById('agentSelect').value;
+            const isCreatingNewSession = !currentSessionId;
 
             // Disable input
             messageInput.disabled = true;
@@ -1279,6 +1314,10 @@
 
                 currentSessionId = result.sessionId;
                 updateSessionInfo();
+
+                if (isCreatingNewSession) {
+                    await refreshRagCollections(true);
+                }
 
                 // Remove loading
                 loadingMsg.remove();

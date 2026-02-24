@@ -33,7 +33,10 @@ Avoid websearch.
 Execute a coding task by providing natural language instructions — describe WHAT you want done, not HOW. An AI coding agent generates the Python code and executes it. Files persist across calls within the same session. Example: "Read data.csv, compute the mean of each column, and save a summary to summary.txt"
 
 ### rag
-Retrieve relevant information from user-uploaded document collections using semantic search. You must specify which collection to search. Results are document chunks ranked by relevance.
+Retrieve relevant information from user-uploaded document collections using semantic search. You must specify which collection to search.
+- Use only existing `collection_name` values that are provided in context.
+- If no collection exists, ask the user to create one before calling `rag`.
+Results are document chunks ranked by relevance.
 
 ### file_reader
 Read the contents of a text file from the user's uploads or scratch workspace. Supports line offset and limit for large files. Use this instead of python_coder when you just need to see file contents.
@@ -45,7 +48,7 @@ Write or append text content to a file in the scratch workspace. Creates parent 
 List directory contents or search for files using glob patterns. Use this to discover what files are available before reading them. Operates on both user uploads and scratch workspace.
 
 ### shell_exec
-Execute shell commands in the scratch workspace. Use this for running scripts, package management, git operations, or any command-line task. Has a configurable timeout (default 30s).
+Execute shell commands in the scratch workspace. Use this for running scripts, package management, git operations, or any command-line task. Has a configurable timeout, use larger timeouts. (default 30s).
 
 ### memory
 Persistent key-value store that survives across sessions. Use this to remember user preferences, project context, or important information the user wants to persist. Operations: set, get, delete, list.
