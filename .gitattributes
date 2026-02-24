@@ -6,6 +6,7 @@
 *.sh text eol=lf
 *.md text eol=lf
 *.json text eol=lf
+prompts/system.txt text eol=lf
 
 # Windows files should use CRLF
 *.bat text eol=crlf
@@ -17,5 +18,6 @@
 *.jpeg binary
 *.gif binary
 *.ico binary
+*.ipynb binary
 *.xlsx binary
 *.zip binary
