@@ -318,15 +318,6 @@ class AgentLoop:
                 working_directory=arguments.get("working_directory"),
             )
 
-        elif name == "memory":
-            from tools.memory import MemoryTool
-            tool = MemoryTool(username=self.username)
-            return tool.execute(
-                operation=arguments["operation"],
-                key=arguments.get("key"),
-                value=arguments.get("value"),
-            )
-
         else:
             return {"success": False, "error": f"Unknown tool: {name}"}
 

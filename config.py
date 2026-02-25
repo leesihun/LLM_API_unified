@@ -84,7 +84,6 @@ AVAILABLE_TOOLS = [
     "file_writer",
     "file_navigator",
     "shell_exec",
-    "memory",
 ]
 
 TOOL_PARAMETERS = {
@@ -118,7 +117,6 @@ TOOL_RESULT_BUDGET = {
     "file_writer": 500,
     "file_navigator": 2000,
     "shell_exec": 3000,
-    "memory": 500,
 }
 TOOL_RESULT_DEFAULT_BUDGET = 3000
 TOOL_RESULTS_DIR = Path("data/tool_results")
