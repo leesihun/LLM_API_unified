@@ -81,7 +81,7 @@ async def chat_completions(
     max_tokens: Optional[str] = Form(None),
     session_id: Optional[str] = Form(None),
     agent_type: Optional[str] = Form(None),
-    files: Optional[List[UploadFile]] = File(None),
+    files: List[UploadFile] = File(default=[]),
     current_user: Optional[dict] = Depends(get_optional_user),
 ):
     try:
