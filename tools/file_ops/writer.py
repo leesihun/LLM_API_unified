@@ -1,21 +1,28 @@
 """
 File Writer Tool
-Write or append content to files in the scratch workspace.
+Write or append content to files.
 Lightweight alternative to python_coder for simple file creation.
 """
 from pathlib import Path
 from typing import Dict, Any
 
-import config
-
-
 class FileWriterTool:
-    """Write files to the session scratch workspace."""
+    """Write files to the local filesystem."""
 
     def __init__(self, session_id: str):
         self.session_id = session_id
-        self.workspace = config.SCRATCH_DIR / session_id
-        self.workspace.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_target(self, path: str) -> Path:
+        """
+        Resolve file path for write operations.
+
+        Absolute paths are used directly.
+        Relative paths are resolved from the current working directory.
+        """
+        target_path = Path(path).expanduser()
+        if target_path.is_absolute():
+            return target_path.resolve()
+        return (Path.cwd() / target_path).resolve()
 
     def write(
         self,
@@ -27,15 +34,13 @@ class FileWriterTool:
         Write or append content to a file.
 
         Args:
-            path: File path relative to scratch workspace
+            path: Absolute path or path relative to current working directory
             content: Text content to write
             mode: "write" (overwrite) or "append"
         """
-        target = (self.workspace / path).resolve()
-
-        # Security: ensure target is within workspace
-        if not str(target).startswith(str(self.workspace.resolve())):
-            raise PermissionError("Access denied: path escapes workspace")
+        if mode not in {"write", "append"}:
+            raise ValueError(f"Unsupported mode: {mode}. Use 'write' or 'append'.")
+        target = self._resolve_target(path)
 
         target.parent.mkdir(parents=True, exist_ok=True)
 

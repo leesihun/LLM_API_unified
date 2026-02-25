@@ -1,6 +1,6 @@
 """
 Shell Execution Tool
-Run shell commands in a sandboxed subprocess within the scratch workspace.
+Run shell commands in a subprocess.
 """
 import subprocess
 import time
@@ -13,12 +13,28 @@ MAX_OUTPUT_SIZE = 50 * 1024  # 50KB cap per stream
 
 
 class ShellExecTool:
-    """Execute shell commands sandboxed to the session scratch workspace."""
+    """Execute shell commands."""
 
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.workspace = config.SCRATCH_DIR / session_id
         self.workspace.mkdir(parents=True, exist_ok=True)
+
+    def _resolve_working_directory(self, working_directory: Optional[str]) -> Path:
+        """
+        Resolve working directory for command execution.
+
+        Absolute paths are used directly.
+        Relative paths are resolved from current working directory.
+        If unset, default to session workspace for compatibility.
+        """
+        if not working_directory:
+            return self.workspace.resolve()
+
+        cwd = Path(working_directory).expanduser()
+        if cwd.is_absolute():
+            return cwd.resolve()
+        return (Path.cwd() / cwd).resolve()
 
     def execute(
         self,
@@ -32,15 +48,10 @@ class ShellExecTool:
         Args:
             command: The shell command to run
             timeout: Maximum execution time in seconds
-            working_directory: Working directory relative to scratch (optional)
+            working_directory: Absolute path or path relative to current working directory
         """
-        if working_directory:
-            cwd = (self.workspace / working_directory).resolve()
-            if not str(cwd).startswith(str(self.workspace.resolve())):
-                raise PermissionError("Access denied: working_directory escapes workspace")
-            cwd.mkdir(parents=True, exist_ok=True)
-        else:
-            cwd = self.workspace
+        cwd = self._resolve_working_directory(working_directory)
+        cwd.mkdir(parents=True, exist_ok=True)
 
         start = time.time()
         try:

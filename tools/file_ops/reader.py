@@ -1,6 +1,6 @@
 """
 File Reader Tool
-Read file contents from user uploads or scratch workspace.
+Read file contents from local filesystem.
 Lightweight alternative to python_coder for simple file reading.
 """
 from pathlib import Path
@@ -21,36 +21,29 @@ MAX_READ_BYTES = 50 * 1024  # 50KB cap
 
 
 class FileReaderTool:
-    """Read files from uploads or scratch workspace."""
+    """Read files from local filesystem."""
 
     def __init__(self, username: str = None, session_id: str = None):
         self.username = username
         self.session_id = session_id
 
     def _resolve_path(self, path: str) -> Path:
-        """Resolve a relative path to an absolute path within allowed directories."""
-        p = Path(path)
+        """Resolve path to an absolute local path."""
+        target = Path(path).expanduser()
+        if target.is_absolute():
+            return target.resolve()
 
-        if p.is_absolute():
-            resolved = p.resolve()
-            uploads_root = config.UPLOAD_DIR.resolve()
-            scratch_root = config.SCRATCH_DIR.resolve()
-            if str(resolved).startswith(str(uploads_root)) or str(resolved).startswith(str(scratch_root)):
-                return resolved
-            raise PermissionError(f"Access denied: path outside allowed directories")
-
-        # Try scratch first, then uploads
         if self.session_id:
-            scratch_path = (config.SCRATCH_DIR / self.session_id / path).resolve()
+            scratch_path = (config.SCRATCH_DIR / self.session_id / target).resolve()
             if scratch_path.exists():
                 return scratch_path
 
         if self.username:
-            upload_path = (config.UPLOAD_DIR / self.username / path).resolve()
+            upload_path = (config.UPLOAD_DIR / self.username / target).resolve()
             if upload_path.exists():
                 return upload_path
 
-        raise FileNotFoundError(f"File not found: {path}")
+        return (Path.cwd() / target).resolve()
 
     def read(
         self,
@@ -62,7 +55,7 @@ class FileReaderTool:
         Read file contents.
 
         Args:
-            path: File path (relative to uploads/scratch, or absolute within allowed dirs)
+            path: Absolute path or path relative to current working directory
             offset: Start reading from this line number (1-based)
             limit: Maximum number of lines to return
         """

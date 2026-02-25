@@ -4,36 +4,28 @@ List directory contents and search for files using glob patterns.
 """
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-
-import config
+from typing import Dict, Any, Optional
 
 
 class FileNavigatorTool:
-    """List and search files in uploads and scratch workspaces."""
+    """List and search files on local filesystem."""
 
     def __init__(self, username: str = None, session_id: str = None):
         self.username = username
         self.session_id = session_id
 
-    def _get_allowed_roots(self) -> List[Path]:
-        roots = []
-        if self.session_id:
-            scratch = config.SCRATCH_DIR / self.session_id
-            scratch.mkdir(parents=True, exist_ok=True)
-            roots.append(scratch)
-        if self.username:
-            uploads = config.UPLOAD_DIR / self.username
-            uploads.mkdir(parents=True, exist_ok=True)
-            roots.append(uploads)
-        return roots
+    def _resolve_base_path(self, path: Optional[str]) -> Path:
+        """
+        Resolve base path for list/find.
 
-    def _is_within_allowed(self, path: Path) -> bool:
-        resolved = path.resolve()
-        for root in self._get_allowed_roots():
-            if str(resolved).startswith(str(root.resolve())):
-                return True
-        return False
+        If path is omitted, use current working directory.
+        """
+        if not path:
+            return Path.cwd().resolve()
+        target = Path(path).expanduser()
+        if target.is_absolute():
+            return target.resolve()
+        return (Path.cwd() / target).resolve()
 
     def navigate(
         self,
@@ -52,44 +44,12 @@ class FileNavigatorTool:
         if operation == "list":
             return self._list_directory(path)
         elif operation == "find":
-            return self._find_files(pattern or "*")
+            return self._find_files(pattern or "*", path)
         else:
             return {"success": False, "error": f"Unknown operation: {operation}. Use 'list' or 'find'."}
 
     def _list_directory(self, path: Optional[str] = None) -> Dict[str, Any]:
-        if path:
-            target = Path(path)
-            if not target.is_absolute():
-                # Try scratch first, then uploads
-                candidates = []
-                if self.session_id:
-                    candidates.append(config.SCRATCH_DIR / self.session_id / path)
-                if self.username:
-                    candidates.append(config.UPLOAD_DIR / self.username / path)
-
-                target = None
-                for c in candidates:
-                    if c.exists() and c.is_dir():
-                        target = c
-                        break
-
-                if target is None:
-                    return {"success": False, "error": f"Directory not found: {path}"}
-            else:
-                target = target.resolve()
-                if not self._is_within_allowed(target):
-                    raise PermissionError("Access denied: path outside allowed directories")
-        else:
-            # List all roots
-            entries = []
-            for root in self._get_allowed_roots():
-                entries.append({
-                    "name": root.name,
-                    "path": str(root),
-                    "is_dir": True,
-                    "type": "scratch" if "scratch" in str(root) else "uploads",
-                })
-            return {"success": True, "files": entries, "path": "workspace roots"}
+        target = self._resolve_base_path(path)
 
         if not target.is_dir():
             return {"success": False, "error": f"Not a directory: {path}"}
@@ -107,22 +67,28 @@ class FileNavigatorTool:
 
         return {"success": True, "files": entries, "path": str(target)}
 
-    def _find_files(self, pattern: str) -> Dict[str, Any]:
+    def _find_files(self, pattern: str, path: Optional[str] = None) -> Dict[str, Any]:
+        root = self._resolve_base_path(path)
+        if not root.exists():
+            return {"success": False, "error": f"Path not found: {root}"}
+        if not root.is_dir():
+            return {"success": False, "error": f"Not a directory: {root}"}
+
         results = []
-        for root in self._get_allowed_roots():
-            for match in root.glob(pattern):
-                if match.is_file():
-                    stat = match.stat()
-                    results.append({
-                        "name": match.name,
-                        "path": str(match),
-                        "size": stat.st_size,
-                        "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    })
+        for match in root.glob(pattern):
+            if match.is_file():
+                stat = match.stat()
+                results.append({
+                    "name": match.name,
+                    "path": str(match),
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                })
 
         return {
             "success": True,
             "files": results,
+            "root": str(root),
             "pattern": pattern,
             "count": len(results),
         }
