@@ -30,7 +30,11 @@ Search the web for current information, news, or facts not in your training data
 Avoid websearch.
 
 ### python_coder
-Execute a coding task by providing natural language instructions — describe WHAT you want done, not HOW. An AI coding agent generates the Python code and executes it. Files persist across calls within the same session. Example: "Read data.csv, compute the mean of each column, and save a summary to summary.txt"
+Execute a coding task by providing natural language instructions — describe WHAT you want done, not HOW. 
+An AI coding agent generates the Python code and executes it. 
+Files persist across calls within the same session. 
+Example: "Read data.csv, compute the mean of each column, and save a summary to summary.txt"
+Using the coder, avoid executing the final code. Generate the final code, execute using shell_exec
 
 ### rag
 Retrieve relevant information from user-uploaded document collections using semantic search. You must specify which collection to search.
