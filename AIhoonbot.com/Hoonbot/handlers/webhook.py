@@ -24,6 +24,39 @@ _DEBOUNCE_SECONDS = 1.5
 
 MEMORY_FILE = os.path.join(config.DATA_DIR, "memory.md")
 
+# Per-room persistent session IDs (room_id -> session_id string)
+_SESSIONS_FILE = os.path.join(config.DATA_DIR, "room_sessions.json")
+_room_sessions: dict[int, str] = {}
+
+
+def _load_room_sessions() -> None:
+    """Load persisted room→session mappings from disk."""
+    global _room_sessions
+    try:
+        with open(_SESSIONS_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+            _room_sessions = {int(k): v for k, v in raw.items()}
+        logger.info(f"[Sessions] Loaded {len(_room_sessions)} room session(s) from disk")
+    except FileNotFoundError:
+        _room_sessions = {}
+    except Exception as e:
+        logger.warning(f"[Sessions] Could not load room sessions: {e}")
+        _room_sessions = {}
+
+
+def _save_room_sessions() -> None:
+    """Persist room→session mappings to disk."""
+    try:
+        os.makedirs(os.path.dirname(_SESSIONS_FILE), exist_ok=True)
+        with open(_SESSIONS_FILE, "w", encoding="utf-8") as f:
+            json.dump({str(k): v for k, v in _room_sessions.items()}, f)
+    except Exception as e:
+        logger.warning(f"[Sessions] Could not save room sessions: {e}")
+
+
+# Load on module import
+_load_room_sessions()
+
 
 def _read_memory() -> str:
     """Read memory.md, return empty string if not exists."""
@@ -117,36 +150,41 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
         if not config.LLM_MODEL:
             raise ValueError("LLM_MODEL is not configured. Run: python setup.py")
 
-        # Load context
-        system_prompt_base = _load_system_prompt()
-        memory = _read_memory()
-
-        # Get absolute path to memory file
-        abs_memory_path = os.path.abspath(MEMORY_FILE)
-
-        # Build context: PROMPT.md + memory location + current memory
-        # NOTE: LLM_API_fast agents inject their own system prompt, so we include
-        # PROMPT.md as the FIRST user message instead to ensure it's read
-        context = system_prompt_base
-        context += f"\n\n---\n\n## Memory File Location for This Session\n\nAbsolute path: `{abs_memory_path}`"
-        if memory:
-            context += f"\n\n## Current Memory Content\n\n{memory}"
-        else:
-            context += f"\n\n## Current Memory\n\n(No memory saved yet)"
-
-        # Build messages: PROMPT context first, then user message
-        # This ensures PROMPT.md isn't overridden by agent's default system prompt
-        messages = [
-            {"role": "user", "content": f"{context}\n\n---\n\nUser: {content}"},
-        ]
-
-        # Call LLM_API_fast with auto agent (has access to all tools)
         headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
-        llm_data = {
-            "model": config.LLM_MODEL,
-            "messages": json.dumps(messages),
-            "agent_type": "auto",  # Auto agent uses tools automatically
-        }
+        existing_session_id = _room_sessions.get(room_id)
+
+        if existing_session_id:
+            # Continuing an existing session — just send the new user message.
+            # The server will prepend full conversation history automatically.
+            messages = [{"role": "user", "content": content}]
+            llm_data = {
+                "model": config.LLM_MODEL,
+                "messages": json.dumps(messages),
+                "session_id": existing_session_id,
+            }
+            logger.info(f"[LLM] Room {room_id}: continuing session {existing_session_id}")
+        else:
+            # First message for this room — inject full context so the LLM knows
+            # its personality and current memory. Subsequent turns use history.
+            system_prompt_base = _load_system_prompt()
+            memory = _read_memory()
+            abs_memory_path = os.path.abspath(MEMORY_FILE)
+
+            context = system_prompt_base
+            context += f"\n\n---\n\n## Memory File Location for This Session\n\nAbsolute path: `{abs_memory_path}`"
+            if memory:
+                context += f"\n\n## Current Memory Content\n\n{memory}"
+            else:
+                context += "\n\n## Current Memory\n\n(No memory saved yet)"
+
+            messages = [
+                {"role": "user", "content": f"{context}\n\n---\n\nUser: {content}"},
+            ]
+            llm_data = {
+                "model": config.LLM_MODEL,
+                "messages": json.dumps(messages),
+            }
+            logger.info(f"[LLM] Room {room_id}: starting new session")
 
         logger.info(f"[LLM] Calling {config.LLM_API_URL}/v1/chat/completions with model={config.LLM_MODEL}")
         async with httpx.AsyncClient(timeout=300.0) as client:
@@ -155,8 +193,24 @@ async def process_message(room_id: int, content: str, sender_name: str) -> None:
                 data=llm_data,
                 headers=headers,
             )
+            # If session was deleted server-side, retry without session_id
+            if response.status_code == 404 and existing_session_id:
+                logger.warning(f"[LLM] Session {existing_session_id} not found, starting fresh")
+                del _room_sessions[room_id]
+                _save_room_sessions()
+                await messenger.stop_typing(room_id)
+                await process_message(room_id, content, sender_name)
+                return
+
             response.raise_for_status()
             result = response.json()
+
+        # Save the session_id returned by the server for future turns
+        returned_session_id = result.get("x_session_id")
+        if returned_session_id and returned_session_id != existing_session_id:
+            _room_sessions[room_id] = returned_session_id
+            _save_room_sessions()
+            logger.info(f"[LLM] Room {room_id}: session saved as {returned_session_id}")
 
         reply = result["choices"][0]["message"]["content"]
 
