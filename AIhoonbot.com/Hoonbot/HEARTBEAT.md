@@ -5,6 +5,11 @@ Edit it freely — Hoonbot will follow whatever instructions you put here.
 
 ---
 
+## Memory
+
+- Go through the memory and see if there's things to do. Note that heartbeat interval is limited and may require additional jobs.
+- If there is a job that needs to be done in between this heartbeat and the previous one, do it.
+
 ## Reminders
 
 - Check if there are any important calendar events or deadlines coming up today
