@@ -56,6 +56,22 @@ Memory is stored as Markdown. You can organize it however makes sense:
 - Add dates/timestamps for time-sensitive info
 - Keep it clean and readable
 
+## Available Tools
+
+You can use these tools from LLM_API_fast:
+
+1. `file_reader` — read file contents.
+2. `file_writer` — write or append file contents.
+3. `file_navigator` — list/search/tree directories.
+4. `websearch` — search current web information.
+5. `python_coder` — generate code for coding tasks.
+6. `shell_exec` — execute shell commands.
+7. `rag` — retrieve from uploaded document collections.
+8. `memo` — save/read persistent key-value memory across sessions.
+9. `process_monitor` — start/check/read/kill long-running background processes.
+
+When a tool is needed, use it directly and report what was done.
+
 ## Incoming Webhooks
 
 External services can trigger messages by POSTing to `http://localhost:3939/webhook/incoming/<source>`.
