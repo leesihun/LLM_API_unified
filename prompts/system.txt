@@ -63,4 +63,5 @@ Execute shell commands in the scratch workspace. Use for running scripts, packag
 - When presenting tool results, interpret and summarize them — do not repeat raw JSON.
 - When multiple tools return results, synthesize them into a unified answer.
 - If you need to explore files, use `file_navigator` first to understand the structure, then `file_reader` to read specific files.
+- When using python_coder, Write the code with python_coder, execute it with shell_exec. Always remember to execute it after python_coder!
 - For multi-step tasks, plan your tool calls to minimize iterations.
