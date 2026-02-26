@@ -46,6 +46,11 @@ All settings live in `config.py`. Key settings to know:
 | `TAVILY_API_KEY` | *(set this)* | Required for web search |
 | `MAX_CONVERSATION_HISTORY` | `50` | Messages retained per session |
 | `SESSION_CLEANUP_DAYS` | `7` | Sessions auto-deleted after N days |
+| `MEMO_DIR` | `data/memory` | Per-user persistent memo storage |
+| `MEMO_MAX_ENTRIES` | `100` | Max memo entries per user |
+| `MEMO_MAX_VALUE_LENGTH` | `1000` | Max chars per memo value |
+| `JOBS_DIR` | `data/jobs` | Background job JSON files |
+| `JOBS_CLEANUP_DAYS` | `30` | Job files deleted after N days |
 
 **Per-tool overrides** via `TOOL_PARAMETERS` dict (temperature, max_tokens, timeout per tool) and `TOOL_RESULT_BUDGET` dict (char limits for microcompaction).
 
@@ -73,7 +78,8 @@ While iteration < AGENT_MAX_ITERATIONS:
 **System prompt injection** (`_build_system_prompt(attached_files)`):
 1. Base `system.txt` content
 2. Available RAG collections for current user (loaded via `RAGTool.list_collections()`)
-3. Attached file metadata (name, size, type + structure: headers/columns/imports/preview depending on file type)
+3. Persistent memo entries from `data/memory/{username}.json` (reloaded each request — NOT cached)
+4. Attached file metadata (name, size, type + structure: headers/columns/imports/preview depending on file type)
 
 **File types with rich metadata**: CSV (headers, sample rows), JSON (structure, keys), Excel (sheets, columns), code files (imports, definitions, preview), text (line/char count, preview).
 
@@ -121,6 +127,8 @@ Tools run **in-process** (no HTTP between agent and tools):
 | **file_writer** | `tools/file_ops/writer.py` | `FileWriterTool(session_id).write(path, content, mode)` |
 | **file_navigator** | `tools/file_ops/navigator.py` | `FileNavigatorTool(username, session_id).navigate(operation, path, pattern)` |
 | **shell_exec** | `tools/shell/tool.py` | `ShellExecTool(session_id).execute(command, timeout, working_directory)` |
+| **process_monitor** | `tools/process_monitor/tool.py` | `ProcessMonitorTool(session_id).execute(operation, handle)` — start/status/read_output/kill/list |
+| **memo** | `tools/memo/tool.py` | `MemoTool(username).execute(operation, key, value)` — write/read/list/delete |
 
 Tool schemas in `tools_config.py`. `session_id` is stripped from all schemas before sending to LLM (injected by `_dispatch_tool()` at call time).
 
@@ -134,21 +142,27 @@ Tool schemas in `tools_config.py`. `session_id` is stripped from all schemas bef
 |------|-----------|
 | `auth.py` | `/api/auth/signup`, `/api/auth/login`, `/api/auth/me` |
 | `chat.py` | `POST /v1/chat/completions` (OpenAI-compatible, streaming + file uploads) |
-| `sessions.py` | `/api/chat/sessions`, `/api/chat/history` |
+| `sessions.py` | `GET /api/chat/sessions[?q=]`, `PATCH /api/chat/sessions/{id}`, `GET /api/chat/history/{id}` |
 | `models.py` | `GET /v1/models` |
 | `admin.py` | `/api/admin/*` (user management) |
 | `tools.py` | `/api/tools/*` (direct tool access + RAG collection management) |
+| `jobs.py` | `POST /api/jobs`, `GET /api/jobs`, `GET /api/jobs/{id}`, `GET /api/jobs/{id}/stream`, `DELETE /api/jobs/{id}` |
+| `app.py` | `GET /health`, `GET /api/health` (llamacpp status, disk, uptime, config summary) |
 
-`/v1/chat/completions` accepts form data (not JSON) so files can be uploaded alongside messages. `session_id` is optional — auto-creates a new session if absent.
+`/v1/chat/completions` accepts form data (not JSON) so files can be uploaded alongside messages. `session_id` is optional — auto-creates a new session if absent. New sessions get an auto-title from the first user message (truncated to 60 chars, no LLM call).
+
+**Background jobs** (`/api/jobs`): Fire-and-forget agent runs. `POST` returns `202` with a `job_id` immediately. The agent runs as an `asyncio.Task`, streaming output to `data/jobs/{job_id}.json` via `FileLock`. Clients poll `GET /api/jobs/{id}` or subscribe to SSE at `/api/jobs/{id}/stream`. Cancel via `DELETE`. Job state: `pending → running → completed | failed | cancelled`.
 
 ### Database & Storage
 
-- **SQLite** (`data/app.db`): users, sessions metadata
+- **SQLite** (`data/app.db`): users, sessions metadata (includes `title TEXT` column, migration applied on startup)
 - **Conversations**: JSON in `data/sessions/{session_id}.json` (FileLock for concurrent access)
 - **Uploads**: `data/uploads/{username}/` (persistent)
 - **Scratch**: `data/scratch/{session_id}/` (per-session workspace, also gets uploaded files)
 - **RAG**: `data/rag_documents/`, `data/rag_indices/`, `data/rag_metadata/`
 - **Tool Results**: `data/tool_results/{session_id}/` (microcompaction overflow)
+- **Memo**: `data/memory/{username}.json` — flat dict `{key: {value, updated_at}}` for cross-session memory
+- **Jobs**: `data/jobs/{job_id}.json` — background job state + streamed output chunks (FileLock)
 - **Logs**: `data/logs/prompts.log` (all LLM interactions via LLMInterceptor)
 
 ## Adding New Tools
@@ -171,6 +185,8 @@ Tool schemas in `tools_config.py`. `session_id` is stripped from all schemas bef
 6. **RAG score semantics** — FAISS `IndexFlatIP` returns cosine similarity (0–1, higher = better)
 7. **`data/` is gitignored** — entire runtime data directory excluded from version control
 8. **SSL cert** — `LlamaCppBackend` looks for `C:/DigitalCity.crt` and uses it if present
+9. **process_monitor uses handles, not PIDs** — `shell_exec` returns a `handle` string; pass it to `process_monitor`. The `ProcessRegistry` singleton tracks live processes by handle within a session.
+10. **Memo NOT prompt-cached** — `MemoTool.load_for_prompt()` is called fresh each request so writes take effect immediately in the same session (unlike the static `_CACHED_SYSTEM_PROMPT`)
 
 ## Default Credentials
 
