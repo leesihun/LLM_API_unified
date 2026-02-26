@@ -32,7 +32,7 @@ DEFAULT_MAX_TOKENS = 128000
 # ============================================================================
 # Agent Settings
 # ============================================================================
-AGENT_MAX_ITERATIONS = 8
+AGENT_MAX_ITERATIONS = 50
 AGENT_SYSTEM_PROMPT = "system.txt"
 
 # ============================================================================
@@ -100,6 +100,26 @@ TOOL_PARAMETERS = {
     "rag": {
         "temperature": 0.2,
         "max_tokens": 30000,
+        "timeout": 864000,
+    },
+    "file_reader": {
+        "temperature": 0.3,
+        "max_tokens": 8000,
+        "timeout": 60,
+    },
+    "file_writer": {
+        "temperature": 0.3,
+        "max_tokens": 8000,
+        "timeout": 60,
+    },
+    "file_navigator": {
+        "temperature": 0.3,
+        "max_tokens": 4000,
+        "timeout": 30,
+    },
+    "shell_exec": {
+        "temperature": 0.7,
+        "max_tokens": 8000,
         "timeout": 864000,
     },
 }

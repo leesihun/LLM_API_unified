@@ -1,7 +1,7 @@
 """
 Authentication utilities
 """
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from passlib.context import CryptContext
 from jose import JWTError, jwt
@@ -50,7 +50,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def create_access_token(username: str, role: str) -> str:
     """Create a JWT access token"""
-    expire = datetime.utcnow() + timedelta(hours=config.JWT_EXPIRATION_HOURS)
+    expire = datetime.now(timezone.utc) + timedelta(hours=config.JWT_EXPIRATION_HOURS)
     to_encode = {
         "sub": username,
         "role": role,

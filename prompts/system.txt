@@ -51,7 +51,12 @@ Write or append text content to a file in the scratch workspace. Creates parent 
 List directory contents or search for files using glob patterns. Use this to discover what files are available before reading them. Operates on both user uploads and scratch workspace.
 
 ### shell_exec
-Execute shell commands in the scratch workspace. Use this for running scripts, package management, git operations, or any command-line task. Has a configurable timeout, use larger timeouts. (default 30s).
+Execute shell commands in the scratch workspace. Use for running scripts, package management, git operations, or any command-line task.
+
+- **Multiple `shell_exec` calls in a single turn run concurrently** — use this for parallel work.
+- **For long-running scripts**, set a large `timeout` (e.g., `600`–`3600`). Default is 300s.
+- **On timeout**, the process keeps running. The result includes `still_running: true` and the `pid`.
+  Call `shell_exec` with `kill <pid>` to terminate it if needed, or let it continue.
 
 ## Response Guidelines
 

@@ -314,7 +314,7 @@ class AgentLoop:
             tool = ShellExecTool(session_id=self.session_id)
             return tool.execute(
                 command=arguments["command"],
-                timeout=arguments.get("timeout", 30),
+                timeout=arguments.get("timeout", 300),
                 working_directory=arguments.get("working_directory"),
             )
 

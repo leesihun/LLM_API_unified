@@ -105,7 +105,6 @@ Tools run **in-process** (no HTTP between agent and tools):
 | **file_writer** | `tools/file_ops/writer.py` | `FileWriterTool(session_id).write(path, content, mode)` |
 | **file_navigator** | `tools/file_ops/navigator.py` | `FileNavigatorTool(username, session_id).navigate(operation, path, pattern)` |
 | **shell_exec** | `tools/shell/tool.py` | `ShellExecTool(session_id).execute(command, timeout, working_directory)` |
-| **memory** | `tools/memory/tool.py` | `MemoryTool(username).execute(operation, key, value)` |
 
 Tool schemas are defined in `tools_config.py`. Schemas are cached at module load time in `agent.py` for llama.cpp KV cache stability, automatically excluding `session_id` (injected by the agent).
 
@@ -158,7 +157,6 @@ Both `stream=true` and `stream=false` go through the `AgentLoop`. Streaming yiel
 - **Scratch**: `data/scratch/{session_id}/`
 - **RAG**: `data/rag_documents/`, `data/rag_indices/`, `data/rag_metadata/`
 - **Tool Results**: `data/tool_results/{session_id}/` (microcompaction disk storage)
-- **Memory**: `data/memory/{username}.json` (persistent per-user key-value store)
 
 ## Adding New Tools
 
@@ -184,13 +182,11 @@ tools/
   rag/                - FAISS document retrieval
   file_ops/           - File reader, writer, navigator
   shell/              - Shell command execution
-  memory/             - Persistent key-value store
 prompts/
-  system.txt          - Structured ACI agent prompt (all 8 tools)
+  system.txt          - Structured ACI agent prompt (all 7 tools)
   tools/              - Tool-specific prompts (rag_synthesize, rag_query)
 data/                 - Runtime data (gitignored)
   tool_results/       - Microcompaction disk storage
-  memory/             - Per-user persistent memory
 ```
 
 ## Common Gotchas

@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Form
 from pydantic import BaseModel
 
 from backend.utils.auth import get_optional_user, get_current_user
+from backend.models.schemas import WebSearchRequest
 from backend.core.llm_backend import llm_backend
 from tools.web_search import WebSearchTool
 from tools.python_coder import PythonCoderTool
@@ -30,11 +31,6 @@ class ToolResponse(BaseModel):
     data: Dict[str, Any]
     metadata: Dict[str, Any]
     error: Optional[str] = None
-
-
-class WebSearchRequest(BaseModel):
-    query: str
-    max_results: Optional[int] = None
 
 
 class PythonCoderRequest(BaseModel):

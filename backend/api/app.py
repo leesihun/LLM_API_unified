@@ -4,7 +4,9 @@ Main FastAPI application — single server for chat, auth, tools, and sessions.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import json
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -29,10 +31,32 @@ app.add_middleware(
 )
 
 
+def _cleanup_old_sessions():
+    """Delete session JSON files older than SESSION_CLEANUP_DAYS."""
+    sessions_dir = Path("data/sessions")
+    if not sessions_dir.exists():
+        return
+    cutoff = datetime.now() - timedelta(days=config.SESSION_CLEANUP_DAYS)
+    removed = 0
+    for f in sessions_dir.glob("*.json"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            updated = datetime.fromisoformat(data.get("updated_at", ""))
+            if updated < cutoff:
+                f.unlink()
+                removed += 1
+        except Exception:
+            pass
+    if removed:
+        print(f"[Startup] Cleaned up {removed} old session file(s)")
+
+
 @app.on_event("startup")
 async def startup_event():
     from backend.utils.stop_signal import clear_stop
     clear_stop()
+
+    _cleanup_old_sessions()
 
     from backend.core.llm_backend import llm_backend
     available = await llm_backend.is_available()

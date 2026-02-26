@@ -3,6 +3,7 @@ Shell Execution Tool
 Run shell commands in a subprocess.
 """
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -39,15 +40,18 @@ class ShellExecTool:
     def execute(
         self,
         command: str,
-        timeout: int = 30,
+        timeout: int = 300,
         working_directory: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute a shell command.
 
+        On timeout, does NOT kill the process — returns partial output so far
+        plus the PID, allowing the caller to decide whether to kill or wait.
+
         Args:
             command: The shell command to run
-            timeout: Maximum execution time in seconds
+            timeout: Seconds to wait before returning partial output (process keeps running)
             working_directory: Absolute path or path relative to current working directory
         """
         cwd = self._resolve_working_directory(working_directory)
@@ -55,42 +59,80 @@ class ShellExecTool:
 
         start = time.time()
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 command,
                 shell=True,
                 cwd=str(cwd),
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,
                 encoding='utf-8',
                 errors='replace',
             )
-            duration = time.time() - start
 
-            stdout = result.stdout
-            stderr = result.stderr
-            if len(stdout) > MAX_OUTPUT_SIZE:
-                stdout = stdout[:MAX_OUTPUT_SIZE] + "\n...[truncated]"
-            if len(stderr) > MAX_OUTPUT_SIZE:
-                stderr = stderr[:MAX_OUTPUT_SIZE] + "\n...[truncated]"
+            stdout_chunks: list = []
+            stderr_chunks: list = []
 
-            return {
-                "success": result.returncode == 0,
-                "stdout": stdout,
-                "stderr": stderr,
-                "exit_code": result.returncode,
-                "duration": round(duration, 2),
-                "command": command,
-            }
+            def _drain(pipe, chunks):
+                while True:
+                    chunk = pipe.read(4096)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
 
-        except subprocess.TimeoutExpired:
-            duration = time.time() - start
-            return {
-                "success": False,
-                "error": f"Command timed out after {timeout}s",
-                "duration": round(duration, 2),
-                "command": command,
-            }
+            t_out = threading.Thread(target=_drain, args=(proc.stdout, stdout_chunks), daemon=True)
+            t_err = threading.Thread(target=_drain, args=(proc.stderr, stderr_chunks), daemon=True)
+            t_out.start()
+            t_err.start()
+
+            try:
+                proc.wait(timeout=timeout)
+                t_out.join(1)
+                t_err.join(1)
+
+                stdout = "".join(stdout_chunks)
+                stderr = "".join(stderr_chunks)
+                if len(stdout) > MAX_OUTPUT_SIZE:
+                    stdout = stdout[:MAX_OUTPUT_SIZE] + "\n...[truncated]"
+                if len(stderr) > MAX_OUTPUT_SIZE:
+                    stderr = stderr[:MAX_OUTPUT_SIZE] + "\n...[truncated]"
+
+                duration = time.time() - start
+                return {
+                    "success": proc.returncode == 0,
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "exit_code": proc.returncode,
+                    "duration": round(duration, 2),
+                    "command": command,
+                    "pid": proc.pid,
+                }
+
+            except subprocess.TimeoutExpired:
+                # Collect whatever arrived so far — do NOT kill the process
+                t_out.join(0.5)
+                t_err.join(0.5)
+
+                stdout = "".join(stdout_chunks)
+                stderr = "".join(stderr_chunks)
+                if len(stdout) > MAX_OUTPUT_SIZE:
+                    stdout = stdout[:MAX_OUTPUT_SIZE] + "\n...[truncated]"
+                if len(stderr) > MAX_OUTPUT_SIZE:
+                    stderr = stderr[:MAX_OUTPUT_SIZE] + "\n...[truncated]"
+
+                duration = time.time() - start
+                return {
+                    "success": False,
+                    "still_running": True,
+                    "error": f"Process still running after {timeout}s",
+                    "stdout": stdout,
+                    "stderr": stderr,
+                    "duration": round(duration, 2),
+                    "command": command,
+                    "pid": proc.pid,
+                    "note": f"PID {proc.pid} is alive. Call shell_exec with 'kill {proc.pid}' to terminate if needed.",
+                }
+
         except Exception as e:
             duration = time.time() - start
             return {

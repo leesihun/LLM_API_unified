@@ -140,7 +140,7 @@ class ToolsListResponse(BaseModel):
 
 class WebSearchRequest(BaseModel):
     query: str
-    max_results: int = 5
+    max_results: Optional[int] = None
 
 
 class WebSearchResult(BaseModel):
