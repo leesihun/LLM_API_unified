@@ -113,6 +113,9 @@ class AgentLoop:
     def _build_system_prompt(self, attached_files: Optional[List[Dict[str, Any]]] = None) -> str:
         prompt = _CACHED_SYSTEM_PROMPT
         prompt += self._format_rag_collections_context()
+        if self.username and "memo" in self.enabled_tools:
+            from tools.memo.tool import MemoTool
+            prompt += MemoTool.load_for_prompt(self.username)
         if attached_files:
             prompt += self._format_attached_files(attached_files)
         return prompt
@@ -316,6 +319,28 @@ class AgentLoop:
                 command=arguments["command"],
                 timeout=arguments.get("timeout", 300),
                 working_directory=arguments.get("working_directory"),
+            )
+
+        elif name == "memo":
+            from tools.memo import MemoTool
+            tool = MemoTool(username=self.username)
+            return tool.execute(
+                operation=arguments["operation"],
+                key=arguments.get("key"),
+                value=arguments.get("value"),
+            )
+
+        elif name == "process_monitor":
+            from tools.process_monitor import ProcessMonitorTool
+            tool = ProcessMonitorTool(session_id=self.session_id)
+            return tool.execute(
+                operation=arguments["operation"],
+                command=arguments.get("command"),
+                handle=arguments.get("handle"),
+                working_directory=arguments.get("working_directory"),
+                offset=arguments.get("offset"),
+                max_lines=arguments.get("max_lines"),
+                stream=arguments.get("stream"),
             )
 
         else:

@@ -32,6 +32,17 @@ import config
 router = APIRouter(prefix="/v1", tags=["chat"])
 
 
+def _generate_session_title(messages: list) -> str:
+    """Generate a short title from the first user message."""
+    for msg in messages:
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        content = msg.get("content") if isinstance(msg, dict) else getattr(msg, "content", None)
+        if role == "user" and content:
+            text = str(content).strip().replace("\n", " ")
+            return text[:60] + ("…" if len(text) > 60 else "")
+    return "Untitled"
+
+
 def _prepare_messages_with_files(
     messages: List[ChatMessage],
     file_paths: List[str],
@@ -103,6 +114,8 @@ async def chat_completions(
         else:
             session_id = str(uuid.uuid4())
             db.create_session(session_id, username)
+            title = _generate_session_title(chat_messages)
+            db.update_session_title(session_id, title)
             history = [{"role": msg.role, "content": msg.content or ""} for msg in chat_messages]
 
         # File uploads

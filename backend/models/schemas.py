@@ -113,6 +113,7 @@ class ChangeModelRequest(BaseModel):
 # ============================================================================
 class SessionInfo(BaseModel):
     session_id: str
+    title: Optional[str] = None
     created_at: str
     message_count: int
 

@@ -2,11 +2,12 @@
 Hoonbot — entry point.
 
 Startup sequence:
-1. Register bot with Messenger (get / restore API key)
-2. Register webhook subscription
-3. Serve FastAPI on HOONBOT_PORT
-
-All state is stored in memory.md and managed via LLM_API_fast tools.
+1. Health-check LLM API
+2. Register bot with Messenger (get / restore API key)
+3. Register webhook subscription (new_message, message_edited, message_deleted)
+4. Catch up on missed messages
+5. Start heartbeat loop
+6. Serve FastAPI on HOONBOT_PORT
 """
 import asyncio
 import logging
@@ -33,6 +34,9 @@ logger = logging.getLogger("hoonbot")
 # Key storage file so we survive restarts without re-registering
 _KEY_FILE = os.path.join(os.path.dirname(__file__), "data", ".apikey")
 
+# Webhook events to subscribe to
+_WEBHOOK_EVENTS = ["new_message", "message_edited", "message_deleted"]
+
 
 def _load_saved_key() -> str:
     try:
@@ -46,6 +50,22 @@ def _save_key(key: str) -> None:
     os.makedirs(os.path.dirname(_KEY_FILE), exist_ok=True)
     with open(_KEY_FILE, "w") as f:
         f.write(key)
+
+
+async def _check_llm_health() -> None:
+    """Ping LLM API at startup to verify connectivity."""
+    if not config.LLM_API_KEY:
+        logger.warning("[Health] LLM API key not configured — run setup.py")
+        return
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{config.LLM_API_URL}/health")
+            if resp.status_code == 200:
+                logger.info(f"[Health] LLM API reachable at {config.LLM_API_URL}")
+            else:
+                logger.warning(f"[Health] LLM API returned status {resp.status_code}")
+    except Exception as e:
+        logger.warning(f"[Health] LLM API unreachable at {config.LLM_API_URL}: {e}")
 
 
 async def _catch_up() -> None:
@@ -64,7 +84,7 @@ async def _catch_up() -> None:
 
     for room in rooms:
         room_id = room["id"]
-        messages = await messenger.get_room_messages(room_id, limit=20)
+        messages = await messenger.get_room_messages(room_id, limit=config.CATCHUP_MESSAGE_LIMIT)
         if not messages:
             continue
 
@@ -91,8 +111,9 @@ async def _catch_up() -> None:
         missed = messages[last_human_idx]
         content = missed.get("content", "").strip()
         sender = missed.get("senderName", "unknown")
+        msg_id = missed.get("id")
         logger.info(f"[CatchUp] Room {room_id}: missed msg from {sender!r}: {content[:50]!r}")
-        await process_message(room_id, content, sender)
+        await process_message(room_id, content, sender, msg_id)
 
 
 @asynccontextmanager
@@ -100,7 +121,13 @@ async def lifespan(app: FastAPI):
     # Ensure data directory exists
     os.makedirs(config.DATA_DIR, exist_ok=True)
 
+    # --- Health check ---
+    await _check_llm_health()
+
     # --- Bot registration ---
+    retries = config.STARTUP_RETRY_ATTEMPTS
+    delay = config.STARTUP_RETRY_DELAY
+
     saved_key = _load_saved_key()
     if saved_key:
         messenger.set_api_key(saved_key)
@@ -110,8 +137,8 @@ async def lifespan(app: FastAPI):
         key = await with_retry(
             messenger.register_bot,
             config.MESSENGER_BOT_NAME,
-            max_attempts=6,
-            base_delay=1.0,
+            max_attempts=retries,
+            base_delay=delay,
             label="Messenger bot registration",
         )
         messenger.set_api_key(key)
@@ -127,9 +154,9 @@ async def lifespan(app: FastAPI):
         await with_retry(
             messenger.register_webhook,
             webhook_url,
-            ["new_message"],
-            max_attempts=6,
-            base_delay=1.0,
+            _WEBHOOK_EVENTS,
+            max_attempts=retries,
+            base_delay=delay,
             label="Messenger webhook registration",
         )
     except httpx.HTTPStatusError as exc:
@@ -139,8 +166,8 @@ async def lifespan(app: FastAPI):
         key = await with_retry(
             messenger.register_bot,
             config.MESSENGER_BOT_NAME,
-            max_attempts=6,
-            base_delay=1.0,
+            max_attempts=retries,
+            base_delay=delay,
             label="Messenger bot registration",
         )
         messenger.set_api_key(key)
@@ -149,13 +176,16 @@ async def lifespan(app: FastAPI):
         await with_retry(
             messenger.register_webhook,
             webhook_url,
-            ["new_message"],
-            max_attempts=6,
-            base_delay=1.0,
+            _WEBHOOK_EVENTS,
+            max_attempts=retries,
+            base_delay=delay,
             label="Messenger webhook registration (after key refresh)",
         )
 
     logger.info(f"[Hoonbot] Ready on port {config.HOONBOT_PORT}")
+    logger.info(f"[Hoonbot] Streaming={'on' if config.STREAMING_ENABLED else 'off'}, "
+                f"Session max age={config.SESSION_MAX_AGE_DAYS}d, "
+                f"Debounce={config.DEBOUNCE_SECONDS}s")
 
     # --- Catch up on missed messages ---
     asyncio.create_task(_catch_up())
@@ -166,6 +196,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # --- Shutdown ---
+    await messenger.close_client()
     logger.info("[Hoonbot] Shutdown complete")
 
 

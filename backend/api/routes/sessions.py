@@ -1,9 +1,11 @@
 """
 Session management endpoints
-/api/chat/sessions - List user sessions
+/api/chat/sessions - List or search user sessions
+/api/chat/sessions/{session_id} - Rename a session
 /api/chat/history/{session_id} - Get conversation history
 """
 from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 from typing import Optional
 
 from backend.models.schemas import SessionsListResponse, SessionInfo, ChatHistoryResponse, ChatMessage
@@ -13,26 +15,31 @@ from backend.utils.auth import get_current_user, get_optional_user
 router = APIRouter(prefix="/api/chat", tags=["sessions"])
 
 
-@router.get("/sessions", response_model=SessionsListResponse)
-def list_sessions(current_user: Optional[dict] = Depends(get_optional_user)):
-    """
-    List all sessions for the current user
+class RenameSessionRequest(BaseModel):
+    title: str
 
-    Returns:
-        List of session metadata
+
+@router.get("/sessions", response_model=SessionsListResponse)
+def list_sessions(
+    q: Optional[str] = None,
+    current_user: Optional[dict] = Depends(get_optional_user),
+):
     """
-    # Use authenticated user or default to "guest"
+    List sessions for the current user. Pass ?q=keyword to search by title or session ID.
+    """
     username = current_user["username"] if current_user else "guest"
 
-    # Get sessions from database
-    sessions = db.list_user_sessions(username)
+    if q and q.strip():
+        sessions = db.search_sessions(username, q.strip())
+    else:
+        sessions = db.list_user_sessions(username)
 
-    # Convert to response format
     session_infos = [
         SessionInfo(
             session_id=session["id"],
+            title=session.get("title"),
             created_at=session["created_at"],
-            message_count=session["message_count"]
+            message_count=session["message_count"],
         )
         for session in sessions
     ]
@@ -40,41 +47,49 @@ def list_sessions(current_user: Optional[dict] = Depends(get_optional_user)):
     return SessionsListResponse(sessions=session_infos)
 
 
-@router.get("/history/{session_id}", response_model=ChatHistoryResponse)
-def get_history(
+@router.patch("/sessions/{session_id}", response_model=SessionInfo)
+def rename_session(
     session_id: str,
-    current_user: Optional[dict] = Depends(get_optional_user)
+    body: RenameSessionRequest,
+    current_user: Optional[dict] = Depends(get_optional_user),
 ):
-    """
-    Get conversation history for a specific session
-
-    Args:
-        session_id: Session ID
-
-    Returns:
-        List of messages in the conversation
-    """
-    # Verify session exists
+    """Rename a session by setting its title."""
     session = db.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    # Verify user owns this session (if authenticated)
-    # Allow access if:
-    # 1. User is not authenticated (guest can access any session for now)
-    # 2. User is authenticated AND owns the session
-    # 3. User is authenticated AND session belongs to "guest"
     if current_user:
-        # User is authenticated - check ownership
         if session["username"] != current_user["username"] and session["username"] != "guest":
             raise HTTPException(status_code=403, detail="Access denied")
 
-    # Load conversation history
+    title = body.title.strip()[:120]  # cap at 120 chars
+    db.update_session_title(session_id, title)
+
+    return SessionInfo(
+        session_id=session_id,
+        title=title,
+        created_at=session["created_at"],
+        message_count=session["message_count"],
+    )
+
+
+@router.get("/history/{session_id}", response_model=ChatHistoryResponse)
+def get_history(
+    session_id: str,
+    current_user: Optional[dict] = Depends(get_optional_user),
+):
+    """Get conversation history for a specific session."""
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if current_user:
+        if session["username"] != current_user["username"] and session["username"] != "guest":
+            raise HTTPException(status_code=403, detail="Access denied")
+
     messages = conversation_store.load_conversation(session_id)
     if messages is None:
         messages = []
 
-    # Convert to Pydantic models
     chat_messages = [ChatMessage(**msg) for msg in messages]
-
     return ChatHistoryResponse(messages=chat_messages)

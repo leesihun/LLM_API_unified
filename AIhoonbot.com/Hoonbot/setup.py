@@ -18,7 +18,7 @@ if sys.platform == 'win32':
 import httpx
 
 
-def get_llm_api_token(llm_url: str, username: str = "admin", password: str = "administrator") -> str | None:
+def get_llm_api_token(llm_url: str, username: str, password: str) -> str | None:
     """Get access token from LLM_API_fast."""
     print(f"\n[Setup] Connecting to LLM_API_fast at {llm_url}")
 
@@ -44,7 +44,7 @@ def get_llm_api_token(llm_url: str, username: str = "admin", password: str = "ad
     except httpx.HTTPStatusError as e:
         print(f"[ERROR] Login failed: {e.response.status_code}")
         if e.response.status_code == 401:
-            print(f"        Invalid credentials (default: admin/administrator)")
+            print(f"        Invalid credentials — check HOONBOT_LLM_USERNAME / HOONBOT_LLM_PASSWORD in settings.txt")
         else:
             print(f"        {e.response.text}")
         return None
@@ -112,13 +112,21 @@ def main():
     print("  Hoonbot Setup")
     print("="*60)
 
+    # Import config to pick up settings.txt values
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(__file__))
+    import config as _cfg
+
     # LLM_API_fast URL
-    llm_url = os.environ.get("LLM_API_URL", "http://localhost:10007").rstrip("/")
+    llm_url = os.environ.get("LLM_API_URL", f"http://localhost:{_cfg.LLM_API_PORT}").rstrip("/")
+    username = _cfg.LLM_API_USERNAME
+    password = _cfg.LLM_API_PASSWORD
     print(f"\nLLM_API_fast URL: {llm_url}")
+    print(f"Username: {username}")
 
     # Get token
     print("\nAttempting to login to LLM_API_fast...")
-    token = get_llm_api_token(llm_url)
+    token = get_llm_api_token(llm_url, username, password)
 
     if not token:
         print("\n[Setup] Could not obtain LLM_API_KEY automatically.")

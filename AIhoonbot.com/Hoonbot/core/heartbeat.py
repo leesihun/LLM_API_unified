@@ -102,7 +102,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
 
     logger.info(f"[Heartbeat] Calling LLM (model={config.LLM_MODEL})")
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=float(config.LLM_TIMEOUT_SECONDS)) as client:
             response = await client.post(
                 f"{config.LLM_API_URL}/v1/chat/completions",
                 data={
@@ -118,7 +118,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         reply = (result["choices"][0]["message"]["content"] or "").strip()
         if reply:
             logger.info(f"[Heartbeat] LLM replied ({len(reply)} chars) — posting to room {config.MESSENGER_HOME_ROOM_ID}")
-            await send_fn(config.MESSENGER_HOME_ROOM_ID, f"💓 **Heartbeat**\n\n{reply}")
+            await send_fn(config.MESSENGER_HOME_ROOM_ID, f"**Autonomous agent**\n\n{reply}")
         else:
             logger.info("[Heartbeat] LLM returned empty reply — nothing to post")
 

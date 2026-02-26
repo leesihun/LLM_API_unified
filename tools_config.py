@@ -214,4 +214,94 @@ TOOL_SCHEMAS: dict = {
             "required": ["command"],
         },
     },
+
+    "memo": {
+        "name": "memo",
+        "description": (
+            "Read or write persistent memory that survives across sessions. "
+            "Use to save important results, decisions, file paths, or any fact you want to "
+            "remember in future conversations. Memory is per-user and automatically shown "
+            "at the start of every session."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["write", "read", "list", "delete"],
+                    "description": (
+                        "'write': save a value under a key. "
+                        "'read': retrieve a value by key. "
+                        "'list': show all saved entries. "
+                        "'delete': remove an entry by key."
+                    ),
+                },
+                "key": {
+                    "type": "string",
+                    "description": "Memory key name (e.g. 'best_lr', 'dataset_path', 'project_status').",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Value to store. Required for 'write' operation.",
+                },
+            },
+            "required": ["operation"],
+        },
+    },
+
+    "process_monitor": {
+        "name": "process_monitor",
+        "description": (
+            "Manage background processes: start long-running commands, check their status, "
+            "read their accumulated output, or kill them. Use this instead of shell_exec when "
+            "you need to launch a process and check on it later (e.g., servers, builds, watchers). "
+            "Each process gets a handle like 'proc_1' for future reference."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["start", "status", "read_output", "kill", "list"],
+                    "description": (
+                        "'start': launch a background command, returns a handle. "
+                        "'status': check if a process is running/exited (by handle). "
+                        "'read_output': get stdout/stderr since last read or from an offset (by handle). "
+                        "'kill': terminate a process (by handle). "
+                        "'list': show all tracked processes for this session."
+                    ),
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to run (required for 'start' operation).",
+                },
+                "handle": {
+                    "type": "string",
+                    "description": "Process handle (e.g. 'proc_1'). Required for 'status', 'read_output', 'kill'.",
+                },
+                "working_directory": {
+                    "type": "string",
+                    "description": "Working directory for the command (only for 'start'). Defaults to scratch workspace.",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": (
+                        "Line offset for 'read_output'. Returns lines starting from this offset. "
+                        "Use the 'next_offset' value from a previous read to get new lines. "
+                        "If omitted, returns the last 200 lines (tail mode)."
+                    ),
+                },
+                "max_lines": {
+                    "type": "integer",
+                    "description": "Maximum lines to return for 'read_output' (default: 200).",
+                },
+                "stream": {
+                    "type": "string",
+                    "enum": ["stdout", "stderr", "both"],
+                    "description": "Which output stream to read (default: 'both'). Only for 'read_output'.",
+                },
+            },
+            "required": ["operation"],
+        },
+    },
 }

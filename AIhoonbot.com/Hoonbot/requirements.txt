@@ -1,6 +1,3 @@
 fastapi
 uvicorn
 httpx
-apscheduler
-psutil
-plyer

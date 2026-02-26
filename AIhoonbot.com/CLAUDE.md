@@ -4,112 +4,158 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This is a full-stack AI assistant ecosystem composed of two main components:
+Two components that run together:
 
-- **Hoonbot** — Python/FastAPI personal AI bot (port 3939), connects to a local LLM API (port 10007)
-- **Messenger** — TypeScript/React/Electron real-time chat platform (port 3000) that serves as the human–bot communication bridge
+- **Hoonbot** — Python/FastAPI personal AI bot (port 3939), connects to LLM API (port 10007)
+- **Messenger** — TypeScript/Node.js real-time chat platform (port 10006 by default) that serves as the human-bot UI
 
-They are designed to run together. Hoonbot registers itself as a bot in Messenger, subscribes to webhooks, and responds to messages via the Messenger REST API.
+Hoonbot registers as a bot in Messenger, receives webhooks, processes messages through the LLM API agent, and replies via the Messenger REST API.
 
 ## Commands
 
 ### Full Stack
-
 ```bash
-./start-all.sh          # Start both Hoonbot and Messenger
+./start-all.sh              # Linux: start all services (sources settings.txt)
+start-all.bat               # Windows: start Messenger + Cloudflare only
 ```
 
 ### Hoonbot (Python)
-
 ```bash
 cd Hoonbot
 pip install -r requirements.txt
-python hoonbot.py
+python setup.py             # One-time: configure LLM API credentials
+python hoonbot.py           # Start the bot
 
-# Utilities
-python reset.py --all           # Reset all state
-python reset.py --memory        # Clear memory DB
-python reset.py --list-memory   # Print stored memories
+python reset.py --memory    # Clear memory.md
+python reset.py --list-memory
+python test_llm.py          # Verify LLM API connectivity
 ```
 
 ### Messenger (TypeScript/Node)
-
 ```bash
 cd Messenger
 npm install
-
-npm run dev             # Run server + client together
-npm run dev:server      # Server only (hot-reload via ts-node-dev)
-npm run dev:client      # Client only (Vite)
-
-npm run build           # Build Electron app for Windows
-npm run build:linux     # Build Electron app for Linux
-npm run build:web       # Web-only Vite build
-npm run typecheck       # TypeScript type check (no emit)
+npm run dev:server          # Server only (hot-reload)
+npm run dev                 # Server + Vite client
+npm run typecheck           # Type-check without emit
+npm run build:web           # Web-only build
+npm run build               # Electron build (Windows)
 ```
+
+## Configuration
+
+**Master config:** `settings.txt` at the repo root — all values readable by both `start-all.sh` (sourced as env vars) and `Hoonbot/config.py` (parsed directly, works on Windows too).
+
+`Hoonbot/config.py` reads: env var → `settings.txt` → hardcoded default. To change any Hoonbot behavior, edit `settings.txt`. Key Hoonbot settings:
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `HOONBOT_PORT` | 3939 | Bot server port |
+| `HOONBOT_BOT_NAME` | Bot | Display name in Messenger |
+| `HOONBOT_HOME_ROOM_ID` | 1 | Room that receives heartbeat output |
+| `HOONBOT_STREAMING` | true | Stream LLM responses with tool status updates |
+| `HOONBOT_DEBOUNCE_SECONDS` | 1.5 | Combine rapid messages within this window |
+| `HOONBOT_LLM_TIMEOUT` | 300 | LLM request timeout in seconds |
+| `HOONBOT_SESSION_MAX_AGE_DAYS` | 7 | Auto-expire and reset room sessions |
+| `HOONBOT_HEARTBEAT_INTERVAL` | 3600 | Seconds between heartbeat ticks |
+| `HOONBOT_HEARTBEAT_ACTIVE_START/END` | 00:00/23:59 | Active hours window |
+
+LLM credentials are stored in `Hoonbot/data/.llm_key` and `Hoonbot/data/.llm_model` (created by `setup.py`). The Messenger API key is in `Hoonbot/data/.apikey` (created at first startup).
 
 ## Architecture
 
-### How the Two Components Connect
+### Message Flow
 
-1. On startup, `Hoonbot/hoonbot.py` calls `POST /api/bots` on Messenger to register and receive an API key (stored in `Hoonbot/data/.apikey`).
-2. Hoonbot subscribes to `new_message` webhook events via `POST /api/webhooks`.
-3. Messenger fires `POST http://localhost:3939/webhook` for each new message.
-4. Hoonbot processes the message through the LLM and calls `POST /api/send-message` to reply.
+```
+Messenger UI
+    │ webhook: POST /webhook
+    ▼
+Hoonbot handlers/webhook.py
+    ├── validate (text/image/file, not bot, @mention if non-home room)
+    ├── mark_read (best-effort)
+    ├── debounce (combine rapid messages, configurable window)
+    └── process_message()
+            │ POST /v1/chat/completions (streaming or sync)
+            ▼
+        LLM API (port 10007)
+            └── agent loop: uses tools (websearch, file_reader/writer,
+                python_coder, shell_exec, rag, file_navigator)
+            │ SSE stream or JSON response
+            ▼
+        Hoonbot: send reply via Messenger API
+            └── reply is threaded as a reply to the original message
+```
 
-### Hoonbot Internal Architecture
+### Hoonbot Internal Structure
 
-Entry point: `Hoonbot/hoonbot.py` — FastAPI app with lifespan startup/shutdown.
+**Entry point:** `hoonbot.py` — lifespan startup: health-check LLM API → register bot → subscribe webhooks (`new_message`, `message_edited`, `message_deleted`) → catch-up on missed messages → start heartbeat loop.
 
-Core modules in `Hoonbot/core/`:
-- `llm.py` — LLM API client; loads `SOUL.md` as system prompt, injects memories + skills
-- `memory.py` — Persistent key-value store (SQLite + FTS5); `_system`-tagged entries are hidden from the LLM
-- `history.py` — Per-room conversation history (SQLite, max 50 messages)
-- `heartbeat.py` — Proactive background loop driven by `HEARTBEAT.md` checklist
-- `scheduled.py` + `scheduler.py` — APScheduler-backed cron and one-time job storage
-- `skills.py` — Loads Markdown files from `skills/` and injects them into every LLM prompt
-- `daily_log.py` — Append-only daily notes to `data/memory/YYYY-MM-DD.md`
-- `notify.py` — Desktop notifications via plyer
-- `status_file.py` — Regenerates `data/status.md` (human-readable DB snapshot)
-- `messenger.py` — HTTP client wrapper for the Messenger bot API
+**Key modules:**
 
-Webhook handlers in `Hoonbot/handlers/`:
-- `webhook.py` — Handles Messenger-originated events (`POST /webhook`) and external incoming webhooks (`POST /webhook/incoming/<source>`, authenticated via `X-Webhook-Secret`)
+| File | Responsibility |
+|------|---------------|
+| `handlers/webhook.py` | All message processing: debounce, session management, streaming/sync LLM calls, file/image handling, session lifecycle |
+| `core/messenger.py` | Messenger REST API client with persistent connection pool. Covers: send/edit/delete messages, typing, read receipts, files, pins, web watchers, room creation, search |
+| `core/heartbeat.py` | Background loop: reads `HEARTBEAT.md` checklist, calls LLM agent, posts result to home room |
+| `core/retry.py` | `with_retry()` helper — exponential backoff for transient HTTP failures |
+| `config.py` | Reads `settings.txt` + env vars. Single source of truth for all runtime config |
 
-LLM command patterns the bot embeds in its replies (parsed by `hoonbot.py`):
-- `[MEMORY_SAVE: key=..., value=..., tags=...]`
-- `[MEMORY_DELETE: key=...]`
-- `[SCHEDULE: name=..., cron=HH:MM, prompt=...]`
-- `[SCHEDULE: name=..., at=YYYY-MM-DD HH:MM, prompt=...]`
-- `[DAILY_LOG: one sentence entry]`
-- `[SKILL_CREATE: name=..., description=...]...instructions...[/SKILL_CREATE]`
-- `[NOTIFY: title=..., message=...]`
+**System prompt:** `PROMPT.md` — defines identity, memory usage, and behavior. Tool documentation is intentionally omitted here because the LLM API already sends tool schemas via the `tools` parameter automatically.
 
-Configurable via environment variables — see `Hoonbot/config.py` for all 40+ options (ports, active hours, compaction threshold, webhook secret, etc.).
+**Heartbeat prompt:** `HEARTBEAT.md` — user-editable checklist. The heartbeat runs this checklist through the full LLM agent every `HEARTBEAT_INTERVAL_SECONDS`.
 
-### Messenger Internal Architecture
+**Memory:** `data/memory.md` — Markdown file read/written by the LLM using `file_reader`/`file_writer` tools. Its absolute path is injected into the system prompt on every new session so the LLM knows where to find it.
 
-See `Messenger/CLAUDE.md` for the full Messenger-specific reference including API endpoints, Socket.IO events, and database schema.
+### Session Management
 
-Key points:
-- **Database**: SQLite via sql.js (WASM), auto-saved every 5 seconds to `server/data/messenger.db`
-- **Auth**: IP-based — users identified by IP + display name; no passwords
-- **Bot API**: All bot-facing endpoints under `/api`, authenticated via `Authorization: Bearer huni_...` API key
-- **Socket.IO rooms** are prefixed `room:<id>`
-- **File cleanup**: cron at 03:00 daily purges chat uploads older than 30 days
+Per-room LLM sessions are stored in `data/room_sessions.json` as `{room_id: {session_id, created_at}}`. Sessions auto-expire after `SESSION_MAX_AGE_DAYS`. On expiry or 404 from LLM API, a new session is started (re-injects full context: system prompt + memory).
 
-### Shared Types
+First message in a session sends the full context (system prompt + memory path + memory content). Subsequent messages in the same session just send the user message — the LLM API maintains history server-side.
 
-`Messenger/shared/types.ts` defines the canonical TypeScript types used by both client and server (messages, rooms, users, etc.).
+### Streaming vs Sync
 
-## Key Files to Know
+Controlled by `HOONBOT_STREAMING` in `settings.txt`. When streaming:
+- LLM API sends SSE events
+- Tool status events (`tool_status.started` / `tool_status.completed`) are sent as temporary messages to Messenger and deleted after the reply is ready
+- Full text accumulates and is sent as the final reply, threaded as a reply to the original message
+
+### Messenger API Coverage
+
+`core/messenger.py` wraps these Messenger endpoints (all authenticated with `x-api-key` header):
+- Messages: send, send-returning-id, edit, delete, mark-read, search
+- Typing: start/stop
+- Files: send-file (multipart), send-base64
+- Pins: pin, unpin, get
+- Web watchers: create, list, delete — polls URLs and posts to room on content change
+- Rooms: create, get, get-messages
+- Bot: register, get-info, register-webhook
+
+### LLM API Integration
+
+Hoonbot calls `POST /v1/chat/completions` on LLM API (port 10007) with form-encoded data:
+- `model`, `messages` (JSON-encoded array), optional `session_id`, optional `stream=true`
+- Response includes `x_session_id` to persist for the room
+- The LLM API agent loop handles all tool calls internally — Hoonbot never calls tools directly
+
+## Key Files
 
 | File | Purpose |
 |------|---------|
-| `Hoonbot/SOUL.md` | System prompt / personality for the LLM |
-| `Hoonbot/HEARTBEAT.md` | User-editable checklist driving the proactive heartbeat loop |
-| `Hoonbot/config.py` | All configuration with env var overrides |
-| `Hoonbot/skills/` | Markdown skill files injected into every LLM call |
-| `Hoonbot/data/status.md` | Auto-generated human-readable memory/schedule snapshot |
+| `settings.txt` | Master config for all services |
+| `Hoonbot/PROMPT.md` | System prompt (identity + memory instructions; no tool docs) |
+| `Hoonbot/HEARTBEAT.md` | Proactive task checklist run every heartbeat interval |
+| `Hoonbot/data/memory.md` | Persistent LLM memory (Markdown, read/written by LLM tools) |
+| `Hoonbot/data/room_sessions.json` | Room → LLM session ID + creation timestamp |
 | `Messenger/docs/API.md` | Full Messenger REST API reference |
-| `Messenger/test.ipynb` | Jupyter notebook for interactive API testing |
+| `Messenger/shared/types.ts` | Canonical TypeScript types for messages, rooms, users |
+
+## Gotchas
+
+1. **Memory path must be absolute** — injected as text in system prompt so LLM can call `file_reader`/`file_writer` with the right path
+2. **New sessions re-inject full context** — if a session expires or 404s, the next message becomes a "first message" and rebuilds the full system prompt + memory context
+3. **Streaming requires LLM API SSE support** — if LLM API doesn't return proper `tool_status` events, tool status messages won't appear (silent degradation, final reply still sent)
+4. **Bot API key survives restarts** — stored in `data/.apikey`; if Messenger resets, delete this file to force re-registration
+5. **Webhook subscription is idempotent** — `register_webhook()` checks existing subscriptions before adding; safe to call on every restart
+6. **sql.js is in-memory** — Messenger DB lives in RAM, auto-saved to disk every 5 seconds; unclean shutdown can lose up to 5 seconds of data
+7. **Heartbeat first tick is delayed** — runs after one full interval at startup, never immediately
+8. **`data/` directories are gitignored** — all runtime data excluded from version control

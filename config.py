@@ -84,6 +84,8 @@ AVAILABLE_TOOLS = [
     "file_writer",
     "file_navigator",
     "shell_exec",
+    "process_monitor",
+    "memo",
 ]
 
 TOOL_PARAMETERS = {
@@ -122,6 +124,16 @@ TOOL_PARAMETERS = {
         "max_tokens": 8000,
         "timeout": 864000,
     },
+    "process_monitor": {
+        "temperature": 0.3,
+        "max_tokens": 4000,
+        "timeout": 30,
+    },
+    "memo": {
+        "temperature": 0.1,
+        "max_tokens": 2000,
+        "timeout": 10,
+    },
 }
 
 DEFAULT_TOOL_TIMEOUT = 864000
@@ -137,6 +149,8 @@ TOOL_RESULT_BUDGET = {
     "file_writer": 500,
     "file_navigator": 2000,
     "shell_exec": 3000,
+    "process_monitor": 3000,
+    "memo": 1000,
 }
 TOOL_RESULT_DEFAULT_BUDGET = 3000
 TOOL_RESULTS_DIR = Path("data/tool_results")
@@ -206,6 +220,25 @@ RAG_DEFAULT_COLLECTION = "default"
 RAG_SUPPORTED_FORMATS = [".txt", ".pdf", ".docx", ".xlsx", ".xls", ".md", ".json", ".csv"]
 
 # ============================================================================
+# Process Monitor Tool Settings
+# ============================================================================
+PROCESS_MONITOR_MAX_BUFFER_LINES = 5000
+PROCESS_MONITOR_MAX_PER_SESSION = 20
+
+# ============================================================================
+# Memo Tool Settings
+# ============================================================================
+MEMO_DIR = Path("data/memory")
+MEMO_MAX_ENTRIES = 100
+MEMO_MAX_VALUE_LENGTH = 1000
+
+# ============================================================================
+# Background Jobs Settings
+# ============================================================================
+JOBS_DIR = Path("data/jobs")
+JOBS_CLEANUP_DAYS = 30
+
+# ============================================================================
 # Session Settings
 # ============================================================================
 MAX_CONVERSATION_HISTORY = 50
@@ -238,3 +271,5 @@ RAG_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 RAG_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 RAG_METADATA_DIR.mkdir(parents=True, exist_ok=True)
 TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+MEMO_DIR.mkdir(parents=True, exist_ok=True)
+JOBS_DIR.mkdir(parents=True, exist_ok=True)

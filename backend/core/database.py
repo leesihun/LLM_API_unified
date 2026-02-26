@@ -61,6 +61,11 @@ class Database:
                 )
             """)
 
+            # Add title column if it doesn't exist (migration for existing DBs)
+            cols = [row[1] for row in cursor.execute("PRAGMA table_info(sessions)").fetchall()]
+            if "title" not in cols:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
+
             # Create default admin user
             self._create_default_admin()
 
@@ -161,6 +166,25 @@ class Database:
             cursor.execute(
                 "SELECT * FROM sessions WHERE username = ? ORDER BY created_at DESC",
                 (username,)
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def update_session_title(self, session_id: str, title: str):
+        """Set or update the title for a session."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE sessions SET title = ? WHERE id = ?",
+                (title, session_id)
+            )
+
+    def search_sessions(self, username: str, query: str) -> List[Dict[str, Any]]:
+        """Search sessions by title or session ID for a user."""
+        pattern = f"%{query}%"
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM sessions WHERE username = ? AND (title LIKE ? OR id LIKE ?) ORDER BY created_at DESC",
+                (username, pattern, pattern)
             )
             return [dict(row) for row in cursor.fetchall()]
 

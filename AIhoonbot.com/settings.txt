@@ -32,6 +32,9 @@ LLM_API_TOOLS_PORT=10007
 # Optional: explicit LLM API base URL for remote server (overrides localhost/Cloudflare logic)
 # Example: LLM_API_URL="http://192.168.0.50:10007"
 # LLM_API_URL=""
+# LLM API login credentials used by setup.py to obtain an API token
+HOONBOT_LLM_USERNAME=admin
+HOONBOT_LLM_PASSWORD=administrator
 
 # --- Hoonbot ---
 HOONBOT_PORT=3939
@@ -41,3 +44,24 @@ HOONBOT_HEARTBEAT_ENABLED=true
 HOONBOT_HEARTBEAT_INTERVAL=360
 # If heartbeat hits LLM connectivity errors, pause heartbeat LLM calls for this duration (seconds).
 HOONBOT_HEARTBEAT_LLM_COOLDOWN_SECONDS=600
+# Active hours: heartbeat only runs between these times (HH:MM 24h). Default = always on.
+HOONBOT_HEARTBEAT_ACTIVE_START=00:00
+HOONBOT_HEARTBEAT_ACTIVE_END=23:59
+
+# --- Hoonbot Behavior ---
+# Debounce window for rapid messages (seconds). Messages within this window are combined.
+HOONBOT_DEBOUNCE_SECONDS=1.5
+# LLM request timeout (seconds). Increase if tool-heavy calls timeout.
+HOONBOT_LLM_TIMEOUT=300
+# Max startup retry attempts for Messenger registration/webhook setup
+HOONBOT_STARTUP_RETRIES=6
+# Base delay between startup retries (seconds, doubles each attempt)
+HOONBOT_STARTUP_RETRY_DELAY=1.0
+# How many recent messages to scan per room on startup catch-up
+HOONBOT_CATCHUP_LIMIT=20
+# Max message length before auto-splitting
+HOONBOT_MAX_MESSAGE_LENGTH=2000
+# Session max age in days. Sessions older than this start fresh. 0 = never expire.
+HOONBOT_SESSION_MAX_AGE_DAYS=7
+# Enable streaming responses (shows tool status updates in real time)
+HOONBOT_STREAMING=true
