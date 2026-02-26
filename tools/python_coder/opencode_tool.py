@@ -75,25 +75,20 @@ class OpenCodeExecutor(BasePythonExecutor):
 
         workspace_abs = str(self.workspace.resolve())
         prefix = (
-            "ULTRAWORK MODE - Complete the following task entirely. Do NOT stop until ALL steps are done.\n\n"
-            f"WORKING DIRECTORY: {workspace_abs}\n"
-            f"You MUST `cd {workspace_abs}` before creating or running any files.\n\n"
+            "CODE GENERATION MODE - Write complete, correct Python code for the following task.\n\n"
+            f"WORKING DIRECTORY: {workspace_abs}\n\n"
             "MANDATORY STEPS (complete all before stopping):\n"
             "1. Plan: Identify prerequisites, dependencies, and what the final output should look like\n"
-            f"2. Write: Create a complete single long .py file in {workspace_abs}\n"
+            f"2. Write: Create a complete single .py file in {workspace_abs}\n"
             "   - Include descriptive print statements for every major step\n"
             "   - The LAST lines of the script MUST print a completion summary:\n"
             "     print('=== TASK COMPLETE ===')\n"
             "     print('Done: [what was accomplished]')\n"
             "     print('Output: [key results or file paths produced]')\n"
-            "3. Verify: Review the code for correctness before running\n"
-            "4. Execute: Run the script using the shell and capture the full output\n"
-            "5. Confirm: Read the output and confirm the task is done — if anything failed, fix and re-run\n\n"
+            "3. Verify: Review the code for correctness\n\n"
             "REQUIREMENTS:\n"
-            "- You are NOT done until the script has been written, executed, and its output confirmed\n"
-            "- Do not stop after planning or writing — you MUST run the script\n"
+            "- Write complete, runnable Python code — do NOT execute it\n"
             "- Include informative prints throughout the script\n"
-            "- Explain all results clearly in the summary\n"
             f"- Python file must be saved in {workspace_abs}\n"
             "- Use absolute paths when accessing files in other directories\n\n"
             "TASK: "
@@ -105,99 +100,46 @@ class OpenCodeExecutor(BasePythonExecutor):
         self._log_start(instruction, exec_timeout)
 
         # Track files before OpenCode runs
-        files_before = set(self._get_python_files())
         project_root = Path(config.__file__).resolve().parent
         root_py_before = set(project_root.glob("*.py"))
 
         # =====================================================================
-        # STAGE 1: OpenCode generates Python code
+        # STAGE 1: OpenCode generates Python code (execution skipped)
         # =====================================================================
-        print(f"\n[OPENCODE] Stage 1: Generating Python code...")
-        self._log_stage("STAGE 1: CODE GENERATION (OpenCode)")
+        print(f"\n[OPENCODE] Code generation stage...")
+        self._log_stage("CODE GENERATION (OpenCode)")
 
         opencode_result = self._run_opencode(instruction, exec_timeout)
 
         # Relocate .py files that landed in the project root (HTTP server mode)
         self._relocate_stray_files(root_py_before, project_root)
 
+        execution_time = time.time() - start_time
+        files = self._get_workspace_files()
+
         if not opencode_result["success"]:
-            # OpenCode failed - return error
-            execution_time = time.time() - start_time
-            self._log_result(False, -1, execution_time, opencode_result["output"], "", {}, opencode_result["error"])
+            self._log_result(False, -1, execution_time, opencode_result["output"], "", files, opencode_result["error"])
             return {
                 "success": False,
                 "stdout": opencode_result["output"],
                 "stderr": opencode_result["error"] or "",
                 "returncode": -1,
                 "execution_time": execution_time,
-                "files": self._get_workspace_files(),
+                "files": files,
                 "workspace": str(self.workspace),
                 "error": opencode_result["error"]
             }
 
-        # =====================================================================
-        # STAGE 2: Find and run generated Python file
-        # =====================================================================
-        print(f"\n[OPENCODE] Stage 2: Running generated Python code...")
-        self._log_stage("STAGE 2: CODE EXECUTION (Python)")
-
-        # Find newly created Python file
-        files_after = set(self._get_python_files())
-        new_files = files_after - files_before
-
-        # Try to find the Python file to run
-        python_file = self._find_python_file_to_run(new_files, opencode_result["output"])
-
-        if not python_file:
-            # No Python file found - return OpenCode output with warning
-            execution_time = time.time() - start_time
-            warning = "No Python file was generated by OpenCode"
-            print(f"[OPENCODE] Warning: {warning}")
-            self._log_result(True, 0, execution_time, opencode_result["output"], warning, self._get_workspace_files(), None)
-            return {
-                "success": True,
-                "stdout": opencode_result["output"],
-                "stderr": warning,
-                "returncode": 0,
-                "execution_time": execution_time,
-                "files": self._get_workspace_files(),
-                "workspace": str(self.workspace),
-                "error": None
-            }
-
-        # Run the Python file
-        remaining_timeout = max(30, exec_timeout - (time.time() - start_time))
-        python_result = self._run_python_file(python_file, int(remaining_timeout))
-
-        # =====================================================================
-        # Combine outputs from both stages
-        # =====================================================================
-        execution_time = time.time() - start_time
-        files = self._get_workspace_files()
-
-        # Build combined output
-        combined_output = self._combine_outputs(
-            opencode_output=opencode_result["output"],
-            python_file=python_file,
-            python_stdout=python_result["stdout"],
-            python_stderr=python_result["stderr"],
-            python_returncode=python_result["returncode"]
-        )
-
-        success = python_result["returncode"] == 0
-        error_msg = None if success else f"Python execution failed with code {python_result['returncode']}"
-
-        self._log_result(success, python_result["returncode"], execution_time, combined_output, python_result["stderr"], files, error_msg)
-
+        self._log_result(True, 0, execution_time, opencode_result["output"], "", files, None)
         return {
-            "success": success,
-            "stdout": combined_output,
-            "stderr": python_result["stderr"],
-            "returncode": python_result["returncode"],
+            "success": True,
+            "stdout": opencode_result["output"],
+            "stderr": "",
+            "returncode": 0,
             "execution_time": execution_time,
             "files": files,
             "workspace": str(self.workspace),
-            "error": error_msg
+            "error": None
         }
 
     def _run_opencode(self, instruction: str, timeout: int) -> Dict[str, Any]:
