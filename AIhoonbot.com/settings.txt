@@ -64,4 +64,4 @@ HOONBOT_MAX_MESSAGE_LENGTH=2000
 # Session max age in days. Sessions older than this start fresh. 0 = never expire.
 HOONBOT_SESSION_MAX_AGE_DAYS=7
 # Enable streaming responses (shows tool status updates in real time)
-HOONBOT_STREAMING=true
+HOONBOT_STREAMING=false
