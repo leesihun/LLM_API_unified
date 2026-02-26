@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(npx expo install:*)",
+      "Bash(npm view:*)",
+      "Bash(for pkg in expo-device expo-image-picker expo-notifications expo-status-bar react-native-safe-area-context react-native-screens \"@react-native-async-storage/async-storage\" \"@react-navigation/bottom-tabs\" \"@react-navigation/native\" \"@react-navigation/stack\" \"@react-native/virtualized-lists\")",
+      "Bash(do echo \"=== $pkg ===\")",
+      "Bash(done)",
+      "WebFetch(domain:docs.expo.dev)",
+      "Bash(npx expo config:*)",
+      "Bash(npm run build:client:*)"
+    ]
+  }
+}

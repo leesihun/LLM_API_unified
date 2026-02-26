@@ -1,0 +1,43 @@
+# ============================================================
+#  AIhoonbot.com - Settings
+#  Used by: start-all.sh, setup-linux.sh, close-apps.sh
+# ============================================================
+
+# --- Workspace ---
+# Directory that Claude/Cursor will operate on
+WORKSPACE_DIR="/scratch0"
+
+# --- Port Settings ---
+MESSENGER_PORT=10006
+CLAUDE_WRAPPER_PORT=8000
+
+# --- Cloudflare Tunnel ---
+# Set to "true" to enable external access via aihoonbot.com
+# Set to "false" for internal network only
+USE_CLOUDFLARE=false
+CLOUDFLARE_TUNNEL_NAME=aihoonbot
+CLOUDFLARED_BIN="$HOME/.cloudflared/cloudflared"
+CLOUDFLARED_CONFIG="$HOME/.cloudflared/config.yml"
+
+# --- OpenCode ---
+# OpenCode runs inside the Messenger server (no separate process).
+# Accessible at http://localhost:$MESSENGER_PORT/opencode
+# Set to "true" to warn if the opencode CLI binary is not found.
+CHECK_OPENCODE=true
+OPENCODE_CMD=opencode
+
+# --- LLM API ---
+LLM_API_PORT=10007
+LLM_API_TOOLS_PORT=10007
+# Optional: explicit LLM API base URL for remote server (overrides localhost/Cloudflare logic)
+# Example: LLM_API_URL="http://192.168.0.50:10007"
+# LLM_API_URL=""
+
+# --- Hoonbot ---
+HOONBOT_PORT=3939
+HOONBOT_BOT_NAME=Bot
+HOONBOT_HOME_ROOM_ID=1
+HOONBOT_HEARTBEAT_ENABLED=true
+HOONBOT_HEARTBEAT_INTERVAL=360
+# If heartbeat hits LLM connectivity errors, pause heartbeat LLM calls for this duration (seconds).
+HOONBOT_HEARTBEAT_LLM_COOLDOWN_SECONDS=600
