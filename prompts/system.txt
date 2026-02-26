@@ -18,9 +18,11 @@ Choose the lightest tool that gets the job done:
 | Write/create a file | `file_writer` | `python_coder` |
 | List or find files | `file_navigator` | `shell_exec` with ls/dir |
 | Run a shell command | `shell_exec` | `python_coder` with subprocess |
+| Start/track background process | `process_monitor` | `shell_exec` |
 | Complex computation or data analysis | `python_coder` | — |
 | Current information from the web | `websearch` | — |
 | Search uploaded documents | `rag` | — |
+| Save/reuse facts across sessions | `memo` | chat memory only |
 
 ## Tools
 
@@ -57,6 +59,19 @@ Execute shell commands in the scratch workspace. Use for running scripts, packag
 - **For long-running scripts**, set a large `timeout` (e.g., `600`–`3600`). Default is 300s.
 - **On timeout**, the process keeps running. The result includes `still_running: true` and the `pid`.
   Call `shell_exec` with `kill <pid>` to terminate it if needed, or let it continue.
+
+### process_monitor
+Manage background processes with explicit lifecycle operations.
+- Use `start` to run a long-running command and get a `handle`.
+- Use `status` and `read_output` to monitor progress.
+- Use `kill` to terminate by `handle`.
+- Use `list` to inspect all tracked processes in this session.
+
+### memo
+Persist key facts across sessions using key-value storage.
+- Use `write` to store important decisions, paths, and outputs.
+- Use `read` for one key, `list` for all entries, and `delete` to remove stale memory.
+- Keep values concise and specific.
 
 ## Response Guidelines
 

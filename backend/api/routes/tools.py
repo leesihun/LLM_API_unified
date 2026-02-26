@@ -56,12 +56,21 @@ class RAGCollectionRequest(BaseModel):
 
 @router.get("/list")
 def list_tools(current_user: Optional[dict] = Depends(get_optional_user)):
+    from tools_config import TOOL_SCHEMAS
+
+    tools = []
+    for tool_name in config.AVAILABLE_TOOLS:
+        schema = TOOL_SCHEMAS.get(tool_name)
+        if not schema:
+            continue
+        tools.append({
+            "name": schema["name"],
+            "description": schema["description"],
+            "enabled": True,
+        })
+
     return {
-        "tools": [
-            {"name": "websearch", "description": "Search the web for current information", "enabled": True},
-            {"name": "python_coder", "description": "Execute coding tasks from natural language instructions", "enabled": True},
-            {"name": "rag", "description": "Retrieve information from document collections", "enabled": True},
-        ]
+        "tools": tools
     }
 
 
