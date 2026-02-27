@@ -42,7 +42,11 @@ export default function MessageBubble({
   // Render content with @mention highlights
   const renderContent = (content: string) => {
     if (!content) return null;
-    const parts = content.split(/(@\S+)/g);
+    const normalized = content
+      .replace(/\r\n/g, '\n')
+      .replace(/\\r\\n/g, '\n')
+      .replace(/\\n/g, '\n');
+    const parts = normalized.split(/(@\S+)/g);
     return parts.map((part, i) => {
       if (part.startsWith('@')) {
         const name = part.slice(1);

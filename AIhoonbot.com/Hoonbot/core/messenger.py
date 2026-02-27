@@ -125,9 +125,34 @@ def _split_message(text: str, limit: int) -> list:
     return chunks
 
 
+def _insert_line_breaks(text: str, line_limit: int = 60) -> str:
+    """Wrap overly long lines for better readability in chat bubbles."""
+    if line_limit <= 0:
+        raise ValueError("line_limit must be greater than 0")
+
+    wrapped_lines: list[str] = []
+    for raw_line in text.replace("\r\n", "\n").split("\n"):
+        line = raw_line
+        if not line:
+            wrapped_lines.append("")
+            continue
+
+        while len(line) > line_limit:
+            cut = line.rfind(" ", 0, line_limit + 1)
+            if cut <= 0:
+                cut = line_limit
+            wrapped_lines.append(line[:cut].rstrip())
+            line = line[cut:].lstrip()
+
+        wrapped_lines.append(line)
+
+    return "\n".join(wrapped_lines)
+
+
 async def send_message(room_id: int, content: str, reply_to_id: int | None = None) -> None:
     """Send a message, automatically splitting if it exceeds the character limit."""
-    chunks = _split_message(content, config.MAX_MESSAGE_LENGTH)
+    formatted = _insert_line_breaks(content)
+    chunks = _split_message(formatted, config.MAX_MESSAGE_LENGTH)
     for i, chunk in enumerate(chunks):
         async def _send(c=chunk, first=(i == 0)):
             client = _get_client()

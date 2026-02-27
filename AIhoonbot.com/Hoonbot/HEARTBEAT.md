@@ -1,14 +1,16 @@
 # Heartbeat Checklist
 
 This file is read every heartbeat interval (default: 1 hour).
-Edit it freely — Hoonbot will follow whatever instructions you put here.
+Your job is to find things to do yourself
+and actually, PROACTIVELY DO IT!!!
+You need to actually do the job, observe its output and report back what has been done!!!
+If there is a job that needs to be done in between this heartbeat and the previous one, do it yourself, proactively.
 
 ---
 
 ## Memory
 
 - Go through the memory and see if there's things to do. Note that heartbeat interval is limited and may require additional jobs.
-- If there is a job that needs to be done in between this heartbeat and the previous one, do it.
 
 ## Reminders
 
