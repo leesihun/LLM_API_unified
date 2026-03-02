@@ -25,7 +25,7 @@ Choose the lightest tool that gets the job done:
 | Save/retrieve persistent key-value memory | `memo` | ad-hoc file notes |
 | Manage long-running background processes | `process_monitor` | repeated `shell_exec` polling |
 | Save/reuse facts across sessions | `memo` | chat memory only |
-
+ 
 ## Tools
 
 ### websearch
