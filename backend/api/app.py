@@ -78,6 +78,29 @@ def _cleanup_old_jobs():
         print(f"[Startup] Cleaned up {removed} old job file(s)")
 
 
+def _cleanup_old_tool_results():
+    """Delete tool result directories whose session no longer exists."""
+    tool_results_dir = config.TOOL_RESULTS_DIR
+    if not tool_results_dir.exists():
+        return
+    sessions_dir = Path("data/sessions")
+    removed = 0
+    for d in tool_results_dir.iterdir():
+        if not d.is_dir():
+            continue
+        # Keep if the owning session file still exists
+        session_file = sessions_dir / f"{d.name}.json"
+        if session_file.exists():
+            continue
+        try:
+            shutil.rmtree(d)
+            removed += 1
+        except Exception:
+            pass
+    if removed:
+        print(f"[Startup] Cleaned up {removed} orphaned tool result dir(s)")
+
+
 @app.on_event("startup")
 async def startup_event():
     from backend.utils.stop_signal import clear_stop
@@ -85,6 +108,7 @@ async def startup_event():
 
     _cleanup_old_sessions()
     _cleanup_old_jobs()
+    _cleanup_old_tool_results()
 
     from backend.core.llm_backend import llm_backend
     available = await llm_backend.is_available()

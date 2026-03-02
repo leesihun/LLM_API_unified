@@ -70,19 +70,6 @@ Use this to save important decisions, paths, and recurring preferences.
 Manage background processes over multiple turns.
 Use it to start long-running commands, check status, read incremental output, and kill when needed.
 
-### process_monitor
-Manage background processes with explicit lifecycle operations.
-- Use `start` to run a long-running command and get a `handle`.
-- Use `status` and `read_output` to monitor progress.
-- Use `kill` to terminate by `handle`.
-- Use `list` to inspect all tracked processes in this session.
-
-### memo
-Persist key facts across sessions using key-value storage.
-- Use `write` to store important decisions, paths, and outputs.
-- Use `read` for one key, `list` for all entries, and `delete` to remove stale memory.
-- Keep values concise and specific.
-
 ## Response Guidelines
 
 - When presenting tool results, interpret and summarize them — do not repeat raw JSON.

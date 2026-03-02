@@ -430,6 +430,40 @@ class AgentLoop:
             msg["content"] = f"[{tool_name} result — {summary}...]"
 
     # ------------------------------------------------------------------
+    # History limit enforcement
+    # ------------------------------------------------------------------
+
+    def _enforce_history_limit(self, msgs: List[Dict[str, Any]]):
+        """Enforce MAX_CONVERSATION_HISTORY via observation masking.
+
+        When the conversation exceeds the limit, old tool-role messages
+        are compressed to short placeholders.  Assistant reasoning
+        (content) is kept intact so the model retains its chain of thought.
+        Operates in-place on *msgs*.
+        """
+        limit = config.MAX_CONVERSATION_HISTORY
+        if len(msgs) <= limit:
+            return
+
+        # Everything before this index is "old" and eligible for masking.
+        boundary = len(msgs) - limit
+        masked = 0
+        for i in range(boundary):
+            msg = msgs[i]
+            if msg.get("role") != "tool":
+                continue
+            content = msg.get("content", "")
+            if len(content) <= 120:
+                continue
+            tool_name = msg.get("name", "tool")
+            summary = content[:80].replace("\n", " ")
+            msg["content"] = f"[{tool_name} result — {summary}...]"
+            masked += 1
+        if masked:
+            print(f"[AGENT] History limit enforced: masked {masked} old tool result(s) "
+                  f"({len(msgs)} msgs, limit {limit})")
+
+    # ------------------------------------------------------------------
     # Non-streaming run
     # ------------------------------------------------------------------
 
@@ -441,6 +475,7 @@ class AgentLoop:
         self._refresh_available_rag_collections()
         system_prompt = self._build_system_prompt(attached_files)
         msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}] + list(messages)
+        self._enforce_history_limit(msgs)
         tool_schemas = self._get_tool_schemas()
 
         for iteration in range(self.max_iterations):
@@ -492,6 +527,7 @@ class AgentLoop:
         self._refresh_available_rag_collections()
         system_prompt = self._build_system_prompt(attached_files)
         msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}] + list(messages)
+        self._enforce_history_limit(msgs)
         tool_schemas = self._get_tool_schemas()
 
         for iteration in range(self.max_iterations):
