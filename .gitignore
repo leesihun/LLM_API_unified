@@ -39,13 +39,17 @@ offline_models/
 llamacpp/
 models/
 
-# Data directories
-data/
+# Data directories (server runtime data only)
+/data/
+
+# Secrets
+.apikey
 
 # Build artifacts & Electron dist
 **/dist-portable/
 **/portable-staging/
 **/build/
 **/dist/
+**/dist-electron/
 *.exe
 *.dll

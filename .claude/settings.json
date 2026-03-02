@@ -8,7 +8,12 @@
       "WebFetch(domain:www.anthropic.com)",
       "WebFetch(domain:blog.jetbrains.com)",
       "WebFetch(domain:byaiteam.com)",
-      "Bash(git check-ignore -v Bot/Messenger/android-app/App.js Bot/Messenger/android-app/package.json Bot/Messenger/android-app/app.json Bot/Messenger/android-app/index.js)"
+      "Bash(git check-ignore -v Bot/Messenger/android-app/App.js Bot/Messenger/android-app/package.json Bot/Messenger/android-app/app.json Bot/Messenger/android-app/index.js)",
+      "Bash(git check-ignore -v \"Bot/Hoonbot/data/memory.md\" \"Bot/Hoonbot/data/.apikey\")",
+      "Bash(xargs git check-ignore)",
+      "Bash(git add Bot/Hoonbot/data/)",
+      "Bash(git rm --cached Bot/Messenger/android-app)",
+      "Bash(git add .claude/settings.json)"
     ]
   }
 }
