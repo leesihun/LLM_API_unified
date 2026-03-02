@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -v \"//.*timeout\")",
+      "Bash(npm run build:web)",
+      "Bash(netstat -ano)",
+      "Bash(ss -tlnp)",
+      "Bash(npx esbuild --version)",
+      "Bash(npx electron --version)",
+      "Bash(npx electron-builder --version)",
+      "Bash(npx electron-builder --win portable --config electron-builder-portable.json)",
+      "Bash(npx asar list dist-portable/win-unpacked/resources/app.asar)",
+      "Bash(grep -E \"^\\\\\\\\\\\\\\(dist|package\\)\")",
+      "Bash(npx asar extract dist-portable/win-unpacked/resources/app.asar /tmp/asar-extract)",
+      "Bash(MESSENGER_EMBEDDED=1 PORT=10099 MESSENGER_DATA_DIR=/tmp/mtest/data MESSENGER_UPLOADS_DIR=/tmp/mtest/uploads MESSENGER_CHUNKS_DIR=/tmp/mtest/chunks MESSENGER_STORAGE_DIR=/tmp/mtest/storage MESSENGER_WEB_DIR=/tmp/mtest/web MESSENGER_PUBLIC_DIR=/tmp/mtest/public node -e \":*)",
+      "Bash(MESSENGER_EMBEDDED=1 PORT=10099 MESSENGER_DATA_DIR=/tmp/mtest2/data MESSENGER_UPLOADS_DIR=/tmp/mtest2/uploads MESSENGER_CHUNKS_DIR=/tmp/mtest2/chunks MESSENGER_STORAGE_DIR=/tmp/mtest2/storage MESSENGER_WEB_DIR=/tmp/mtest2/web MESSENGER_PUBLIC_DIR=/tmp/mtest2/public node -e \":*)",
+      "WebFetch(domain:docs.openclaw.ai)"
+    ]
+  }
+}

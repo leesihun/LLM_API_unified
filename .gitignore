@@ -41,3 +41,11 @@ models/
 
 # Data directories
 data/
+
+# Build artifacts & Electron dist
+**/dist-portable/
+**/portable-staging/
+**/build/
+**/dist/
+*.exe
+*.dll

@@ -1,0 +1,43 @@
+{
+  "appId": "com.messenger.simsimi",
+  "electronVersion": "33.4.11",
+  "productName": "Messenger",
+  "directories": {
+    "buildResources": "build",
+    "output": "dist-portable"
+  },
+  "win": {
+    "target": "portable",
+    "icon": "src/assets/icon.png",
+    "signAndEditExecutable": false
+  },
+  "portable": {
+    "artifactName": "Messenger.exe"
+  },
+  "files": [
+    "dist/**/*",
+    "dist-electron/**/*"
+  ],
+  "extraResources": [
+    {
+      "from": "../portable-staging/server",
+      "to": "server"
+    },
+    {
+      "from": "../portable-staging/web",
+      "to": "web"
+    },
+    {
+      "from": "../portable-staging/server-public",
+      "to": "server-public"
+    },
+    {
+      "from": "../portable-staging/icon.png",
+      "to": "icon.png"
+    }
+  ],
+  "asar": true,
+  "asarUnpack": [
+    "**/*.node"
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git diff-tree -r --name-only HEAD~2..HEAD)",
+      "Bash(git ls-tree -r --name-only HEAD)"
+    ]
+  }
+}

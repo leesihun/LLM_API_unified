@@ -1,0 +1,82 @@
+# =============================================================
+#  AIhoonbot.com - Installation Configuration
+#  Edit these values before building or running the installer.
+#  Lines starting with # are comments and are ignored.
+# =============================================================
+
+# --- Installation Directory ---
+# Where Hoonbot + Messenger will be installed on the target machine
+INSTALL_DIR=C:\AIBotMessenger
+
+# --- Port Settings ---
+# These must match the ports the apps actually listen on
+MESSENGER_PORT=10006
+HOONBOT_PORT=3939
+LLM_API_PORT=10007
+
+# --- LLM API Connection ---
+# The LLM API server that Hoonbot connects to for intelligence
+LLM_API_URL=http://localhost:10007
+LLM_USERNAME=admin
+LLM_PASSWORD=administrator
+
+# --- Bot Settings ---
+BOT_NAME=Bot
+HOME_ROOM_ID=1
+
+# =============================================================
+#  SSH Configuration
+# =============================================================
+
+# Install OpenSSH Server if not already installed
+# Requires Administrator rights (which the installer requests)
+INSTALL_SSH=true
+
+# SSH listen port (default 22)
+SSH_PORT=22
+
+# =============================================================
+#  Port Forwarding (via Windows netsh interface portproxy)
+#
+#  This forwards EXTERNAL traffic arriving on a given port to
+#  the internal service.  Set ENABLE_PORT_FORWARDING=false to
+#  skip all port-forwarding rules.
+# =============================================================
+
+ENABLE_PORT_FORWARDING=true
+
+# External IP address to bind the listening side to.
+# Use 0.0.0.0 to listen on ALL network interfaces.
+# Use a specific IP (e.g. 192.168.1.100) to restrict to one NIC.
+FORWARD_LISTEN_ADDRESS=0.0.0.0
+
+# --- Messenger forwarding ---
+FORWARD_MESSENGER=true
+FORWARD_MESSENGER_EXT_PORT=10006
+FORWARD_MESSENGER_INT_IP=127.0.0.1
+FORWARD_MESSENGER_INT_PORT=10006
+
+# --- Hoonbot forwarding ---
+FORWARD_HOONBOT=true
+FORWARD_HOONBOT_EXT_PORT=3939
+FORWARD_HOONBOT_INT_IP=127.0.0.1
+FORWARD_HOONBOT_INT_PORT=3939
+
+# --- LLM API forwarding (optional, only if you want external LLM access) ---
+FORWARD_LLM=false
+FORWARD_LLM_EXT_PORT=10007
+FORWARD_LLM_INT_IP=127.0.0.1
+FORWARD_LLM_INT_PORT=10007
+
+# =============================================================
+#  Shortcuts & Autostart
+# =============================================================
+
+# Create a desktop shortcut to launch everything
+CREATE_DESKTOP_SHORTCUT=true
+
+# Create a Start Menu shortcut
+CREATE_STARTMENU_SHORTCUT=true
+
+# Add to Windows Startup (launch on login) — false by default
+ADD_TO_WINDOWS_STARTUP=false
