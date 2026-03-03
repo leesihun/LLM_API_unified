@@ -11,7 +11,7 @@ Last updated: 2026-02-26
 
 ## Skills
 
-- Skill docs are located in `c:/Users/Lee/Desktop/Huni/LLM_API_fast/AIhoonbot.com/Hoonbot/skills/`
+- Skill docs are located in `skills' folder inside '/Bot' folder
 - Use `file_navigator` to list available skills, `file_reader` to load a skill's full instructions before executing it.
 - You may add and delete skill files as needed.
 1. diagnose_system: Full diagnosis of system, must be called and verified every heartbeat.

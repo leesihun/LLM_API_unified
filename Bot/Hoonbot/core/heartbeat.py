@@ -95,7 +95,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         "You are running a scheduled proactive check — there is no human waiting for a reply. "
         "Review the checklist below and complete any pending tasks using your tools. "
         "Load and execute any skills referenced in the checklist (read them from the skills directory first). "
-        "If everything is in order and nothing needs attention, reply with exactly: HEARTBEAT_OK\n"
+        "Always reply with a summary of what you checked and found, even if everything is in order. "
         "Do not greet the user or explain that this is a scheduled check in your reply — "
         "just report what you did or found.\n\n"
         f"## Heartbeat Checklist\n\n{checklist}"
@@ -122,8 +122,6 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         reply = (result["choices"][0]["message"]["content"] or "").strip()
         if not reply:
             logger.info("[Heartbeat] LLM returned empty reply — nothing to post")
-        elif reply.startswith("HEARTBEAT_OK"):
-            logger.info("[Heartbeat] Nothing needs attention — suppressing reply")
         else:
             logger.info(f"[Heartbeat] LLM replied ({len(reply)} chars) — posting to room {config.MESSENGER_HOME_ROOM_ID}")
             await send_fn(config.MESSENGER_HOME_ROOM_ID, f"**Autonomous agent**\n\n{reply}")
