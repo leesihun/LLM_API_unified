@@ -11,7 +11,21 @@ const onlineUsers = new Map<number, Set<string>>();
 // Track socket -> userId mapping
 const socketUserMap = new Map<string, number>();
 
+let ioRef: Server<ClientToServerEvents, ServerToClientEvents> | null = null;
+
+/** Emit an event to all active sockets for a specific user. */
+export function emitToUser(userId: number, event: string, data: any) {
+  if (!ioRef) return;
+  const sockets = onlineUsers.get(userId);
+  if (sockets) {
+    for (const socketId of sockets) {
+      ioRef.to(socketId).emit(event as any, data);
+    }
+  }
+}
+
 export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToClientEvents>) {
+  ioRef = io;
   io.on('connection', (socket: TypedSocket) => {
     const userId = Number(socket.handshake.query.userId);
     if (!userId || isNaN(userId)) {
@@ -42,9 +56,10 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       socket.join(`room:${room.room_id}`);
     }
 
-    // Join room
+    // Join room (membership required)
     socket.on('join_room', (roomId: number) => {
-      socket.join(`room:${roomId}`);
+      const membership = queryOne('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, userId]);
+      if (membership) socket.join(`room:${roomId}`);
     });
 
     // Leave room
@@ -52,9 +67,12 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       socket.leave(`room:${roomId}`);
     });
 
-    // Send message
+    // Send message (membership required)
     socket.on('send_message', (data) => {
       const { roomId, content, type, fileUrl, fileName, fileSize, mentions, replyToId } = data;
+
+      const membership = queryOne('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, userId]);
+      if (!membership) return;
 
       const mentionsJson = JSON.stringify(mentions || []);
 
@@ -206,20 +224,15 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       io.to(`room:${roomId}`).emit('message_unpinned', { roomId, messageId });
     });
 
-    // Leave room permanently and delete all messages in the room
+    // Leave room permanently — removes user from room, preserves history for others
     socket.on('leave_room_permanent', (roomId: number) => {
       const user = queryOne('SELECT name FROM users WHERE id = ?', [userId]);
       const userName = user?.name || 'Unknown';
 
-      run('DELETE FROM read_receipts WHERE message_id IN (SELECT id FROM messages WHERE room_id = ?)', [roomId]);
-      run('DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE room_id = ?)', [roomId]);
-      run('DELETE FROM pinned_messages WHERE room_id = ?', [roomId]);
-      run('DELETE FROM messages WHERE room_id = ?', [roomId]);
       run('DELETE FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, userId]);
 
       socket.leave(`room:${roomId}`);
 
-      io.to(`room:${roomId}`).emit('room_messages_cleared', { roomId, userId, userName });
       io.to(`room:${roomId}`).emit('member_left', { roomId, userId, userName });
     });
 

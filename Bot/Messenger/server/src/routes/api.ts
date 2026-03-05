@@ -10,6 +10,7 @@ import { apiKeyAuth } from '../middleware/apiAuth.js';
 import { dispatchWebhooks } from '../services/webhook.js';
 import { startWatcher, stopWatcher } from '../services/web-poller.js';
 import { buildRoomResponse } from './rooms.js';
+import { emitToUser } from '../socket/handler.js';
 
 const router = Router();
 router.use(apiKeyAuth);
@@ -274,6 +275,15 @@ router.get('/messages/:roomId', (req: Request, res: Response) => {
   if (!room) {
     res.status(404).json({ error: 'Room not found.' });
     return;
+  }
+
+  const sender = resolveSender(req);
+  if (sender) {
+    const membership = queryOne('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, sender.id]);
+    if (!membership) {
+      res.status(403).json({ error: 'Not a member of this room.' });
+      return;
+    }
   }
 
   let sql = `
@@ -567,14 +577,9 @@ router.post('/leave-room', (req: Request, res: Response) => {
     return;
   }
 
-  run('DELETE FROM read_receipts WHERE message_id IN (SELECT id FROM messages WHERE room_id = ?)', [roomId]);
-  run('DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE room_id = ?)', [roomId]);
-  run('DELETE FROM pinned_messages WHERE room_id = ?', [roomId]);
-  run('DELETE FROM messages WHERE room_id = ?', [roomId]);
   run('DELETE FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, sender.id]);
 
   if (ioInstance) {
-    ioInstance.to(`room:${roomId}`).emit('room_messages_cleared', { roomId, userId: sender.id, userName: sender.name });
     ioInstance.to(`room:${roomId}`).emit('member_left', { roomId, userId: sender.id, userName: sender.name });
   }
 
@@ -588,18 +593,17 @@ router.post('/leave-room', (req: Request, res: Response) => {
 // GET /api/rooms
 router.get('/rooms', (req: Request, res: Response) => {
   const userId = Number(req.query.userId);
-
-  let rooms;
-  if (userId) {
-    rooms = queryAll(`
-      SELECT r.* FROM rooms r
-      JOIN room_members rm ON rm.room_id = r.id
-      WHERE rm.user_id = ?
-      ORDER BY r.created_at DESC
-    `, [userId]);
-  } else {
-    rooms = queryAll('SELECT * FROM rooms ORDER BY created_at DESC');
+  if (!userId) {
+    res.status(400).json({ error: 'userId is required.' });
+    return;
   }
+
+  const rooms = queryAll(`
+    SELECT r.* FROM rooms r
+    JOIN room_members rm ON rm.room_id = r.id
+    WHERE rm.user_id = ?
+    ORDER BY r.created_at DESC
+  `, [userId]);
 
   const result = rooms.map((room: any) => {
     const members = queryAll(`
@@ -662,8 +666,8 @@ router.post('/create-room', (req: Request, res: Response) => {
   }
 
   const room = buildRoomResponse(Number(roomId), creator.id);
-  if (ioInstance) {
-    ioInstance.emit('room_created', room);
+  for (const member of room.members) {
+    emitToUser(member.id, 'room_created', room);
   }
 
   res.status(201).json({ success: true, roomId, name: roomName, members: memberIds });

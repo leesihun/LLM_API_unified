@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { queryAll, queryOne, run } from '../db/index.js';
 import { buildMessageData, getReactionsForMessage, getReplyTo } from '../db/messages.js';
+import { emitToUser } from '../socket/handler.js';
 
 const router = Router();
 
@@ -165,8 +166,8 @@ router.post('/', (req: Request, res: Response) => {
   }
 
   const room = buildRoomResponse(roomId, userId);
-  if (ioInstance) {
-    ioInstance.emit('room_created', room);
+  for (const member of room.members) {
+    emitToUser(member.id, 'room_created', room);
   }
   res.status(201).json(room);
 });

@@ -109,6 +109,8 @@ export default function ChatPage() {
     };
 
     const handleRoomCreated = (room: RoomWithDetails) => {
+      // Only add rooms where the current user is actually a member
+      if (!room.members.some((m) => m.id === user.id)) return;
       setRooms((prev) => {
         if (prev.some((r) => r.id === room.id)) return prev;
         return [room, ...prev];
