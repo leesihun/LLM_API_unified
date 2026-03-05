@@ -90,27 +90,42 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
     ]
 
     logger.info(f"[Heartbeat] Calling LLM (model={config.LLM_MODEL})")
+    full_text = ""
     try:
         async with httpx.AsyncClient(timeout=float(config.LLM_TIMEOUT_SECONDS)) as client:
-            response = await client.post(
+            async with client.stream(
+                "POST",
                 f"{config.LLM_API_URL}/v1/chat/completions",
                 data={
                     "model": config.LLM_MODEL,
                     "messages": json.dumps(messages),
+                    "stream": "true",
                 },
                 headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
-            )
-            response.raise_for_status()
-            result = response.json()
-
-        reply = (result["choices"][0]["message"]["content"] or "").strip()
-        if not reply:
-            logger.info("[Heartbeat] LLM returned empty reply — nothing to post")
-        elif config.MESSENGER_HOME_ROOM_ID < 0:
-            logger.warning("[Heartbeat] Home room not resolved — skipping post")
-        else:
-            logger.info(f"[Heartbeat] LLM replied ({len(reply)} chars) — posting to room {config.MESSENGER_HOME_ROOM_ID}")
-            await send_fn(config.MESSENGER_HOME_ROOM_ID, f"**Autonomous agent**\n\n{reply}")
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data_str = line[6:]
+                    if data_str.strip() == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    if "tool_status" in event:
+                        ts = event["tool_status"]
+                        logger.debug(
+                            f"[Heartbeat] Tool {ts.get('tool_name')}: {ts.get('status')}"
+                        )
+                        continue
+                    choices = event.get("choices", [])
+                    if not choices:
+                        continue
+                    text = choices[0].get("delta", {}).get("content", "")
+                    if text:
+                        full_text += text
 
     except (httpx.ConnectError, httpx.TimeoutException) as exc:
         _llm_cooldown_until = asyncio.get_event_loop().time() + config.HEARTBEAT_LLM_COOLDOWN_SECONDS
@@ -118,8 +133,19 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
             f"[Heartbeat] LLM connection failed: {exc}. "
             f"Cooling down for {config.HEARTBEAT_LLM_COOLDOWN_SECONDS}s"
         )
+        return
     except Exception as exc:
         logger.error(f"[Heartbeat] Unexpected error during LLM call: {exc}", exc_info=True)
+        return
+
+    reply = full_text.strip()
+    if not reply:
+        logger.info("[Heartbeat] LLM returned empty reply — nothing to post")
+    elif config.MESSENGER_HOME_ROOM_ID < 0:
+        logger.warning("[Heartbeat] Home room not resolved — skipping post")
+    else:
+        logger.info(f"[Heartbeat] LLM replied ({len(reply)} chars) — posting to room {config.MESSENGER_HOME_ROOM_ID}")
+        await send_fn(config.MESSENGER_HOME_ROOM_ID, f"**Autonomous agent**\n\n{reply}")
 
 
 async def run_heartbeat_loop(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
