@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import config
 from core import messenger
+from core.context import build_llm_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -27,10 +28,6 @@ _room_debounce: dict = {}
 
 # Per-room message counter (resets on new session)
 _room_msg_count: dict[int, int] = {}
-
-
-MEMORY_FILE = os.path.join(config.DATA_DIR, "memory.md")
-SKILLS_DIR = os.path.join(os.path.dirname(__file__), "..", "skills")
 
 # Per-room persistent session data: {room_id: {"session_id": str, "created_at": str}}
 _SESSIONS_FILE = os.path.join(config.DATA_DIR, "room_sessions.json")
@@ -106,35 +103,6 @@ def _set_session_id(room_id: int, session_id: str) -> None:
 
 # Load on module import
 _load_room_sessions()
-
-
-# ---------------------------------------------------------------------------
-# System prompt & memory
-# ---------------------------------------------------------------------------
-
-_SYSTEM_PROMPT_CACHE: str = ""
-
-
-def _load_system_prompt() -> str:
-    """Return cached system prompt (loaded from PROMPT.md on first call)."""
-    global _SYSTEM_PROMPT_CACHE
-    if _SYSTEM_PROMPT_CACHE:
-        return _SYSTEM_PROMPT_CACHE
-    prompt_file = os.path.join(os.path.dirname(__file__), "..", "PROMPT.md")
-    try:
-        with open(prompt_file, "r", encoding="utf-8") as f:
-            _SYSTEM_PROMPT_CACHE = f.read()
-    except FileNotFoundError:
-        _SYSTEM_PROMPT_CACHE = "You are a helpful AI assistant."
-    return _SYSTEM_PROMPT_CACHE
-
-
-def _read_memory() -> str:
-    try:
-        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            return f.read()
-    except FileNotFoundError:
-        return ""
 
 
 # ---------------------------------------------------------------------------
@@ -283,20 +251,7 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             logger.info(f"{log_prefix} Continuing session {existing_session_id} (msg #{count})")
         else:
             _room_msg_count[room_id] = 0  # Reset counter for new session
-            system_prompt_base = _load_system_prompt()
-            memory = _read_memory()
-            abs_memory_path = os.path.abspath(MEMORY_FILE)
-
-            abs_skills_path = os.path.abspath(SKILLS_DIR)
-
-            context = system_prompt_base
-            context += f"\n\n---\n\n## Memory File Location for This Session\n\nAbsolute path: `{abs_memory_path}`"
-            context += f"\n\n## Skills Directory\n\nAbsolute path: `{abs_skills_path}`"
-            if memory:
-                context += f"\n\n## Current Memory Content\n\n{memory}"
-            else:
-                context += "\n\n## Current Memory\n\n(No memory saved yet)"
-
+            context = build_llm_context()
             messages = [
                 {"role": "user", "content": f"{context}\n\n---\n\nUser: {content}"},
             ]
@@ -338,15 +293,6 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
         await messenger.stop_typing(room_id)
 
 
-async def _handle_session_404(room_id: int, content: str, sender_name: str, existing_session_id: str, log_prefix: str) -> None:
-    """Handle 404 (deleted session) by clearing and retrying."""
-    logger.warning(f"{log_prefix} Session {existing_session_id} not found, starting fresh")
-    if room_id in _room_sessions:
-        del _room_sessions[room_id]
-        _save_room_sessions()
-    await messenger.stop_typing(room_id)
-
-
 async def _save_session_from_response(room_id: int, result: dict, existing_session_id: str | None, log_prefix: str) -> None:
     """Save session_id returned by LLM API."""
     returned_session_id = result.get("x_session_id")
@@ -369,7 +315,10 @@ async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_se
         )
 
         if response.status_code == 404 and existing_session_id:
-            await _handle_session_404(room_id, llm_data.get("content", ""), "", existing_session_id, log_prefix)
+            logger.warning(f"{log_prefix} Session {existing_session_id} not found, starting fresh")
+            _room_sessions.pop(room_id, None)
+            _room_msg_count.pop(room_id, None)
+            _save_room_sessions()
             return None
 
         response.raise_for_status()
@@ -402,7 +351,9 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                 headers=headers,
             ) as response:
                 if response.status_code == 404 and existing_session_id:
-                    await _handle_session_404(room_id, "", "", existing_session_id, log_prefix)
+                    logger.warning(f"{log_prefix} Session {existing_session_id} not found, starting fresh")
+                    _room_sessions.pop(room_id, None)
+                    _save_room_sessions()
                     return None
 
                 response.raise_for_status()

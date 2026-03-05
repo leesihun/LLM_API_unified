@@ -1,36 +1,12 @@
 import crypto from 'crypto';
 import { queryAll, queryOne, run } from '../db/index.js';
+import { buildMessageData } from '../db/messages.js';
 
 let ioRef: any = null;
 const timers = new Map<number, ReturnType<typeof setInterval>>();
 
 export function setPollerIo(io: any) {
   ioRef = io;
-}
-
-function buildMessagePayload(m: any) {
-  return {
-    id: m.id,
-    roomId: m.room_id,
-    senderId: m.sender_id,
-    content: m.content,
-    type: m.type as 'text' | 'image' | 'file',
-    fileUrl: m.file_url ?? null,
-    fileName: m.file_name ?? null,
-    fileSize: m.file_size ?? null,
-    isEdited: false,
-    isDeleted: false,
-    mentions: '[]',
-    replyToId: null,
-    replyTo: null,
-    createdAt: m.created_at,
-    updatedAt: m.updated_at,
-    senderName: m.sender_name,
-    senderIp: m.sender_ip,
-    isBot: !!m.sender_is_bot,
-    readBy: [] as number[],
-    reactions: [] as any[],
-  };
 }
 
 async function poll(watcherId: number) {
@@ -77,7 +53,8 @@ async function poll(watcherId: number) {
         [result.lastInsertRowid],
       );
       if (msg) {
-        ioRef.to(`room:${watcher.room_id}`).emit('new_message', buildMessagePayload(msg));
+        msg._readBy = [];
+        ioRef.to(`room:${watcher.room_id}`).emit('new_message', buildMessageData(msg));
       }
     }
   } catch (err: any) {
@@ -112,8 +89,3 @@ export function startAllWatchers() {
   }
 }
 
-export function stopAllWatchers() {
-  for (const [id] of timers) {
-    stopWatcher(id);
-  }
-}

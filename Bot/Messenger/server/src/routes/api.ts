@@ -5,9 +5,11 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { queryAll, queryOne, run } from '../db/index.js';
+import { buildMessageData, getReactionsForMessage } from '../db/messages.js';
 import { apiKeyAuth } from '../middleware/apiAuth.js';
 import { dispatchWebhooks } from '../services/webhook.js';
 import { startWatcher, stopWatcher } from '../services/web-poller.js';
+import { buildRoomResponse } from './rooms.js';
 
 const router = Router();
 router.use(apiKeyAuth);
@@ -68,80 +70,6 @@ function resolveSender(req: Request): any | null {
   }
   if (senderName) return queryOne('SELECT * FROM users WHERE name = ?', [senderName]);
   return null;
-}
-
-function getReactionsForMessage(messageId: number) {
-  const rows = queryAll(
-    `SELECT mr.emoji, mr.user_id, u.name as user_name
-     FROM message_reactions mr JOIN users u ON u.id = mr.user_id
-     WHERE mr.message_id = ? ORDER BY mr.created_at`,
-    [messageId],
-  );
-  const map = new Map<string, { userIds: number[]; userNames: string[] }>();
-  for (const r of rows) {
-    if (!map.has(r.emoji)) map.set(r.emoji, { userIds: [], userNames: [] });
-    const entry = map.get(r.emoji)!;
-    entry.userIds.push(r.user_id);
-    entry.userNames.push(r.user_name);
-  }
-  return Array.from(map.entries()).map(([emoji, data]) => ({ emoji, ...data }));
-}
-
-function getReplyTo(replyToId: number | null): any {
-  if (!replyToId) return null;
-  const row = queryOne(
-    `SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
-     FROM messages m JOIN users u ON u.id = m.sender_id WHERE m.id = ?`,
-    [replyToId],
-  );
-  if (!row) return null;
-  return {
-    id: row.id,
-    roomId: row.room_id,
-    senderId: row.sender_id,
-    content: row.is_deleted ? '' : row.content,
-    type: row.type,
-    fileUrl: row.is_deleted ? null : row.file_url,
-    fileName: row.is_deleted ? null : row.file_name,
-    fileSize: row.is_deleted ? null : row.file_size,
-    isEdited: !!row.is_edited,
-    isDeleted: !!row.is_deleted,
-    mentions: row.mentions,
-    replyToId: null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    senderName: row.sender_name,
-    senderIp: row.sender_ip,
-    isBot: !!row.sender_is_bot,
-    readBy: [],
-    reactions: [],
-    replyTo: null,
-  };
-}
-
-function buildMessageData(m: any) {
-  return {
-    id: m.id,
-    roomId: m.room_id,
-    senderId: m.sender_id,
-    content: m.is_deleted ? '' : m.content,
-    type: m.type,
-    fileUrl: m.is_deleted ? null : m.file_url,
-    fileName: m.is_deleted ? null : m.file_name,
-    fileSize: m.is_deleted ? null : m.file_size,
-    isEdited: !!m.is_edited,
-    isDeleted: !!m.is_deleted,
-    mentions: m.mentions,
-    replyToId: m.reply_to || null,
-    createdAt: m.created_at,
-    updatedAt: m.updated_at,
-    senderName: m.sender_name,
-    senderIp: m.sender_ip,
-    isBot: !!m.sender_is_bot,
-    readBy: (m._readBy ?? []) as number[],
-    reactions: getReactionsForMessage(m.id),
-    replyTo: getReplyTo(m.reply_to),
-  };
 }
 
 function generateApiKey(): string {
@@ -540,21 +468,7 @@ router.post('/reactions', (req: Request, res: Response) => {
     run('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)', [messageId, sender.id, emoji]);
   }
 
-  // Build current reaction state
-  const rows = queryAll(
-    `SELECT mr.emoji, mr.user_id, u.name as user_name
-     FROM message_reactions mr JOIN users u ON u.id = mr.user_id
-     WHERE mr.message_id = ? ORDER BY mr.created_at`,
-    [messageId],
-  );
-  const reactionMap = new Map<string, { userIds: number[]; userNames: string[] }>();
-  for (const r of rows) {
-    if (!reactionMap.has(r.emoji)) reactionMap.set(r.emoji, { userIds: [], userNames: [] });
-    const entry = reactionMap.get(r.emoji)!;
-    entry.userIds.push(r.user_id);
-    entry.userNames.push(r.user_name);
-  }
-  const reactions = Array.from(reactionMap.entries()).map(([e, data]) => ({ emoji: e, ...data }));
+  const reactions = getReactionsForMessage(messageId);
 
   if (ioInstance) {
     ioInstance.to(`room:${message.room_id}`).emit('reaction_updated', { messageId, roomId: message.room_id, reactions });
@@ -571,7 +485,8 @@ router.post('/reactions', (req: Request, res: Response) => {
 router.get('/pins/:roomId', (req: Request, res: Response) => {
   const roomId = Number(req.params.roomId);
   const pins = queryAll(
-    `SELECT pm.*, m.*, u.name as sender_name, u.ip as sender_ip, pu.name as pinner_name
+    `SELECT pm.id as pin_id, pm.room_id, pm.pinned_by, pm.pinned_at, pu.name as pinner_name,
+            m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
      FROM pinned_messages pm
      JOIN messages m ON m.id = pm.message_id
      JOIN users u ON u.id = m.sender_id
@@ -582,8 +497,8 @@ router.get('/pins/:roomId', (req: Request, res: Response) => {
   );
 
   const result = pins.map((p: any) => ({
-    id: p.id,
-    messageId: p.message_id,
+    id: p.pin_id,
+    messageId: p.id,
     roomId: p.room_id,
     pinnedBy: p.pinned_by,
     pinnedByName: p.pinner_name,
@@ -746,30 +661,9 @@ router.post('/create-room', (req: Request, res: Response) => {
     run('INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', [roomId, memberId]);
   }
 
+  const room = buildRoomResponse(Number(roomId), creator.id);
   if (ioInstance) {
-    const createdRoom = queryOne('SELECT * FROM rooms WHERE id = ?', [roomId]);
-    const members = queryAll(`
-      SELECT u.id, u.name, u.ip, u.is_bot, u.created_at, u.updated_at FROM users u
-      JOIN room_members rm ON rm.user_id = u.id
-      WHERE rm.room_id = ?
-    `, [roomId]);
-    ioInstance.emit('room_created', {
-      id: roomId,
-      name: roomName,
-      isGroup: !!isGroup,
-      createdBy: creator.id,
-      createdAt: createdRoom?.created_at || new Date().toISOString(),
-      lastMessage: null,
-      unreadCount: 0,
-      members: members.map((m: any) => ({
-        id: m.id,
-        name: m.name,
-        ip: m.ip,
-        isBot: !!m.is_bot,
-        createdAt: m.created_at,
-        updatedAt: m.updated_at,
-      })),
-    });
+    ioInstance.emit('room_created', room);
   }
 
   res.status(201).json({ success: true, roomId, name: roomName, members: memberIds });

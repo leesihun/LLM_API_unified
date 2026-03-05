@@ -50,6 +50,7 @@ MESSENGER_URL = (
 MESSENGER_BOT_NAME = _get("HOONBOT_BOT_NAME", "Hoonbot")
 MESSENGER_API_KEY = ""  # Populated at runtime after bot registration
 MESSENGER_HOME_ROOM_ID = int(_get("HOONBOT_HOME_ROOM_ID", "1"))
+MESSENGER_HOME_ROOM_NAME = _get("HOONBOT_HOME_ROOM_NAME", "")  # If set, resolved at startup by name
 
 # --- LLM API ---
 LLM_API_PORT = int(_get("LLM_API_PORT", "10007"))

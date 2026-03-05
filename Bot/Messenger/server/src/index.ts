@@ -22,19 +22,6 @@ export async function main() {
   const app = express();
   const server = createServer(app);
 
-  // Raw HTTP-level request log — fires before Express, before any middleware.
-  // If this appears but [Upload] doesn't, something in Express middleware is blocking.
-  // If this doesn't appear at all, the request never reaches Node.js.
-  server.on('request', (req) => {
-    if (req.url?.startsWith('/upload')) {
-      console.log(
-        `[RAW] ${req.method} ${req.url}` +
-        `  ct: ${(req.headers['content-type'] ?? '').slice(0, 60)}` +
-        `  cl: ${req.headers['content-length'] ?? 'chunked'}`
-      );
-    }
-  });
-
   // Terminal WebSocket must be set up BEFORE Socket.IO to ensure its upgrade
   // handler runs first (Socket.IO destroys non-matching upgrade sockets).
   setupTerminalWebSocket(server);
@@ -64,15 +51,6 @@ export async function main() {
   app.use('/auth', authRoutes);
   app.use('/rooms', roomRoutes);
 
-  // Upload request logger — fires before multer touches anything
-  app.use('/upload', (req: express.Request, _res: express.Response, next: express.NextFunction) => {
-    console.log(
-      `[Upload] ${req.method} ${req.path}` +
-      `  content-type: ${req.headers['content-type']?.slice(0, 60)}` +
-      `  content-length: ${req.headers['content-length'] ?? 'chunked'}`
-    );
-    next();
-  });
   app.use('/upload', uploadRoutes);
   app.use('/api', apiRoutes);
   app.use('/files', filesRoutes);
@@ -89,12 +67,10 @@ export async function main() {
   });
 
   // Claude Code Terminal: /claude
-  app.get('/claude', (_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(CLAUDE_HTML); });
-  app.get('/claude/', (_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(CLAUDE_HTML); });
+  app.get('/claude{/}?', (_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(CLAUDE_HTML); });
 
   // OpenCode Terminal: /opencode
-  app.get('/opencode', (_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(OPENCODE_HTML); });
-  app.get('/opencode/', (_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(OPENCODE_HTML); });
+  app.get('/opencode{/}?', (_req, res) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.send(OPENCODE_HTML); });
 
   // Serve the web client
   const clientDistPath = process.env.MESSENGER_WEB_DIR || path.join(__dirname, '..', '..', 'client', 'dist-web');

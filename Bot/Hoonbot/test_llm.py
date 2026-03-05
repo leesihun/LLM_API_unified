@@ -3,7 +3,6 @@
 Quick test to verify LLM_API_fast connection and memory command parsing.
 """
 import json
-import os
 import sys
 import asyncio
 

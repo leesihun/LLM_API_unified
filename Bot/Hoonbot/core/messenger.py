@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 # Runtime state — populated during startup
 _api_key: str = ""
-_bot_id: Optional[int] = None
 
 # Persistent HTTP client — shared across all requests
 _client: Optional[httpx.AsyncClient] = None
@@ -42,10 +41,6 @@ def set_api_key(key: str) -> None:
     config.MESSENGER_API_KEY = key
 
 
-def get_api_key() -> str:
-    return _api_key
-
-
 def _headers() -> dict:
     return {"x-api-key": _api_key, "Content-Type": "application/json"}
 
@@ -56,7 +51,6 @@ def _headers() -> dict:
 
 async def register_bot(name: str) -> str:
     """Register bot with Messenger and return its API key."""
-    global _bot_id
     client = _get_client()
     resp = await client.post(
         f"{config.MESSENGER_URL}/api/bots",
@@ -71,8 +65,8 @@ async def register_bot(name: str) -> str:
     resp.raise_for_status()
     data = resp.json()
     key = data.get("apiKey") or data.get("key") or data.get("api_key", "")
-    _bot_id = data.get("bot", {}).get("id") or data.get("id")
-    logger.info(f"[Messenger] Bot registered: {name} (id={_bot_id})")
+    bot_id = data.get("bot", {}).get("id") or data.get("id")
+    logger.info(f"[Messenger] Bot registered: {name} (id={bot_id})")
     return key
 
 
@@ -100,7 +94,7 @@ async def register_webhook(url: str, events: list) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Messages — send, edit, delete, search
+# Messages — send, edit, delete
 # ---------------------------------------------------------------------------
 
 def _split_message(text: str, limit: int) -> list:
@@ -228,25 +222,6 @@ async def mark_read(room_id: int, message_ids: list) -> None:
         pass
 
 
-async def search_messages(query: str, room_id: int | None = None, limit: int = 20) -> list:
-    """Search messages across rooms or within a specific room."""
-    try:
-        client = _get_client()
-        params = {"q": query, "limit": limit}
-        if room_id:
-            params["roomId"] = room_id
-        resp = await client.get(
-            f"{config.MESSENGER_URL}/api/search",
-            headers=_headers(),
-            params=params,
-        )
-        if resp.status_code == 200:
-            return resp.json()
-    except Exception as exc:
-        logger.warning(f"[Messenger] search_messages failed: {exc}")
-    return []
-
-
 # ---------------------------------------------------------------------------
 # Typing indicators
 # ---------------------------------------------------------------------------
@@ -273,158 +248,6 @@ async def stop_typing(room_id: int) -> None:
         )
     except Exception:
         pass
-
-
-# ---------------------------------------------------------------------------
-# Files & images
-# ---------------------------------------------------------------------------
-
-async def send_file(room_id: int, file_path: str, caption: str = "") -> None:
-    """Upload and send a file to a room."""
-    try:
-        client = _get_client()
-        with open(file_path, "rb") as f:
-            resp = await client.post(
-                f"{config.MESSENGER_URL}/api/send-file",
-                headers={"x-api-key": _api_key},
-                data={"roomId": str(room_id), "content": caption},
-                files={"file": f},
-            )
-            resp.raise_for_status()
-    except Exception as exc:
-        logger.warning(f"[Messenger] send_file failed: {exc}")
-
-
-async def send_base64_image(room_id: int, base64_data: str, filename: str = "image.png", caption: str = "") -> None:
-    """Send a base64-encoded image to a room."""
-    try:
-        client = _get_client()
-        resp = await client.post(
-            f"{config.MESSENGER_URL}/api/send-base64",
-            headers=_headers(),
-            json={
-                "roomId": room_id,
-                "data": base64_data,
-                "fileName": filename,
-                "content": caption,
-            },
-        )
-        resp.raise_for_status()
-    except Exception as exc:
-        logger.warning(f"[Messenger] send_base64_image failed: {exc}")
-
-
-# ---------------------------------------------------------------------------
-# Pins
-# ---------------------------------------------------------------------------
-
-async def pin_message(message_id: int, room_id: int) -> None:
-    try:
-        client = _get_client()
-        resp = await client.post(
-            f"{config.MESSENGER_URL}/api/pins",
-            headers=_headers(),
-            json={"messageId": message_id, "roomId": room_id},
-        )
-        resp.raise_for_status()
-    except Exception as exc:
-        logger.warning(f"[Messenger] pin_message failed: {exc}")
-
-
-async def unpin_message(message_id: int) -> None:
-    try:
-        client = _get_client()
-        resp = await client.delete(
-            f"{config.MESSENGER_URL}/api/pins/{message_id}",
-            headers=_headers(),
-        )
-        resp.raise_for_status()
-    except Exception as exc:
-        logger.warning(f"[Messenger] unpin_message failed: {exc}")
-
-
-async def get_pins(room_id: int) -> list:
-    try:
-        client = _get_client()
-        resp = await client.get(
-            f"{config.MESSENGER_URL}/api/pins/{room_id}",
-            headers=_headers(),
-        )
-        if resp.status_code == 200:
-            return resp.json()
-    except Exception as exc:
-        logger.warning(f"[Messenger] get_pins failed: {exc}")
-    return []
-
-
-# ---------------------------------------------------------------------------
-# Web watchers
-# ---------------------------------------------------------------------------
-
-async def create_watcher(url: str, room_id: int, interval_seconds: int = 60) -> dict | None:
-    """Create a URL change watcher that posts to a room when content changes."""
-    try:
-        client = _get_client()
-        resp = await client.post(
-            f"{config.MESSENGER_URL}/api/watchers",
-            headers=_headers(),
-            json={"url": url, "roomId": room_id, "intervalSeconds": interval_seconds},
-        )
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as exc:
-        logger.warning(f"[Messenger] create_watcher failed: {exc}")
-        return None
-
-
-async def list_watchers() -> list:
-    try:
-        client = _get_client()
-        resp = await client.get(
-            f"{config.MESSENGER_URL}/api/watchers",
-            headers=_headers(),
-        )
-        if resp.status_code == 200:
-            return resp.json()
-    except Exception as exc:
-        logger.warning(f"[Messenger] list_watchers failed: {exc}")
-    return []
-
-
-async def delete_watcher(watcher_id: int) -> None:
-    try:
-        client = _get_client()
-        resp = await client.delete(
-            f"{config.MESSENGER_URL}/api/watchers/{watcher_id}",
-            headers=_headers(),
-        )
-        resp.raise_for_status()
-    except Exception as exc:
-        logger.warning(f"[Messenger] delete_watcher failed: {exc}")
-
-
-# ---------------------------------------------------------------------------
-# Rooms
-# ---------------------------------------------------------------------------
-
-async def create_room(name: str, member_names: list, is_group: bool = True) -> dict | None:
-    try:
-        client = _get_client()
-        resp = await client.post(
-            f"{config.MESSENGER_URL}/api/create-room",
-            headers=_headers(),
-            json={
-                "name": name,
-                "isGroup": is_group,
-                "creatorName": config.MESSENGER_BOT_NAME,
-                "memberNames": member_names,
-            },
-        )
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as exc:
-        logger.warning(f"[Messenger] create_room failed: {exc}")
-        return None
 
 
 # ---------------------------------------------------------------------------
@@ -458,6 +281,20 @@ async def get_rooms(bot_user_id: int) -> list:
     except Exception as exc:
         logger.warning(f"[Messenger] get_rooms failed: {exc}")
     return []
+
+
+async def resolve_home_room_by_name(name: str, bot_user_id: int) -> Optional[int]:
+    """
+    Find the room whose name matches `name` (case-insensitive) among the bot's
+    rooms and return its ID. Returns None if no match is found.
+    """
+    rooms = await get_rooms(bot_user_id)
+    name_lower = name.strip().lower()
+    for room in rooms:
+        room_name = (room.get("name") or "").strip().lower()
+        if room_name == name_lower:
+            return room["id"]
+    return None
 
 
 async def get_room_messages(room_id: int, limit: int = 20) -> list:

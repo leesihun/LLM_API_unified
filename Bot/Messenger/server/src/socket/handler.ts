@@ -1,7 +1,8 @@
 import { Server, Socket } from 'socket.io';
 import { queryAll, queryOne, run } from '../db/index.js';
+import { getReactionsForMessage, buildMessageData } from '../db/messages.js';
 import { dispatchWebhooks } from '../services/webhook.js';
-import type { ClientToServerEvents, ServerToClientEvents, MessageReaction } from '../../../shared/types.js';
+import type { ClientToServerEvents, ServerToClientEvents } from '../../../shared/types.js';
 
 type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 
@@ -9,57 +10,6 @@ type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 const onlineUsers = new Map<number, Set<string>>();
 // Track socket -> userId mapping
 const socketUserMap = new Map<string, number>();
-
-function getReactionsForMessage(messageId: number): MessageReaction[] {
-  const rows = queryAll(
-    `SELECT mr.emoji, mr.user_id, u.name as user_name
-     FROM message_reactions mr JOIN users u ON u.id = mr.user_id
-     WHERE mr.message_id = ?
-     ORDER BY mr.created_at`,
-    [messageId],
-  );
-  const map = new Map<string, { userIds: number[]; userNames: string[] }>();
-  for (const r of rows) {
-    if (!map.has(r.emoji)) map.set(r.emoji, { userIds: [], userNames: [] });
-    const entry = map.get(r.emoji)!;
-    entry.userIds.push(r.user_id);
-    entry.userNames.push(r.user_name);
-  }
-  return Array.from(map.entries()).map(([emoji, data]) => ({ emoji, ...data }));
-}
-
-function getReplyTo(replyToId: number | null): any {
-  if (!replyToId) return null;
-  const row = queryOne(
-    `SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
-     FROM messages m JOIN users u ON u.id = m.sender_id
-     WHERE m.id = ?`,
-    [replyToId],
-  );
-  if (!row) return null;
-  return {
-    id: row.id,
-    roomId: row.room_id,
-    senderId: row.sender_id,
-    content: row.is_deleted ? '' : row.content,
-    type: row.type,
-    fileUrl: row.is_deleted ? null : row.file_url,
-    fileName: row.is_deleted ? null : row.file_name,
-    fileSize: row.is_deleted ? null : row.file_size,
-    isEdited: !!row.is_edited,
-    isDeleted: !!row.is_deleted,
-    mentions: row.mentions,
-    replyToId: null,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    senderName: row.sender_name,
-    senderIp: row.sender_ip,
-    isBot: !!row.sender_is_bot,
-    readBy: [],
-    reactions: [],
-    replyTo: null,
-  };
-}
 
 export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToClientEvents>) {
   io.on('connection', (socket: TypedSocket) => {
@@ -126,28 +76,8 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
         return;
       }
 
-      const messageData = {
-        id: message.id,
-        roomId: message.room_id,
-        senderId: message.sender_id,
-        content: message.content,
-        type: message.type as 'text' | 'image' | 'file',
-        fileUrl: message.file_url,
-        fileName: message.file_name,
-        fileSize: message.file_size,
-        isEdited: false,
-        isDeleted: false,
-        mentions: message.mentions,
-        replyToId: message.reply_to || null,
-        createdAt: message.created_at,
-        updatedAt: message.updated_at,
-        senderName: message.sender_name,
-        senderIp: message.sender_ip,
-        isBot: !!message.sender_is_bot,
-        readBy: [] as number[],
-        reactions: [] as any[],
-        replyTo: getReplyTo(message.reply_to),
-      };
+      message._readBy = [];
+      const messageData = buildMessageData(message);
 
       io.to(`room:${roomId}`).emit('new_message', messageData);
       dispatchWebhooks('new_message', roomId, messageData);
@@ -173,18 +103,15 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
     socket.on('edit_message', (data) => {
       const { messageId, content } = data;
 
-      // Verify ownership
-      const message = queryOne('SELECT sender_id FROM messages WHERE id = ?', [messageId]);
+      const message = queryOne('SELECT sender_id, room_id FROM messages WHERE id = ?', [messageId]);
       if (!message || message.sender_id !== userId) return;
 
       run("UPDATE messages SET content = ?, is_edited = 1, updated_at = datetime('now') WHERE id = ?", [content, messageId]);
 
       const updated = queryOne('SELECT updated_at FROM messages WHERE id = ?', [messageId]);
-      const msg = queryOne('SELECT room_id FROM messages WHERE id = ?', [messageId]);
-
       const editPayload = { messageId, content, updatedAt: updated.updated_at };
-      io.to(`room:${msg.room_id}`).emit('message_edited', editPayload);
-      dispatchWebhooks('message_edited', msg.room_id, editPayload);
+      io.to(`room:${message.room_id}`).emit('message_edited', editPayload);
+      dispatchWebhooks('message_edited', message.room_id, editPayload);
     });
 
     // Delete message
@@ -249,7 +176,7 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       const existing = queryOne('SELECT id FROM pinned_messages WHERE message_id = ?', [messageId]);
       if (existing) return;
 
-      run('INSERT INTO pinned_messages (message_id, room_id, pinned_by) VALUES (?, ?, ?)', [messageId, roomId, userId]);
+      const pinResult = run('INSERT INTO pinned_messages (message_id, room_id, pinned_by) VALUES (?, ?, ?)', [messageId, roomId, userId]);
 
       const fullMsg = queryOne(
         `SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
@@ -258,36 +185,16 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       );
       const pinner = queryOne('SELECT name FROM users WHERE id = ?', [userId]);
       const readBy = queryAll('SELECT user_id FROM read_receipts WHERE message_id = ?', [messageId]);
+      fullMsg._readBy = readBy.map((r: any) => r.user_id);
 
       const pin = {
-        id: 0,
+        id: Number(pinResult.lastInsertRowid),
         messageId,
         roomId,
         pinnedBy: userId,
         pinnedByName: pinner?.name || 'Unknown',
         pinnedAt: new Date().toISOString(),
-        message: {
-          id: fullMsg.id,
-          roomId: fullMsg.room_id,
-          senderId: fullMsg.sender_id,
-          content: fullMsg.is_deleted ? '' : fullMsg.content,
-          type: fullMsg.type,
-          fileUrl: fullMsg.is_deleted ? null : fullMsg.file_url,
-          fileName: fullMsg.is_deleted ? null : fullMsg.file_name,
-          fileSize: fullMsg.is_deleted ? null : fullMsg.file_size,
-          isEdited: !!fullMsg.is_edited,
-          isDeleted: !!fullMsg.is_deleted,
-          mentions: fullMsg.mentions,
-          replyToId: fullMsg.reply_to || null,
-          createdAt: fullMsg.created_at,
-          updatedAt: fullMsg.updated_at,
-          senderName: fullMsg.sender_name,
-          senderIp: fullMsg.sender_ip,
-          isBot: !!fullMsg.sender_is_bot,
-          readBy: readBy.map((r: any) => r.user_id),
-          reactions: getReactionsForMessage(messageId),
-          replyTo: getReplyTo(fullMsg.reply_to),
-        },
+        message: buildMessageData(fullMsg),
       };
       io.to(`room:${roomId}`).emit('message_pinned', { roomId, pin });
     });
@@ -332,8 +239,4 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       }
     });
   });
-}
-
-export function getOnlineUsers(): number[] {
-  return Array.from(onlineUsers.keys());
 }

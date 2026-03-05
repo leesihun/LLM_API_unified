@@ -20,12 +20,11 @@ from typing import Callable, Awaitable
 import httpx
 
 import config
+from core.context import build_llm_context
 
 logger = logging.getLogger(__name__)
 
 _HEARTBEAT_FILE = os.path.join(os.path.dirname(__file__), "..", "HEARTBEAT.md")
-_MEMORY_FILE = os.path.join(config.DATA_DIR, "memory.md")
-_SKILLS_DIR = os.path.join(os.path.dirname(__file__), "..", "skills")
 
 # Monotonic deadline before which LLM calls are suppressed after a connection failure
 _llm_cooldown_until: float = 0.0
@@ -72,22 +71,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         logger.warning("[Heartbeat] LLM not configured (no API key or model) — skipping tick")
         return
 
-    memory = _read_file(_MEMORY_FILE)
-    abs_memory_path = os.path.abspath(_MEMORY_FILE)
-
-    # Reuse the same system-prompt loader as the webhook handler
-    from handlers.webhook import _load_system_prompt
-    system_prompt_base = _load_system_prompt()
-
-    abs_skills_path = os.path.abspath(_SKILLS_DIR)
-
-    context = system_prompt_base
-    context += f"\n\n---\n\n## Memory File Location for This Session\n\nAbsolute path: `{abs_memory_path}`"
-    context += f"\n\n## Skills Directory\n\nAbsolute path: `{abs_skills_path}`"
-    if memory:
-        context += f"\n\n## Current Memory Content\n\n{memory}"
-    else:
-        context += "\n\n## Current Memory\n\n(No memory saved yet)"
+    context = build_llm_context()
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     heartbeat_prompt = (
@@ -122,6 +106,8 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         reply = (result["choices"][0]["message"]["content"] or "").strip()
         if not reply:
             logger.info("[Heartbeat] LLM returned empty reply — nothing to post")
+        elif config.MESSENGER_HOME_ROOM_ID < 0:
+            logger.warning("[Heartbeat] Home room not resolved — skipping post")
         else:
             logger.info(f"[Heartbeat] LLM replied ({len(reply)} chars) — posting to room {config.MESSENGER_HOME_ROOM_ID}")
             await send_fn(config.MESSENGER_HOME_ROOM_ID, f"**Autonomous agent**\n\n{reply}")

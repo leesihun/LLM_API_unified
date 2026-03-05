@@ -5,8 +5,6 @@ Hoonbot Setup Script
 Automatically obtains LLM_API_KEY from LLM_API_fast and sets up environment variables.
 """
 import sys
-import json
-import subprocess
 import os
 
 # Fix Windows encoding issues

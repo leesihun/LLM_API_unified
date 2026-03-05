@@ -28,7 +28,6 @@ OPENCODE_CMD=opencode
 
 # --- LLM API ---
 LLM_API_PORT=10007
-LLM_API_TOOLS_PORT=10007
 # Optional: explicit LLM API base URL for remote server (overrides localhost/Cloudflare logic)
 # Example: LLM_API_URL="http://192.168.0.50:10007"
 # LLM_API_URL=""
@@ -39,6 +38,11 @@ HOONBOT_LLM_PASSWORD=administrator
 # --- Hoonbot ---
 HOONBOT_PORT=3939
 HOONBOT_BOT_NAME=Bot
+# When HOONBOT_HOME_ROOM_NAME is set, Hoonbot resolves the room by name at startup
+# and ignores HOONBOT_HOME_ROOM_ID. If the named room is not found, heartbeat posts
+# are silently skipped until Hoonbot is restarted with the room in place.
+# Set HOONBOT_HOME_ROOM_NAME="" to use the numeric ID fallback.
+HOONBOT_HOME_ROOM_NAME=Heartbeat
 HOONBOT_HOME_ROOM_ID=1
 HOONBOT_HEARTBEAT_ENABLED=true
 HOONBOT_HEARTBEAT_INTERVAL=1800

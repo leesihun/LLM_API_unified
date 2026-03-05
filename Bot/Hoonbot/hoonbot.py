@@ -5,9 +5,10 @@ Startup sequence:
 1. Health-check LLM API
 2. Register bot with Messenger (get / restore API key)
 3. Register webhook subscription (new_message, message_edited, message_deleted)
-4. Catch up on missed messages
-5. Start heartbeat loop
-6. Serve FastAPI on HOONBOT_PORT
+4. Resolve home room by name (if configured)
+5. Catch up on missed messages
+6. Start heartbeat loop
+7. Serve FastAPI on HOONBOT_PORT
 """
 import asyncio
 import logging
@@ -31,12 +32,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("hoonbot")
 
-# Key storage file so we survive restarts without re-registering
 _KEY_FILE = os.path.join(os.path.dirname(__file__), "data", ".apikey")
-
-# Webhook events to subscribe to
 _WEBHOOK_EVENTS = ["new_message", "message_edited", "message_deleted"]
 
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _load_saved_key() -> str:
     try:
@@ -51,6 +53,10 @@ def _save_key(key: str) -> None:
     with open(_KEY_FILE, "w") as f:
         f.write(key)
 
+
+# ---------------------------------------------------------------------------
+# Startup steps (each is a self-contained phase)
+# ---------------------------------------------------------------------------
 
 async def _check_llm_health() -> None:
     """Ping LLM API at startup to verify connectivity."""
@@ -68,18 +74,97 @@ async def _check_llm_health() -> None:
         logger.warning(f"[Health] LLM API unreachable at {config.LLM_API_URL}: {e}")
 
 
+async def _register_bot() -> None:
+    """Restore saved API key or register a new bot with Messenger."""
+    saved_key = _load_saved_key()
+    if saved_key:
+        messenger.set_api_key(saved_key)
+        logger.info("[Messenger] Restored API key from disk")
+    else:
+        logger.info(f"[Messenger] Base URL: {config.MESSENGER_URL}")
+        key = await with_retry(
+            messenger.register_bot,
+            config.MESSENGER_BOT_NAME,
+            max_attempts=config.STARTUP_RETRY_ATTEMPTS,
+            base_delay=config.STARTUP_RETRY_DELAY,
+            label="Messenger bot registration",
+        )
+        messenger.set_api_key(key)
+        _save_key(key)
+        logger.info("[Messenger] Bot registered and key saved")
+
+
+async def _subscribe_webhooks() -> None:
+    """Register webhook subscriptions, re-registering the bot if the key is stale."""
+    webhook_host = "aihoonbot.com" if config.USE_CLOUDFLARE else "localhost"
+    webhook_scheme = "https" if config.USE_CLOUDFLARE else "http"
+    webhook_url = f"{webhook_scheme}://{webhook_host}:{config.HOONBOT_PORT}/webhook"
+    logger.info(f"[Messenger] Webhook target: {webhook_url}")
+
+    retries = config.STARTUP_RETRY_ATTEMPTS
+    delay = config.STARTUP_RETRY_DELAY
+
+    try:
+        await with_retry(
+            messenger.register_webhook, webhook_url, _WEBHOOK_EVENTS,
+            max_attempts=retries, base_delay=delay,
+            label="Messenger webhook registration",
+        )
+        return
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code != 401:
+            raise
+
+    # API key rejected — re-register bot and retry
+    logger.warning("[Messenger] API key unauthorized, re-registering bot")
+    key = await with_retry(
+        messenger.register_bot, config.MESSENGER_BOT_NAME,
+        max_attempts=retries, base_delay=delay,
+        label="Messenger bot registration",
+    )
+    messenger.set_api_key(key)
+    _save_key(key)
+    logger.info("[Messenger] Bot key refreshed and saved")
+
+    await with_retry(
+        messenger.register_webhook, webhook_url, _WEBHOOK_EVENTS,
+        max_attempts=retries, base_delay=delay,
+        label="Messenger webhook registration (after key refresh)",
+    )
+
+
+async def _resolve_home_room() -> None:
+    """If MESSENGER_HOME_ROOM_NAME is set, look up the room ID by name."""
+    if not config.MESSENGER_HOME_ROOM_NAME:
+        return
+
+    bot_info = await messenger.get_bot_info()
+    if not bot_info:
+        logger.warning("[Hoonbot] Could not fetch bot info for home room resolution")
+        return
+
+    resolved_id = await messenger.resolve_home_room_by_name(
+        config.MESSENGER_HOME_ROOM_NAME, bot_info["id"],
+    )
+    if resolved_id is not None:
+        config.MESSENGER_HOME_ROOM_ID = resolved_id
+        logger.info(f"[Hoonbot] Home room resolved: '{config.MESSENGER_HOME_ROOM_NAME}' -> id={resolved_id}")
+    else:
+        config.MESSENGER_HOME_ROOM_ID = -1
+        logger.warning(
+            f"[Hoonbot] Home room '{config.MESSENGER_HOME_ROOM_NAME}' not found — "
+            "heartbeat will not post until the room exists and Hoonbot is restarted"
+        )
+
+
 async def _catch_up() -> None:
-    """
-    On startup, find the last unanswered human message in each room Hoonbot
-    belongs to and process it — handles messages sent while Hoonbot was offline.
-    """
+    """Process the last unanswered human message in each room (handles offline period)."""
     bot_info = await messenger.get_bot_info()
     if not bot_info:
         logger.warning("[CatchUp] Could not get bot info, skipping")
         return
 
-    bot_id = bot_info["id"]
-    rooms = await messenger.get_rooms(bot_id)
+    rooms = await messenger.get_rooms(bot_info["id"])
     logger.info(f"[CatchUp] Scanning {len(rooms)} room(s) for missed messages")
 
     for room in rooms:
@@ -88,6 +173,7 @@ async def _catch_up() -> None:
         if not messages:
             continue
 
+        # Find the last human text message
         last_human_idx = -1
         for i, msg in enumerate(messages):
             if (
@@ -101,11 +187,12 @@ async def _catch_up() -> None:
         if last_human_idx == -1:
             continue
 
-        hoonbot_replied = any(
+        # Skip if Hoonbot already replied after that message
+        already_replied = any(
             msg.get("senderName") == config.MESSENGER_BOT_NAME
             for msg in messages[last_human_idx + 1:]
         )
-        if hoonbot_replied:
+        if already_replied:
             continue
 
         missed = messages[last_human_idx]
@@ -116,86 +203,31 @@ async def _catch_up() -> None:
         await process_message(room_id, content, sender, msg_id)
 
 
+# ---------------------------------------------------------------------------
+# Application lifespan
+# ---------------------------------------------------------------------------
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure data directory exists
     os.makedirs(config.DATA_DIR, exist_ok=True)
 
-    # --- Health check ---
     await _check_llm_health()
-
-    # --- Bot registration ---
-    retries = config.STARTUP_RETRY_ATTEMPTS
-    delay = config.STARTUP_RETRY_DELAY
-
-    saved_key = _load_saved_key()
-    if saved_key:
-        messenger.set_api_key(saved_key)
-        logger.info("[Messenger] Restored API key from disk")
-    else:
-        logger.info(f"[Messenger] Base URL: {config.MESSENGER_URL}")
-        key = await with_retry(
-            messenger.register_bot,
-            config.MESSENGER_BOT_NAME,
-            max_attempts=retries,
-            base_delay=delay,
-            label="Messenger bot registration",
-        )
-        messenger.set_api_key(key)
-        _save_key(key)
-        logger.info("[Messenger] Bot registered and key saved")
-
-    # --- Webhook subscription ---
-    webhook_host = "aihoonbot.com" if config.USE_CLOUDFLARE else "localhost"
-    webhook_scheme = "https" if config.USE_CLOUDFLARE else "http"
-    webhook_url = f"{webhook_scheme}://{webhook_host}:{config.HOONBOT_PORT}/webhook"
-    logger.info(f"[Messenger] Webhook target: {webhook_url}")
-    try:
-        await with_retry(
-            messenger.register_webhook,
-            webhook_url,
-            _WEBHOOK_EVENTS,
-            max_attempts=retries,
-            base_delay=delay,
-            label="Messenger webhook registration",
-        )
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code != 401:
-            raise
-        logger.warning("[Messenger] API key unauthorized, re-registering bot")
-        key = await with_retry(
-            messenger.register_bot,
-            config.MESSENGER_BOT_NAME,
-            max_attempts=retries,
-            base_delay=delay,
-            label="Messenger bot registration",
-        )
-        messenger.set_api_key(key)
-        _save_key(key)
-        logger.info("[Messenger] Bot key refreshed and saved")
-        await with_retry(
-            messenger.register_webhook,
-            webhook_url,
-            _WEBHOOK_EVENTS,
-            max_attempts=retries,
-            base_delay=delay,
-            label="Messenger webhook registration (after key refresh)",
-        )
+    await _register_bot()
+    await _subscribe_webhooks()
+    await _resolve_home_room()
 
     logger.info(f"[Hoonbot] Ready on port {config.HOONBOT_PORT}")
-    logger.info(f"[Hoonbot] Streaming={'on' if config.STREAMING_ENABLED else 'off'}, "
-                f"Session max age={config.SESSION_MAX_AGE_DAYS}d, "
-                f"Debounce={config.DEBOUNCE_SECONDS}s")
+    logger.info(
+        f"[Hoonbot] Streaming={'on' if config.STREAMING_ENABLED else 'off'}, "
+        f"Session max age={config.SESSION_MAX_AGE_DAYS}d, "
+        f"Debounce={config.DEBOUNCE_SECONDS}s"
+    )
 
-    # --- Catch up on missed messages ---
     asyncio.create_task(_catch_up())
-
-    # --- Heartbeat loop ---
     asyncio.create_task(run_heartbeat_loop(messenger.send_message))
 
     yield
 
-    # --- Shutdown ---
     await messenger.close_client()
     logger.info("[Hoonbot] Shutdown complete")
 
