@@ -314,8 +314,8 @@ async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_se
             headers=headers,
         )
 
-        if response.status_code == 404 and existing_session_id:
-            logger.warning(f"{log_prefix} Session {existing_session_id} not found, starting fresh")
+        if response.status_code in (404, 500) and existing_session_id:
+            logger.warning(f"{log_prefix} Session {existing_session_id} got {response.status_code}, starting fresh")
             _room_sessions.pop(room_id, None)
             _room_msg_count.pop(room_id, None)
             _save_room_sessions()
@@ -350,9 +350,10 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                 data=llm_data,
                 headers=headers,
             ) as response:
-                if response.status_code == 404 and existing_session_id:
-                    logger.warning(f"{log_prefix} Session {existing_session_id} not found, starting fresh")
+                if response.status_code in (404, 500) and existing_session_id:
+                    logger.warning(f"{log_prefix} Session {existing_session_id} got {response.status_code}, starting fresh")
                     _room_sessions.pop(room_id, None)
+                    _room_msg_count.pop(room_id, None)
                     _save_room_sessions()
                     return None
 
