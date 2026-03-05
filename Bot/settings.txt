@@ -56,7 +56,7 @@ HOONBOT_HEARTBEAT_ACTIVE_END=23:59
 # Debounce window for rapid messages (seconds). Messages within this window are combined.
 HOONBOT_DEBOUNCE_SECONDS=1.5
 # LLM request timeout (seconds). Increase if tool-heavy calls timeout.
-HOONBOT_LLM_TIMEOUT=300
+HOONBOT_LLM_TIMEOUT=3000
 # Max startup retry attempts for Messenger registration/webhook setup
 HOONBOT_STARTUP_RETRIES=6
 # Base delay between startup retries (seconds, doubles each attempt)
