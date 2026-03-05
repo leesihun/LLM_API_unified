@@ -58,20 +58,38 @@ def _save_key(key: str) -> None:
 # Startup steps (each is a self-contained phase)
 # ---------------------------------------------------------------------------
 
-async def _check_llm_health() -> None:
-    """Ping LLM API at startup to verify connectivity."""
+async def _probe_llm_url(client: httpx.AsyncClient, url: str) -> str | None:
+    """Return url if its /health endpoint returns 200, else None."""
+    try:
+        resp = await client.get(f"{url}/health", timeout=5)
+        return url if resp.status_code == 200 else None
+    except Exception:
+        return None
+
+
+async def _autofind_llm_api() -> None:
+    """Probe all candidate LLM API URLs concurrently; set config.LLM_API_URL to the first reachable one (in priority order)."""
     if not config.LLM_API_KEY:
         logger.warning("[Health] LLM API key not configured — run setup.py")
         return
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"{config.LLM_API_URL}/health")
-            if resp.status_code == 200:
-                logger.info(f"[Health] LLM API reachable at {config.LLM_API_URL}")
+
+    candidates = config.LLM_API_CANDIDATES
+    logger.info(f"[Health] Probing LLM API candidates: {candidates}")
+
+    async with httpx.AsyncClient() as client:
+        results = await asyncio.gather(*(_probe_llm_url(client, url) for url in candidates))
+
+    reachable = {r for r in results if r}
+    for url in candidates:  # honour priority order
+        if url in reachable:
+            if url != config.LLM_API_URL:
+                logger.info(f"[Health] LLM API found at {url} (updating from {config.LLM_API_URL})")
+                config.LLM_API_URL = url
             else:
-                logger.warning(f"[Health] LLM API returned status {resp.status_code}")
-    except Exception as e:
-        logger.warning(f"[Health] LLM API unreachable at {config.LLM_API_URL}: {e}")
+                logger.info(f"[Health] LLM API reachable at {url}")
+            return
+
+    logger.warning(f"[Health] LLM API unreachable at all candidates: {candidates}")
 
 
 async def _register_bot() -> None:
@@ -211,7 +229,7 @@ async def _catch_up() -> None:
 async def lifespan(app: FastAPI):
     os.makedirs(config.DATA_DIR, exist_ok=True)
 
-    await _check_llm_health()
+    await _autofind_llm_api()
     await _register_bot()
     await _subscribe_webhooks()
     await _resolve_home_room()

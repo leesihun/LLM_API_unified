@@ -56,15 +56,25 @@ MESSENGER_HOME_ROOM_NAME = _get("HOONBOT_HOME_ROOM_NAME", "")  # If set, resolve
 LLM_API_PORT = int(_get("LLM_API_PORT", "10007"))
 LLM_API_USERNAME = _get("HOONBOT_LLM_USERNAME", "admin")
 LLM_API_PASSWORD = _get("HOONBOT_LLM_PASSWORD", "administrator")
-_llm_api_url_override = _get("LLM_API_URL", "").strip()
+_llm_api_url_override = _get("LLM_API_URL", "").strip().rstrip("/")
+_local_url = f"http://localhost:{LLM_API_PORT}"
+_cf_url = "https://aihoonbot.com/llm"
+
 if _llm_api_url_override:
-    LLM_API_URL = _llm_api_url_override.rstrip("/")
+    LLM_API_URL = _llm_api_url_override
+elif USE_CLOUDFLARE:
+    LLM_API_URL = _cf_url
 else:
-    LLM_API_URL = (
-        "https://aihoonbot.com/llm"
-        if USE_CLOUDFLARE
-        else f"http://localhost:{LLM_API_PORT}"
-    )
+    LLM_API_URL = _local_url
+
+# Ordered candidate list for autofind: explicit override first, then local, then Cloudflare.
+LLM_API_CANDIDATES: list[str] = []
+if _llm_api_url_override:
+    LLM_API_CANDIDATES.append(_llm_api_url_override)
+if _local_url not in LLM_API_CANDIDATES:
+    LLM_API_CANDIDATES.append(_local_url)
+if _cf_url not in LLM_API_CANDIDATES:
+    LLM_API_CANDIDATES.append(_cf_url)
 
 
 def _load_file(name: str) -> str:
