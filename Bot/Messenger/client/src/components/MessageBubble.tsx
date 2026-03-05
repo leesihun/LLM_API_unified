@@ -177,7 +177,7 @@ export default function MessageBubble({
                   : 'border-gray-400 bg-gray-100 text-gray-500'
               }`}>
                 <span className="font-medium">{message.replyTo.senderName}</span>
-                <p className="truncate">{message.replyTo.content || (message.replyTo.type === 'image' ? '🖼️ 이미지' : '📎 파일')}</p>
+                <p className="line-clamp-3 whitespace-pre-wrap break-words">{message.replyTo.content || (message.replyTo.type === 'image' ? '🖼️ 이미지' : '📎 파일')}</p>
               </div>
             )}
             {isPinned && !message.isDeleted && (
