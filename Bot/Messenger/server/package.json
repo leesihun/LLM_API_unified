@@ -1,0 +1,38 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "node build.mjs",
+    "db:init": "tsx src/db/init.ts"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.0",
+    "http-proxy": "^1.18.1",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^3.0.3",
+    "node-pty": "^1.1.0",
+    "socket.io": "^4.8.0",
+    "sql.js": "^1.11.0",
+    "uuid": "^10.0.0",
+    "ws": "^8.18.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/http-proxy": "^1.17.17",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.10.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.24.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s http://127.0.0.1:11434/api/tags)",
+      "Bash(powershell:*)",
+      "Bash(dir:*)",
+      "Bash(start cmd /k:*)",
+      "Bash(python:*)",
+      "Bash(curl:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(cat:*)",
+      "Bash(del:*)",
+      "Bash(ollama pull:*)",
+      "Bash(find:*)",
+      "Bash(mkdir:*)",
+      "Bash(for file in *.py python_coder/*.py)",
+      "Bash(done)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(test -f backend/agents/refactored_react_agent.py)",
+      "Bash(test -f backend/tools/python_coder/refactored_tool.py)",
+      "Bash(test:*)",
+      "Bash(taskkill:*)",
+      "Bash(git push:*)",
+      "Bash(copy:*)",
+      "Bash(aider:*)",
+      "Bash(pip index versions:*)",
+      "Bash(pip uninstall:*)",
+      "Bash(pip search aider)",
+      "Bash(opencode auth login --help:*)",
+      "Bash(opencode debug --help:*)",
+      "Bash(opencode debug:*)",
+      "Bash(opencode run:*)",
+      "Read(//c/Users/Lee/.config/opencode/**)",
+      "Bash(ls:*)",
+      "Bash(python3:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

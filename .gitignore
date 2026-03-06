@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+
+# Node
+node_modules/
+.aider*
+
+# Model files (too large for GitHub)
+offline_models/
+*.gguf
+
+# llama.cpp binaries and downloaded models
+llamacpp/
+models/
+
+# Data directories (server runtime data only)
+/data/
+
+# Secrets
+.apikey
+
+# Build artifacts & Electron dist
+**/dist-portable/
+**/portable-staging/
+**/build/
+**/dist/
+**/dist-electron/
+*.exe
+*.dll

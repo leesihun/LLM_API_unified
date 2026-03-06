@@ -1,0 +1,1528 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM API - Enhanced Chat Interface</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --primary-bg: #0a0a0a;
+            --secondary-bg: #1a1a1a;
+            --tertiary-bg: #2a2a2a;
+            --hover-bg: #3a3a3a;
+            --text-primary: #ffffff;
+            --text-secondary: #b0b0b0;
+            --accent-blue: #4a9eff;
+            --accent-green: #4ade80;
+            --accent-purple: #a855f7;
+            --accent-orange: #fb923c;
+            --border-color: #3a3a3a;
+            --shadow: rgba(0, 0, 0, 0.3);
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--primary-bg);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%);
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 10px var(--shadow);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .user-badge {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: var(--tertiary-bg);
+            color: white;
+        }
+
+        .btn-success {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px var(--shadow);
+        }
+
+        /* Main Layout */
+        .container {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 300px;
+            background: var(--secondary-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+
+        .sidebar.collapsed {
+            width: 0;
+            min-width: 0;
+        }
+
+        .sidebar-header {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+        }
+
+        .session-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .session-item {
+            padding: 0.75rem;
+            background: var(--tertiary-bg);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            border: 2px solid transparent;
+        }
+
+        .session-item:hover {
+            background: var(--hover-bg);
+        }
+
+        .session-item.active {
+            border-color: var(--accent-blue);
+            background: var(--hover-bg);
+        }
+
+        .session-item-title {
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .session-item-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* Main Chat Area */
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            background: var(--secondary-bg);
+            padding: 1rem;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .toolbar-section {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+        }
+
+        .select-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+
+        select {
+            appearance: none;
+            background: var(--tertiary-bg);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 0.5rem 2rem 0.5rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            min-width: 150px;
+        }
+
+        .select-wrapper::after {
+            content: '▼';
+            position: absolute;
+            right: 0.75rem;
+            top: 50%;
+            transform: translateY(-50%);
+            pointer-events: none;
+            color: var(--text-secondary);
+            font-size: 0.7rem;
+        }
+
+        /* Chat Messages */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 2rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .message {
+            display: flex;
+            gap: 1rem;
+            max-width: 80%;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+
+        .message.assistant {
+            align-self: flex-start;
+        }
+
+        .message-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 1.2rem;
+        }
+
+        .message.user .message-avatar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .message.assistant .message-avatar {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+
+        .message-content {
+            background: var(--secondary-bg);
+            padding: 1rem;
+            border-radius: 12px;
+            line-height: 1.6;
+            flex: 1;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .message-metadata {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .message-files {
+            margin-top: 0.5rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .file-badge {
+            background: var(--tertiary-bg);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        /* Input Area */
+        .input-area {
+            background: var(--secondary-bg);
+            padding: 1.5rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .input-controls {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .file-upload-area {
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .file-input-label {
+            background: var(--tertiary-bg);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.3s;
+        }
+
+        .file-input-label:hover {
+            background: var(--hover-bg);
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        #messageInput {
+            flex: 1;
+            background: var(--tertiary-bg);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 1rem;
+            border-radius: 8px;
+            font-size: 1rem;
+            resize: vertical;
+            min-height: 60px;
+            max-height: 200px;
+            font-family: inherit;
+        }
+
+        #messageInput:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        #sendBtn {
+            padding: 1rem 2rem;
+            background: var(--accent-blue);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.3s;
+        }
+
+        #sendBtn:hover:not(:disabled) {
+            background: #3b82f6;
+            transform: translateY(-2px);
+        }
+
+        #sendBtn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Loading */
+        .loading-dots {
+            display: inline-flex;
+            gap: 0.25rem;
+        }
+
+        .loading-dots span {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-blue);
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .loading-dots span:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .loading-dots span:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+
+        @keyframes bounce {
+            0%, 80%, 100% {
+                transform: scale(0);
+            }
+            40% {
+                transform: scale(1);
+            }
+        }
+
+        /* Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--secondary-bg);
+            padding: 2rem;
+            border-radius: 12px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .modal-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .close-modal {
+            background: none;
+            border: none;
+            color: var(--text-primary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.5rem;
+        }
+
+        .form-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .form-label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        .form-input {
+            width: 100%;
+            background: var(--tertiary-bg);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 0.75rem;
+            border-radius: 6px;
+            font-size: 1rem;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--secondary-bg);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--tertiary-bg);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--hover-bg);
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 80px;
+            right: 20px;
+            z-index: 3000;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .toast {
+            background: var(--secondary-bg);
+            color: var(--text-primary);
+            padding: 1rem 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px var(--shadow);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            min-width: 300px;
+            animation: slideIn 0.3s;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(400px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .toast.success {
+            border-left: 4px solid var(--accent-green);
+        }
+
+        .toast.error {
+            border-left: 4px solid #ef4444;
+        }
+
+        .toast.info {
+            border-left: 4px solid var(--accent-blue);
+        }
+
+        .web-search-result {
+            background: var(--tertiary-bg);
+            padding: 1rem;
+            border-radius: 8px;
+            margin-top: 1rem;
+        }
+
+        .web-search-sources {
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .web-search-sources h4 {
+            margin-bottom: 0.5rem;
+            color: var(--text-secondary);
+        }
+
+        .source-link {
+            display: block;
+            color: var(--accent-blue);
+            text-decoration: none;
+            padding: 0.25rem 0;
+            font-size: 0.9rem;
+        }
+
+        .source-link:hover {
+            text-decoration: underline;
+        }
+
+        .history-item {
+            padding: 0.75rem;
+            background: var(--tertiary-bg);
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+        }
+
+        .history-role {
+            font-weight: 600;
+            color: var(--accent-blue);
+            margin-bottom: 0.25rem;
+        }
+
+        .history-content {
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .history-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 0.5rem;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <div class="logo">
+            <i class="fas fa-robot"></i>
+            <span>LLM API Assistant</span>
+        </div>
+        <div class="user-info">
+            <div class="user-badge">
+                <i class="fas fa-user"></i>
+                <span id="username">User</span>
+                <span class="badge" id="roleBadge">Guest</span>
+            </div>
+            <button class="btn btn-secondary" onclick="showSettings()">
+                <i class="fas fa-cog"></i> Settings
+            </button>
+            <button class="btn btn-danger" onclick="logout()">
+                <i class="fas fa-sign-out-alt"></i> Logout
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Container -->
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h3>Chat Sessions</h3>
+                <button class="btn btn-primary btn-sm" onclick="newChat()">
+                    <i class="fas fa-plus"></i> New
+                </button>
+            </div>
+            <div class="sidebar-content">
+                <div class="session-list" id="sessionList">
+                    <!-- Sessions will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Toolbar -->
+            <div class="toolbar">
+                <button class="btn btn-secondary" onclick="toggleSidebar()">
+                    <i class="fas fa-bars"></i>
+                </button>
+
+                <div class="toolbar-section">
+                    <label>Model:</label>
+                    <div class="select-wrapper">
+                        <select id="modelSelect">
+                            <option value="">Loading...</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="toolbar-section">
+                    <label>Agent:</label>
+                    <div class="select-wrapper">
+                        <select id="agentSelect">
+                            <option value="auto">Auto</option>
+                            <option value="react">ReAct</option>
+                            <option value="plan_execute">Plan & Execute</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="toolbar-section">
+                    <button class="btn btn-secondary" onclick="showWebSearch()">
+                        <i class="fas fa-search"></i> Web Search
+                    </button>
+                    <button class="btn btn-secondary" onclick="showHistory()">
+                        <i class="fas fa-history"></i> History
+                    </button>
+                </div>
+
+                <div class="toolbar-section" style="margin-left: auto;">
+                    <span style="color: var(--text-secondary); font-size: 0.9rem;" id="sessionInfo">
+                        No active session
+                    </span>
+                </div>
+            </div>
+
+            <!-- Chat Container -->
+            <div class="chat-container" id="chatContainer">
+                <div class="message assistant">
+                    <div class="message-avatar">🤖</div>
+                    <div class="message-content">
+                        <p>Hello! I'm your AI assistant. How can I help you today?</p>
+                        <p style="margin-top: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">
+                            <strong>Features:</strong> File upload, web search, code generation, data analysis, and more!
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-area">
+                <div class="input-controls">
+                    <div class="file-upload-area">
+                        <label for="fileInput" class="file-input-label">
+                            <i class="fas fa-paperclip"></i>
+                            <span>Attach Files</span>
+                        </label>
+                        <input type="file" id="fileInput" multiple>
+                        <div id="selectedFiles" class="file-upload-area"></div>
+                    </div>
+                </div>
+                <div class="input-wrapper">
+                    <textarea
+                        id="messageInput"
+                        placeholder="Type your message here... (Shift+Enter for new line, Enter to send)"
+                        rows="3"
+                    ></textarea>
+                    <button id="sendBtn" onclick="sendMessage()">
+                        <i class="fas fa-paper-plane"></i>
+                        Send
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settingsModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Settings</h2>
+                <button class="close-modal" onclick="closeModal('settingsModal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="form-group" id="adminModelChange" style="display: none;">
+                <label class="form-label">Change Model (Admin Only)</label>
+                <div style="display: flex; gap: 0.5rem;">
+                    <input type="text" id="newModel" class="form-input" placeholder="e.g., gemma3:12b">
+                    <button class="btn btn-primary" onclick="changeModel()">Change</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">API Base URL</label>
+                <input type="text" id="apiUrl" class="form-input" readonly>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Current Session</label>
+                <input type="text" id="currentSessionId" class="form-input" readonly>
+            </div>
+        </div>
+    </div>
+
+    <!-- Web Search Modal -->
+    <div class="modal" id="webSearchModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Web Search</h2>
+                <button class="close-modal" onclick="closeModal('webSearchModal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="form-group">
+                <label class="form-label">Search Query</label>
+                <input type="text" id="webSearchQuery" class="form-input" placeholder="Enter your search query...">
+            </div>
+            <div class="form-group">
+                <label class="form-label">Max Results</label>
+                <input type="number" id="maxResults" class="form-input" value="5" min="1" max="20">
+            </div>
+            <button class="btn btn-primary" onclick="performWebSearch()">
+                <i class="fas fa-search"></i> Search
+            </button>
+            <div id="webSearchResults" style="margin-top: 1.5rem;"></div>
+        </div>
+    </div>
+
+    <!-- History Modal -->
+    <div class="modal" id="historyModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title">Chat History</h2>
+                <button class="close-modal" onclick="closeModal('historyModal')">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="historyContent">
+                <!-- History will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="config.js"></script>
+    <script>
+        // ============================================================================
+        // LLM API Client Class (matching notebook implementation)
+        // ============================================================================
+        class LLMApiClient {
+            constructor(baseUrl, timeout = 1200000) {
+                this.baseUrl = baseUrl.replace(/\/$/, '');
+                this.token = localStorage.getItem('session_token');
+                this.timeout = timeout;
+            }
+
+            _headers() {
+                const headers = {};
+                if (this.token) {
+                    headers['Authorization'] = `Bearer ${this.token}`;
+                }
+                return headers;
+            }
+
+            async signup(username, password, role = 'guest') {
+                const response = await fetch(`${this.baseUrl}/api/auth/signup`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password, role })
+                });
+                if (!response.ok) throw new Error(`Signup failed: ${response.statusText}`);
+                return await response.json();
+            }
+
+            async login(username, password) {
+                const response = await fetch(`${this.baseUrl}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                if (!response.ok) throw new Error(`Login failed: ${response.statusText}`);
+                const data = await response.json();
+                this.token = data.access_token;
+                localStorage.setItem('session_token', this.token);
+                localStorage.setItem('user_data', JSON.stringify(data.user));
+                return data;
+            }
+
+            async listModels() {
+                const response = await fetch(`${this.baseUrl}/v1/models`, {
+                    headers: this._headers()
+                });
+                if (!response.ok) throw new Error(`Failed to list models: ${response.statusText}`);
+                return await response.json();
+            }
+
+            async changeModel(model) {
+                const headers = { ...this._headers(), 'Content-Type': 'application/json' };
+                const response = await fetch(`${this.baseUrl}/api/admin/model`, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({ model })
+                });
+                if (!response.ok) throw new Error(`Failed to change model: ${response.statusText}`);
+                return await response.json();
+            }
+
+            async chatNew(model, userMessage, agentType = 'auto', files = null) {
+                const messages = [{ role: 'user', content: userMessage }];
+
+                const formData = new FormData();
+                formData.append('model', model);
+                formData.append('messages', JSON.stringify(messages));
+                formData.append('agent_type', agentType);
+
+                if (files && files.length > 0) {
+                    for (const file of files) {
+                        formData.append('files', file);
+                    }
+                }
+
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+                try {
+                    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+                        method: 'POST',
+                        headers: this._headers(),
+                        body: formData,
+                        signal: controller.signal
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`Chat request failed: ${response.statusText} - ${errorText}`);
+                    }
+
+                    const result = await response.json();
+                    return {
+                        content: result.choices[0].message.content,
+                        sessionId: result.x_session_id,
+                        metadata: result.x_agent_metadata
+                    };
+                } catch (error) {
+                    clearTimeout(timeoutId);
+                    throw error;
+                }
+            }
+
+            async chatContinue(model, sessionId, userMessage, agentType = 'auto', files = null) {
+                const messages = [{ role: 'user', content: userMessage }];
+
+                const formData = new FormData();
+                formData.append('model', model);
+                formData.append('messages', JSON.stringify(messages));
+                formData.append('session_id', sessionId);
+                formData.append('agent_type', agentType);
+
+                if (files && files.length > 0) {
+                    for (const file of files) {
+                        formData.append('files', file);
+                    }
+                }
+
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+
+                try {
+                    const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+                        method: 'POST',
+                        headers: this._headers(),
+                        body: formData,
+                        signal: controller.signal
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        throw new Error(`Chat request failed: ${response.statusText} - ${errorText}`);
+                    }
+
+                    const result = await response.json();
+                    return {
+                        content: result.choices[0].message.content,
+                        sessionId: result.x_session_id,
+                        metadata: result.x_agent_metadata
+                    };
+                } catch (error) {
+                    clearTimeout(timeoutId);
+                    throw error;
+                }
+            }
+
+            async chatSessions() {
+                const response = await fetch(`${this.baseUrl}/api/chat/sessions`, {
+                    headers: this._headers()
+                });
+                if (!response.ok) throw new Error(`Failed to get sessions: ${response.statusText}`);
+                const data = await response.json();
+                return data.sessions;
+            }
+
+            async chatHistory(sessionId) {
+                const response = await fetch(`${this.baseUrl}/api/chat/history/${sessionId}`, {
+                    headers: this._headers()
+                });
+                if (!response.ok) throw new Error(`Failed to get history: ${response.statusText}`);
+                const data = await response.json();
+                return data.messages;
+            }
+
+            async websearch(query, maxResults = 5) {
+                const headers = { ...this._headers(), 'Content-Type': 'application/json' };
+                const response = await fetch(`${this.baseUrl}/api/tools/websearch`, {
+                    method: 'POST',
+                    headers: headers,
+                    body: JSON.stringify({ query, max_results: maxResults })
+                });
+                if (!response.ok) throw new Error(`Web search failed: ${response.statusText}`);
+                return await response.json();
+            }
+
+            async listRagCollections() {
+                const response = await fetch(`${this.baseUrl}/api/tools/rag/collections`, {
+                    headers: this._headers()
+                });
+                if (!response.ok) throw new Error(`Failed to list RAG collections: ${response.statusText}`);
+                return await response.json();
+            }
+        }
+
+        // ============================================================================
+        // Global State
+        // ============================================================================
+        let client;
+        let currentSessionId = null;
+        let currentModel = '';
+        let availableModels = [];
+        let availableRagCollections = [];
+        let userData = null;
+        let selectedFiles = [];
+
+        // ============================================================================
+        // Initialization
+        // ============================================================================
+        async function init() {
+            // Check authentication
+            const token = localStorage.getItem('session_token');
+            const userDataStr = localStorage.getItem('user_data');
+
+            if (!token || !userDataStr) {
+                window.location.href = 'login.html';
+                return;
+            }
+
+            userData = JSON.parse(userDataStr);
+            client = new LLMApiClient(CONFIG.API_BASE_URL, CONFIG.REQUEST_TIMEOUT);
+
+            // Update UI
+            document.getElementById('username').textContent = userData.username;
+            document.getElementById('roleBadge').textContent = userData.role;
+            document.getElementById('apiUrl').value = CONFIG.API_BASE_URL;
+
+            // Show admin features if user is admin
+            if (userData.role === 'admin') {
+                document.getElementById('adminModelChange').style.display = 'block';
+            }
+
+            // Load models
+            await loadModels();
+
+            // Load sessions
+            await loadSessions();
+
+            // Load available RAG collections for this login.
+            await refreshRagCollections(false);
+
+            // Setup file input
+            document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+
+            // Setup message input
+            const messageInput = document.getElementById('messageInput');
+            messageInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+
+            showToast('Welcome back, ' + userData.username + '!', 'success');
+        }
+
+        // ============================================================================
+        // Model Management
+        // ============================================================================
+        async function loadModels() {
+            try {
+                const modelsData = await client.listModels();
+                availableModels = modelsData.data;
+
+                const modelSelect = document.getElementById('modelSelect');
+                modelSelect.innerHTML = '';
+
+                availableModels.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.id;
+                    modelSelect.appendChild(option);
+                });
+
+                if (availableModels.length > 0) {
+                    currentModel = availableModels[0].id;
+                    modelSelect.value = currentModel;
+                }
+            } catch (error) {
+                console.error('Failed to load models:', error);
+                showToast('Failed to load models: ' + error.message, 'error');
+            }
+        }
+
+        async function changeModel() {
+            const newModel = document.getElementById('newModel').value.trim();
+            if (!newModel) {
+                showToast('Please enter a model name', 'error');
+                return;
+            }
+
+            try {
+                const result = await client.changeModel(newModel);
+                showToast(`Model changed to: ${result.model}`, 'success');
+                await loadModels();
+                closeModal('settingsModal');
+            } catch (error) {
+                console.error('Failed to change model:', error);
+                showToast('Failed to change model: ' + error.message, 'error');
+            }
+        }
+
+        // ============================================================================
+        // Session Management
+        // ============================================================================
+        async function loadSessions() {
+            try {
+                const sessions = await client.chatSessions();
+                const sessionList = document.getElementById('sessionList');
+                sessionList.innerHTML = '';
+
+                if (sessions.length === 0) {
+                    sessionList.innerHTML = '<p style="color: var(--text-secondary); text-align: center;">No sessions yet</p>';
+                    return;
+                }
+
+                sessions.forEach(sessionId => {
+                    const item = document.createElement('div');
+                    item.className = 'session-item';
+                    if (sessionId === currentSessionId) {
+                        item.classList.add('active');
+                    }
+                    item.innerHTML = `
+                        <div class="session-item-title">${sessionId.substring(0, 8)}...</div>
+                        <div class="session-item-time">Click to load</div>
+                    `;
+                    item.onclick = () => loadSession(sessionId);
+                    sessionList.appendChild(item);
+                });
+            } catch (error) {
+                console.error('Failed to load sessions:', error);
+                showToast('Failed to load sessions: ' + error.message, 'error');
+            }
+        }
+
+        async function loadSession(sessionId) {
+            try {
+                currentSessionId = sessionId;
+                const messages = await client.chatHistory(sessionId);
+
+                // Clear chat
+                const chatContainer = document.getElementById('chatContainer');
+                chatContainer.innerHTML = '';
+
+                // Display messages
+                messages.forEach(msg => {
+                    addMessageToUI(msg.role, msg.content, msg.metadata);
+                });
+
+                // Update session info
+                updateSessionInfo();
+
+                // Update active session in sidebar
+                document.querySelectorAll('.session-item').forEach(item => {
+                    item.classList.remove('active');
+                });
+                event.target.closest('.session-item').classList.add('active');
+
+                showToast('Session loaded', 'success');
+            } catch (error) {
+                console.error('Failed to load session:', error);
+                showToast('Failed to load session: ' + error.message, 'error');
+            }
+        }
+
+        async function refreshRagCollections(showErrorToast = false) {
+            try {
+                const result = await client.listRagCollections();
+                if (!result.success || !Array.isArray(result.collections)) {
+                    throw new Error(result.error || 'Invalid response format');
+                }
+
+                availableRagCollections = result.collections
+                    .map(c => c && c.name)
+                    .filter(name => typeof name === 'string' && name.length > 0)
+                    .sort((a, b) => a.localeCompare(b));
+                return availableRagCollections;
+            } catch (error) {
+                console.error('Failed to refresh RAG collections:', error);
+                availableRagCollections = [];
+                if (showErrorToast) {
+                    showToast('Failed to refresh RAG collections: ' + error.message, 'error');
+                }
+                return [];
+            }
+        }
+
+        function newChat() {
+            currentSessionId = null;
+            const chatContainer = document.getElementById('chatContainer');
+            chatContainer.innerHTML = `
+                <div class="message assistant">
+                    <div class="message-avatar">🤖</div>
+                    <div class="message-content">
+                        <p>New chat started! How can I help you today?</p>
+                    </div>
+                </div>
+            `;
+            updateSessionInfo();
+            loadSessions();
+            showToast('New chat started', 'info');
+        }
+
+        function updateSessionInfo() {
+            const sessionInfo = document.getElementById('sessionInfo');
+            if (currentSessionId) {
+                sessionInfo.textContent = `Session: ${currentSessionId.substring(0, 8)}...`;
+            } else {
+                sessionInfo.textContent = 'No active session';
+            }
+            document.getElementById('currentSessionId').value = currentSessionId || 'None';
+        }
+
+        // ============================================================================
+        // File Handling
+        // ============================================================================
+        function handleFileSelect(event) {
+            selectedFiles = Array.from(event.target.files);
+            displaySelectedFiles();
+        }
+
+        function displaySelectedFiles() {
+            const container = document.getElementById('selectedFiles');
+            container.innerHTML = '';
+
+            selectedFiles.forEach((file, index) => {
+                const badge = document.createElement('div');
+                badge.className = 'file-badge';
+                badge.innerHTML = `
+                    <i class="fas fa-file"></i>
+                    <span>${file.name}</span>
+                    <i class="fas fa-times" style="cursor: pointer; margin-left: 0.25rem;" onclick="removeFile(${index})"></i>
+                `;
+                container.appendChild(badge);
+            });
+        }
+
+        function removeFile(index) {
+            selectedFiles.splice(index, 1);
+            displaySelectedFiles();
+        }
+
+        // ============================================================================
+        // Chat Functions
+        // ============================================================================
+        async function sendMessage() {
+            const messageInput = document.getElementById('messageInput');
+            const message = messageInput.value.trim();
+
+            if (!message) {
+                showToast('Please enter a message', 'error');
+                return;
+            }
+
+            const model = document.getElementById('modelSelect').value;
+            if (!model) {
+                showToast('Please select a model', 'error');
+                return;
+            }
+
+            const agentType = document.getElementById('agentSelect').value;
+            const isCreatingNewSession = !currentSessionId;
+
+            // Disable input
+            messageInput.disabled = true;
+            document.getElementById('sendBtn').disabled = true;
+
+            // Add user message to UI
+            addMessageToUI('user', message, { file_paths: selectedFiles.map(f => f.name) });
+
+            // Show loading
+            const loadingMsg = addLoadingMessage();
+
+            try {
+                let result;
+                if (currentSessionId) {
+                    result = await client.chatContinue(model, currentSessionId, message, agentType, selectedFiles.length > 0 ? selectedFiles : null);
+                } else {
+                    result = await client.chatNew(model, message, agentType, selectedFiles.length > 0 ? selectedFiles : null);
+                }
+
+                currentSessionId = result.sessionId;
+                updateSessionInfo();
+
+                if (isCreatingNewSession) {
+                    await refreshRagCollections(true);
+                }
+
+                // Remove loading
+                loadingMsg.remove();
+
+                // Add assistant message
+                addMessageToUI('assistant', result.content, { task_type: 'agentic', agent_metadata: result.metadata });
+
+                // Clear input
+                messageInput.value = '';
+                selectedFiles = [];
+                document.getElementById('fileInput').value = '';
+                displaySelectedFiles();
+
+                // Reload sessions
+                await loadSessions();
+
+            } catch (error) {
+                console.error('Chat error:', error);
+                loadingMsg.remove();
+                showToast('Error: ' + error.message, 'error');
+            } finally {
+                messageInput.disabled = false;
+                document.getElementById('sendBtn').disabled = false;
+                messageInput.focus();
+            }
+        }
+
+        function addMessageToUI(role, content, metadata = {}) {
+            const chatContainer = document.getElementById('chatContainer');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+
+            const avatar = role === 'user' ? '👤' : '🤖';
+
+            let metadataHtml = '';
+            if (metadata.file_paths && metadata.file_paths.length > 0) {
+                metadataHtml = `
+                    <div class="message-files">
+                        ${metadata.file_paths.map(file => `
+                            <div class="file-badge">
+                                <i class="fas fa-file"></i>
+                                <span>${typeof file === 'string' ? file : file}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+
+            messageDiv.innerHTML = `
+                <div class="message-avatar">${avatar}</div>
+                <div class="message-content">
+                    <p style="white-space: pre-wrap;">${escapeHtml(content)}</p>
+                    ${metadataHtml}
+                </div>
+            `;
+
+            chatContainer.appendChild(messageDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function addLoadingMessage() {
+            const chatContainer = document.getElementById('chatContainer');
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message assistant';
+            loadingDiv.id = 'loading-message';
+            loadingDiv.innerHTML = `
+                <div class="message-avatar">🤖</div>
+                <div class="message-content">
+                    <div class="loading-dots">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </div>
+                    <p style="margin-top: 0.5rem; color: var(--text-secondary);">Thinking...</p>
+                </div>
+            `;
+            chatContainer.appendChild(loadingDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+            return loadingDiv;
+        }
+
+        // ============================================================================
+        // Web Search
+        // ============================================================================
+        function showWebSearch() {
+            document.getElementById('webSearchModal').classList.add('active');
+        }
+
+        async function performWebSearch() {
+            const query = document.getElementById('webSearchQuery').value.trim();
+            const maxResults = parseInt(document.getElementById('maxResults').value) || 5;
+
+            if (!query) {
+                showToast('Please enter a search query', 'error');
+                return;
+            }
+
+            const resultsDiv = document.getElementById('webSearchResults');
+            resultsDiv.innerHTML = '<p>Searching...</p>';
+
+            try {
+                const result = await client.websearch(query, maxResults);
+
+                resultsDiv.innerHTML = `
+                    <div class="web-search-result">
+                        <h3>Answer:</h3>
+                        <p style="white-space: pre-wrap;">${escapeHtml(result.answer)}</p>
+
+                        <div class="web-search-sources">
+                            <h4>Sources Used:</h4>
+                            ${result.sources_used.map((url, i) => `
+                                <a href="${url}" target="_blank" class="source-link">
+                                    ${i + 1}. ${url}
+                                </a>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+
+                showToast('Search completed', 'success');
+            } catch (error) {
+                console.error('Web search error:', error);
+                resultsDiv.innerHTML = `<p style="color: #ef4444;">Error: ${error.message}</p>`;
+                showToast('Search failed: ' + error.message, 'error');
+            }
+        }
+
+        // ============================================================================
+        // History
+        // ============================================================================
+        async function showHistory() {
+            if (!currentSessionId) {
+                showToast('No active session', 'error');
+                return;
+            }
+
+            document.getElementById('historyModal').classList.add('active');
+
+            try {
+                const messages = await client.chatHistory(currentSessionId);
+                const historyContent = document.getElementById('historyContent');
+
+                historyContent.innerHTML = messages.map(msg => `
+                    <div class="history-item">
+                        <div class="history-role">${msg.role === 'user' ? '👤 User' : '🤖 Assistant'}</div>
+                        <div class="history-content">${escapeHtml(msg.content)}</div>
+                        <div class="history-time">${msg.timestamp || 'No timestamp'}</div>
+                    </div>
+                `).join('');
+
+            } catch (error) {
+                console.error('Failed to load history:', error);
+                showToast('Failed to load history: ' + error.message, 'error');
+            }
+        }
+
+        // ============================================================================
+        // UI Helpers
+        // ============================================================================
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('collapsed');
+        }
+
+        function showSettings() {
+            document.getElementById('settingsModal').classList.add('active');
+        }
+
+        function closeModal(modalId) {
+            document.getElementById(modalId).classList.remove('active');
+        }
+
+        function logout() {
+            localStorage.removeItem('session_token');
+            localStorage.removeItem('user_data');
+            window.location.href = 'login.html';
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+
+            const icon = type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle';
+            toast.innerHTML = `
+                <i class="fas fa-${icon}"></i>
+                <span>${message}</span>
+            `;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.remove();
+            }, 4000);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ============================================================================
+        // Start Application
+        // ============================================================================
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>

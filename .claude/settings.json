@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git diff-tree -r --name-only HEAD~2..HEAD)",
+      "Bash(git ls-tree -r --name-only HEAD)",
+      "Bash(git add .gitignore)",
+      "Bash(git commit:*)",
+      "WebFetch(domain:www.anthropic.com)",
+      "WebFetch(domain:blog.jetbrains.com)",
+      "WebFetch(domain:byaiteam.com)",
+      "Bash(git check-ignore -v Bot/Messenger/android-app/App.js Bot/Messenger/android-app/package.json Bot/Messenger/android-app/app.json Bot/Messenger/android-app/index.js)",
+      "Bash(git check-ignore -v \"Bot/Hoonbot/data/memory.md\" \"Bot/Hoonbot/data/.apikey\")",
+      "Bash(xargs git check-ignore)",
+      "Bash(git add Bot/Hoonbot/data/)",
+      "Bash(git rm --cached Bot/Messenger/android-app)",
+      "Bash(git add .claude/settings.json)",
+      "Bash(for file in stop_inference.py requirements.txt create_user_direct.py create_users.py clear_data.py clear_rag_data.py tools_config.py)",
+      "Bash(do test -f \"/c/Users/Lee/Desktop/Huni/LLM_API_fast/$file\")",
+      "Bash(for file in backend/agent.py backend/core/llm_backend.py backend/core/llm_interceptor.py backend/api/app.py backend/utils/auth.py backend/utils/file_handler.py)",
+      "Bash(for file in backend/api/routes/auth.py backend/api/routes/chat.py backend/api/routes/sessions.py backend/api/routes/models.py backend/api/routes/admin.py backend/api/routes/tools.py backend/api/routes/jobs.py backend/api/routes/rag_upload_async.py)",
+      "Bash(for file in tools/web_search/tool.py tools/python_coder/__init__.py tools/python_coder/native_tool.py tools/python_coder/opencode_tool.py tools/rag/__init__.py tools/file_ops/reader.py tools/file_ops/writer.py tools/file_ops/navigator.py tools/shell/tool.py tools/process_monitor/tool.py tools/memo/tool.py)"
+    ]
+  }
+}

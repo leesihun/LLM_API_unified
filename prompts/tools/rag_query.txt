@@ -1,0 +1,15 @@
+You are generating bilingual (Korean + English) search queries to retrieve relevant documents from a knowledge base that may contain documents in Korean, English, or both.
+
+User Query: {user_query}
+Context: {context}
+
+Generate exactly 6 diverse search queries that will maximize the chance of finding all relevant documents. For each of the 3 angles below, produce one query in the SAME language as the user query and one TRANSLATED into the other language (Korean <-> English):
+
+1. SEMANTIC (same language): A natural language reformulation focusing on the core meaning and concepts.
+2. SEMANTIC (translated): The same reformulation translated into the other language.
+3. KEYWORD (same language): A keyword-focused query using specific terms, names, and technical vocabulary.
+4. KEYWORD (translated): The same keyword query translated into the other language.
+5. ASPECT (same language): If the query has multiple facets, decompose it into the most important sub-question. If it has only one facet, rephrase it with different terminology.
+6. ASPECT (translated): The same aspect query translated into the other language.
+
+Respond with ONLY the 6 queries, one per line, no numbering or labels:

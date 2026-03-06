@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <title>Code Wrapper</title>
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #131313;
+      --surface2: #1c1c1c;
+      --border: #262626;
+      --text: #e5e5e5;
+      --dim: #777;
+      --accent: #6366f1;
+      --accent-h: #818cf8;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --err: #ef4444;
+      --user-bg: #172554;
+      --ai-bg: #18181b;
+    }
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      height: 100vh; height: 100dvh;
+      display: flex; flex-direction: column; overflow: hidden;
+    }
+
+    /* ---- Login ---- */
+    #login {
+      display:flex; align-items:center; justify-content:center;
+      height:100%; padding:24px;
+    }
+    .login-card {
+      background:var(--surface); border:1px solid var(--border);
+      border-radius:16px; padding:40px 32px; width:100%; max-width:380px; text-align:center;
+    }
+    .login-card h1 { font-size:22px; margin-bottom:6px; }
+    .login-card p  { color:var(--dim); margin-bottom:24px; font-size:14px; }
+    .login-card input {
+      width:100%; padding:12px 14px; background:var(--surface2); border:1px solid var(--border);
+      border-radius:10px; color:var(--text); font-size:16px; outline:none; margin-bottom:14px;
+    }
+    .login-card input:focus { border-color:var(--accent); }
+    .login-card button {
+      width:100%; padding:12px; background:var(--accent); color:#fff; border:none;
+      border-radius:10px; font-size:15px; font-weight:600; cursor:pointer;
+    }
+    .login-card button:hover { background:var(--accent-h); }
+    #login-err { color:var(--err); margin-top:10px; font-size:13px; display:none; }
+
+    /* ---- Main layout ---- */
+    #app { display:none; flex-direction:column; height:100%; }
+    header {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:10px 16px; background:var(--surface); border-bottom:1px solid var(--border); flex-shrink:0;
+    }
+    header h1 { font-size:16px; font-weight:700; }
+    .conn { display:flex; align-items:center; gap:6px; font-size:13px; color:var(--dim); }
+    .dot { width:8px; height:8px; border-radius:50%; }
+    .dot.on  { background:var(--ok); }
+    .dot.off { background:var(--err); }
+    .tunnel-url {
+      font-size:11px; color:var(--accent); text-decoration:none;
+      max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+    .tunnel-url:hover { color:var(--accent-h); text-decoration:underline; }
+
+    #wsSel {
+      padding:5px 10px; background:var(--surface2); border:1px solid var(--border);
+      border-radius:8px; color:var(--text); font-size:13px; font-weight:600;
+      outline:none; max-width:200px; cursor:pointer;
+    }
+    #wsSel:focus { border-color:var(--accent); }
+
+    /* ---- Queue bar ---- */
+    #qbar {
+      padding:7px 16px; background:var(--surface2); border-bottom:1px solid var(--border);
+      font-size:12px; color:var(--dim); display:none; flex-shrink:0;
+    }
+
+    /* ---- Messages ---- */
+    #msgs {
+      flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:14px;
+    }
+    .msg { max-width:88%; animation: fadeUp .2s ease; }
+    .msg.user { align-self:flex-end; }
+    .msg.ai   { align-self:flex-start; }
+    @keyframes fadeUp { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:translateY(0); } }
+
+    .bubble {
+      padding:12px 16px; border-radius:16px; font-size:14px;
+      line-height:1.55; white-space:pre-wrap; word-break:break-word;
+    }
+    .msg.user .bubble { background:var(--user-bg); border-bottom-right-radius:4px; }
+    .msg.ai   .bubble { background:var(--ai-bg); border:1px solid var(--border); border-bottom-left-radius:4px; }
+
+    .meta { font-size:11px; color:var(--dim); margin-top:4px; padding:0 4px; }
+    .msg.user .meta { text-align:right; }
+
+    .badge {
+      display:inline-block; padding:2px 8px; border-radius:10px;
+      font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.4px;
+    }
+    .badge.queued    { background:#262626; color:var(--dim); }
+    .badge.waiting   { background:#3b2a0a; color:var(--warn); }
+    .badge.running   { background:#052e16; color:var(--ok); }
+    .badge.completed { background:#1e1b4b; color:var(--accent-h); }
+    .badge.failed    { background:#2a0a0a; color:var(--err); }
+    .badge.cancelled { background:#262626; color:var(--dim); }
+
+    .typing span {
+      display:inline-block; width:6px; height:6px; border-radius:50%;
+      background:var(--dim); animation:bounce 1.4s infinite ease-in-out;
+    }
+    .typing span:nth-child(2) { animation-delay:.15s; }
+    .typing span:nth-child(3) { animation-delay:.3s; }
+    @keyframes bounce {
+      0%,60%,100% { opacity:.25; transform:translateY(0); }
+      30% { opacity:1; transform:translateY(-5px); }
+    }
+
+    /* code blocks inside AI output */
+    .bubble pre {
+      background:#111; border:1px solid var(--border); border-radius:8px;
+      padding:10px 12px; margin:8px 0 4px; overflow-x:auto; font-size:13px;
+      font-family:"Cascadia Code",Consolas,monospace; line-height:1.45;
+    }
+    .bubble code:not(pre code) {
+      background:#222; padding:1px 5px; border-radius:4px; font-size:13px;
+      font-family:"Cascadia Code",Consolas,monospace;
+    }
+
+    /* ---- Input area ---- */
+    #inputarea {
+      padding:10px 14px; background:var(--surface); border-top:1px solid var(--border); flex-shrink:0;
+    }
+    .opts {
+      display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;
+    }
+    .opts select, .opts input[type=number] {
+      padding:5px 8px; background:var(--surface2); border:1px solid var(--border);
+      border-radius:8px; color:var(--text); font-size:13px; outline:none;
+    }
+    .opts select:focus, .opts input[type=number]:focus { border-color:var(--accent); }
+    .opts label { font-size:12px; color:var(--dim); }
+    .delay-in { width:56px; }
+
+    .perms {
+      display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px;
+    }
+    .perm-toggle {
+      display:flex; align-items:center; gap:4px;
+      padding:4px 10px; background:var(--surface2); border:1px solid var(--border);
+      border-radius:8px; cursor:pointer; font-size:12px; color:var(--dim);
+      user-select:none; transition: border-color .15s, color .15s;
+    }
+    .perm-toggle:hover { border-color:#444; }
+    .perm-toggle input { display:none; }
+    .perm-toggle.active { border-color:var(--accent); color:var(--accent-h); }
+    .perm-toggle.danger.active { border-color:var(--err); color:var(--err); }
+
+    .row { display:flex; gap:8px; align-items:flex-end; }
+    #prompt {
+      flex:1; min-height:44px; max-height:140px; padding:10px 14px;
+      background:var(--surface2); border:1px solid var(--border); border-radius:12px;
+      color:var(--text); font-size:16px; font-family:inherit; resize:none; outline:none;
+      line-height:1.4;
+    }
+    #prompt:focus { border-color:var(--accent); }
+    #sendbtn {
+      width:44px; height:44px; background:var(--accent); color:#fff; border:none;
+      border-radius:12px; cursor:pointer; display:flex; align-items:center; justify-content:center;
+      flex-shrink:0; transition:background .15s;
+    }
+    #sendbtn:hover { background:var(--accent-h); }
+    #sendbtn:disabled { opacity:.4; cursor:not-allowed; }
+
+    ::-webkit-scrollbar { width:5px; }
+    ::-webkit-scrollbar-track { background:transparent; }
+    ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+  </style>
+</head>
+<body>
+
+<!-- ===================== LOGIN ===================== -->
+<div id="login">
+  <div class="login-card">
+    <h1>Code Wrapper</h1>
+    <p>Remote control for Claude Code &amp; Cursor</p>
+    <input type="password" id="tokenIn" placeholder="Access token" autocomplete="off" />
+    <button id="loginBtn">Connect</button>
+    <p id="login-err"></p>
+  </div>
+</div>
+
+<!-- ===================== APP ===================== -->
+<div id="app">
+  <header>
+    <div class="conn">
+      <span class="dot" id="dot"></span>
+      <span id="connTxt">Connecting&hellip;</span>
+      <a id="tunnelUrl" class="tunnel-url" target="_blank" style="display:none"></a>
+    </div>
+    <select id="wsSel" title="Workspace">
+      <option value="">Select workspace&hellip;</option>
+    </select>
+    <div style="width:60px"></div>
+  </header>
+
+  <div id="qbar"></div>
+
+  <div id="msgs"></div>
+
+  <div id="inputarea">
+    <div class="opts">
+      <select id="toolSel">
+        <option value="claude">Claude Code</option>
+        <option value="cursor">Cursor Agent</option>
+      </select>
+      <label>Delay</label>
+      <input type="number" id="delayIn" class="delay-in" value="0" min="0" step="1" />
+      <label>min</label>
+    </div>
+    <div class="perms" id="perms">
+      <label class="perm-toggle" data-tools="Bash"><input type="checkbox">Bash</label>
+      <label class="perm-toggle" data-tools="Read,Grep,Glob"><input type="checkbox">Read</label>
+      <label class="perm-toggle" data-tools="Edit,MultiEdit,Write"><input type="checkbox">Write</label>
+      <label class="perm-toggle" data-tools="WebSearch,WebFetch"><input type="checkbox">Web</label>
+      <label class="perm-toggle danger" data-skip="true"><input type="checkbox">Skip All</label>
+    </div>
+    <div class="row">
+      <textarea id="prompt" placeholder="Type your instructions&hellip;" rows="1"></textarea>
+      <button id="sendbtn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>
+        </svg>
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================================================================
+   STATE
+   ================================================================ */
+let ws = null;
+let authed = false;
+let token = localStorage.getItem("cw_token") || "";
+const tasks = {};          // taskId → { rawOutput, status }
+let reconnectMs = 1000;
+const renderTimers = {};
+
+/* ================================================================
+   ELEMENTS
+   ================================================================ */
+const $login    = document.getElementById("login");
+const $app      = document.getElementById("app");
+const $dot      = document.getElementById("dot");
+const $connTxt  = document.getElementById("connTxt");
+const $qbar     = document.getElementById("qbar");
+const $msgs     = document.getElementById("msgs");
+const $prompt   = document.getElementById("prompt");
+const $sendBtn  = document.getElementById("sendbtn");
+const $wsSel    = document.getElementById("wsSel");
+const $toolSel  = document.getElementById("toolSel");
+const $delayIn  = document.getElementById("delayIn");
+const $tokenIn  = document.getElementById("tokenIn");
+const $loginBtn = document.getElementById("loginBtn");
+const $loginErr = document.getElementById("login-err");
+const $tunnel   = document.getElementById("tunnelUrl");
+
+/* ================================================================
+   WEBSOCKET
+   ================================================================ */
+function connect() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const base = location.pathname.replace(/\/+$/, "");
+  ws = new WebSocket(`${proto}//${location.host}${base}/ws`);
+
+  ws.onopen = () => {
+    setConn(true);
+    reconnectMs = 1000;
+    if (token) send({ type: "auth", token });
+  };
+
+  ws.onclose = () => {
+    setConn(false);
+    setTimeout(connect, reconnectMs);
+    reconnectMs = Math.min(reconnectMs * 2, 30000);
+  };
+
+  ws.onerror = () => {};
+  ws.onmessage = (e) => handle(JSON.parse(e.data));
+}
+
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function setConn(on) {
+  $dot.className = "dot " + (on ? "on" : "off");
+  $connTxt.textContent = on ? "Connected" : "Reconnecting\u2026";
+}
+
+/* ================================================================
+   MESSAGE HANDLER
+   ================================================================ */
+function handle(d) {
+  switch (d.type) {
+    case "auth_ok":
+      authed = true;
+      $login.style.display = "none";
+      $app.style.display = "flex";
+      localStorage.setItem("cw_token", token);
+      break;
+
+    case "auth_fail":
+      $loginErr.textContent = "Invalid token";
+      $loginErr.style.display = "block";
+      localStorage.removeItem("cw_token");
+      token = "";
+      $login.style.display = "flex";
+      $app.style.display = "none";
+      break;
+
+    case "state":
+      $msgs.innerHTML = "";
+      if (d.workspaces) populateWorkspaces(d.workspaces, d.activeWorkspace);
+      if (d.tunnelUrl) showTunnelUrl(d.tunnelUrl);
+      if (d.history) d.history.forEach((t) => restoreTask(t));
+      if (d.current) restoreTask(d.current);
+      if (d.queue)   d.queue.forEach((t) => restoreTask(t));
+      updateQBar(d.queue);
+      break;
+
+    case "workspace_changed":
+      selectWorkspaceOption(d.name);
+      break;
+
+    case "task_queued":
+      renderUserMsg(d);
+      updateQBar();
+      break;
+
+    case "task_waiting":
+      setBadge(d.taskId, "waiting");
+      break;
+
+    case "task_started":
+      setBadge(d.taskId, "running");
+      ensureAiBubble(d.taskId);
+      break;
+
+    case "stream":
+      appendText(d.taskId, d.text);
+      break;
+
+    case "task_done":
+      setBadge(d.taskId, "completed");
+      flushRender(d.taskId);
+      updateQBar();
+      break;
+
+    case "task_error":
+      setBadge(d.taskId, "failed");
+      if (d.error) showError(d.taskId, d.error);
+      updateQBar();
+      break;
+
+    case "task_cancelled":
+      setBadge(d.taskId, "cancelled");
+      updateQBar();
+      break;
+  }
+}
+
+/* ================================================================
+   RENDERING
+   ================================================================ */
+function restoreTask(t) {
+  if (document.getElementById("task-" + t.id)) return;
+  renderUserMsg(t);
+  if (t.output || t.status === "running" || t.status === "completed" || t.status === "failed") {
+    ensureAiBubble(t.id);
+    if (t.output) {
+      tasks[t.id] = tasks[t.id] || {};
+      tasks[t.id].rawOutput = t.output;
+      const el = document.getElementById("out-" + t.id);
+      if (el) el.innerHTML = renderMd(t.output);
+    }
+    if (t.error) showError(t.id, t.error);
+  }
+  setBadge(t.id, t.status);
+}
+
+function renderUserMsg(t) {
+  const id = t.taskId || t.id;
+  const prompt = t.prompt || "";
+  const tool = t.tool || "claude";
+  const delay = t.delayMinutes || t.delay_minutes || 0;
+  const status = t.status || "queued";
+  const perms = t.allowedTools || t.allowed_tools || [];
+  const skipAll = t.skipPermissions || t.skip_permissions || false;
+
+  const permStr = skipAll
+    ? ' &middot; <span style="color:var(--err)">skip all permissions</span>'
+    : perms.length > 0 ? " &middot; " + esc(perms.join(", ")) : "";
+  const div = document.createElement("div");
+  div.className = "msg user";
+  div.id = "task-" + id;
+  div.innerHTML =
+    `<div class="bubble">${esc(prompt)}</div>` +
+    `<div class="meta">` +
+      `<span class="badge ${status}" id="badge-${id}">${status}</span> ` +
+      `${tool}` +
+      `${delay > 0 ? " &middot; " + delay + "m delay" : ""}` +
+      `${permStr}` +
+    `</div>`;
+  $msgs.appendChild(div);
+  tasks[id] = tasks[id] || {};
+  tasks[id].rawOutput = tasks[id].rawOutput || "";
+  tasks[id].status = status;
+  scroll();
+}
+
+function ensureAiBubble(id) {
+  if (document.getElementById("resp-" + id)) return;
+  const div = document.createElement("div");
+  div.className = "msg ai";
+  div.id = "resp-" + id;
+  div.innerHTML =
+    `<div class="bubble" id="out-${id}">` +
+      `<span class="typing"><span></span><span></span><span></span></span>` +
+    `</div>`;
+  $msgs.appendChild(div);
+  scroll();
+}
+
+function appendText(id, text) {
+  ensureAiBubble(id);
+  if (!tasks[id]) tasks[id] = {};
+  tasks[id].rawOutput = (tasks[id].rawOutput || "") + text;
+
+  if (!renderTimers[id]) {
+    renderTimers[id] = setTimeout(() => {
+      delete renderTimers[id];
+      const el = document.getElementById("out-" + id);
+      if (!el) return;
+      el.innerHTML = renderMd(tasks[id].rawOutput);
+      scroll();
+    }, 60);
+  }
+}
+
+function flushRender(id) {
+  if (renderTimers[id]) {
+    clearTimeout(renderTimers[id]);
+    delete renderTimers[id];
+  }
+  const el = document.getElementById("out-" + id);
+  if (!el || !tasks[id]) return;
+  el.innerHTML = renderMd(tasks[id].rawOutput);
+  scroll();
+}
+
+function showError(id, err) {
+  ensureAiBubble(id);
+  const el = document.getElementById("out-" + id);
+  if (!el) return;
+  const existing = el.textContent;
+  el.innerHTML = (existing ? renderMd(existing) + "<br>" : "") +
+    `<span style="color:var(--err)">Error: ${esc(err)}</span>`;
+  scroll();
+}
+
+function setBadge(id, status) {
+  if (tasks[id]) tasks[id].status = status;
+  const b = document.getElementById("badge-" + id);
+  if (!b) return;
+  b.className = "badge " + status;
+  b.textContent = status;
+}
+
+function updateQBar(queue) {
+  const n = queue ? queue.length : task_manager_queue_len();
+  if (n > 0) {
+    $qbar.style.display = "block";
+    $qbar.textContent = n + " task" + (n > 1 ? "s" : "") + " queued";
+  } else {
+    $qbar.style.display = "none";
+  }
+}
+function task_manager_queue_len() {
+  return Object.values(tasks).filter(
+    (t) => t.status === "queued" || t.status === "waiting"
+  ).length;
+}
+
+function scroll() {
+  requestAnimationFrame(() => { $msgs.scrollTop = $msgs.scrollHeight; });
+}
+
+/* ================================================================
+   MARKDOWN → HTML  (enhanced)
+   ================================================================ */
+function renderMd(raw) {
+  let s = esc(raw);
+
+  // fenced code blocks (must be before inline code)
+  s = s.replace(/```(\w*)\n([\s\S]*?)```/g, (_m, lang, code) => {
+    const langClass = lang ? ` class="lang-${lang}"` : "";
+    return `<pre${langClass}>${code}</pre>`;
+  });
+
+  // horizontal rules
+  s = s.replace(/\n---\n/g, "<hr style=\"border:0;height:1px;background:var(--border);margin:12px 0;\"/>");
+  s = s.replace(/\n\*\*\*\n/g, "<hr style=\"border:0;height:1px;background:var(--border);margin:12px 0;\"/>");
+
+  // headings (before bold to avoid conflicts)
+  s = s.replace(/^### (.+)$/gm, "<h3 style=\"margin-top:12px;margin-bottom:6px;font-size:14px;font-weight:600;\">$1</h3>");
+  s = s.replace(/^## (.+)$/gm, "<h2 style=\"margin-top:14px;margin-bottom:8px;font-size:15px;font-weight:700;\">$1</h2>");
+  s = s.replace(/^# (.+)$/gm, "<h1 style=\"margin-top:16px;margin-bottom:10px;font-size:18px;font-weight:700;\">$1</h1>");
+
+  // inline code (before other formatting)
+  s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+
+  // bold
+  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+
+  // italic
+  s = s.replace(/\*(.+?)\*/g, "<em>$1</em>");
+  s = s.replace(/_(.+?)_/g, "<em>$1</em>");
+
+  // links [text](url)
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (m, text, url) => {
+    const href = url.startsWith("http") ? url : "https://" + url;
+    return `<a href="${href}" target="_blank" style="color:var(--accent);text-decoration:underline;cursor:pointer;">${text}</a>`;
+  });
+
+  // line breaks (double space or newline)
+  s = s.replace(/\n/g, "<br/>");
+
+  return s;
+}
+
+/* ================================================================
+   WORKSPACE
+   ================================================================ */
+function populateWorkspaces(names, activePath) {
+  $wsSel.innerHTML = "";
+  names.forEach((name) => {
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = name;
+    if (activePath && activePath.endsWith(name)) opt.selected = true;
+    $wsSel.appendChild(opt);
+  });
+}
+
+function selectWorkspaceOption(name) {
+  $wsSel.value = name;
+}
+
+function showTunnelUrl(url) {
+  $tunnel.href = url;
+  $tunnel.textContent = url.replace("https://", "");
+  $tunnel.style.display = "inline";
+}
+
+/* ================================================================
+   UTILITIES
+   ================================================================ */
+function esc(t) {
+  const d = document.createElement("div");
+  d.textContent = t;
+  return d.innerHTML;
+}
+
+/* ================================================================
+   USER ACTIONS
+   ================================================================ */
+function doLogin() {
+  token = $tokenIn.value.trim();
+  if (!token) return;
+  $loginErr.style.display = "none";
+  send({ type: "auth", token });
+}
+
+function getPermissions() {
+  const skipEl = document.querySelector("#perms .perm-toggle[data-skip] input");
+  if (skipEl && skipEl.checked) {
+    return { allowedTools: [], skipPermissions: true };
+  }
+  const tools = [];
+  document.querySelectorAll("#perms .perm-toggle[data-tools] input:checked").forEach((cb) => {
+    cb.parentElement.dataset.tools.split(",").forEach((t) => tools.push(t));
+  });
+  return { allowedTools: tools, skipPermissions: false };
+}
+
+function doSend() {
+  const text = $prompt.value.trim();
+  if (!text) return;
+  const { allowedTools, skipPermissions } = getPermissions();
+  send({
+    type: "submit",
+    prompt: text,
+    tool: $toolSel.value,
+    delayMinutes: parseFloat($delayIn.value) || 0,
+    allowedTools,
+    skipPermissions,
+  });
+  $prompt.value = "";
+  $prompt.style.height = "auto";
+}
+
+/* ================================================================
+   EVENT LISTENERS
+   ================================================================ */
+$loginBtn.addEventListener("click", doLogin);
+$tokenIn.addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+
+document.querySelectorAll("#perms .perm-toggle").forEach((el) => {
+  el.addEventListener("click", () => {
+    const cb = el.querySelector("input");
+    cb.checked = !cb.checked;
+    el.classList.toggle("active", cb.checked);
+
+    const isSkip = el.dataset.skip === "true";
+    const toolToggles = document.querySelectorAll("#perms .perm-toggle[data-tools]");
+
+    if (isSkip) {
+      toolToggles.forEach((t) => {
+        const tcb = t.querySelector("input");
+        tcb.disabled = cb.checked;
+        t.style.opacity = cb.checked ? "0.35" : "1";
+      });
+    }
+  });
+});
+
+$wsSel.addEventListener("change", () => {
+  if ($wsSel.value) send({ type: "set_workspace", name: $wsSel.value });
+});
+
+$sendBtn.addEventListener("click", doSend);
+$prompt.addEventListener("input", () => {
+  $prompt.style.height = "auto";
+  $prompt.style.height = Math.min($prompt.scrollHeight, 140) + "px";
+});
+$prompt.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); doSend(); }
+});
+
+/* ================================================================
+   INIT
+   ================================================================ */
+if (token) {
+  // optimistic: show app, will revert on auth_fail
+  $login.style.display = "none";
+  $app.style.display = "flex";
+}
+connect();
+</script>
+</body>
+</html>

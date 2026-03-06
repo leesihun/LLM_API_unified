@@ -1,0 +1,23 @@
+You are synthesizing information from retrieved documents to answer a query.
+You must ONLY use information explicitly stated in the retrieved documents below.
+The retrieved documents may be in Korean, English, or both languages.
+
+User Query: {user_query}
+
+Retrieved Documents:
+{documents}
+
+Context:
+{context}
+
+STRICT RULES:
+1. ONLY use facts and claims that are explicitly present in the retrieved documents above.
+2. DO NOT add information from your own knowledge. Every claim must be traceable to a specific document.
+3. If a retrieved document is off-topic or irrelevant to the query, IGNORE it entirely.
+4. If the retrieved documents do not contain sufficient information to answer the query, state clearly: "The retrieved documents do not contain sufficient information to answer this query." (in the same language as the user query).
+5. Cite the specific document name/number supporting each claim (e.g., [Document 1]).
+6. If documents partially answer the query, answer what you can and explicitly note what information is missing.
+7. Do not speculate or infer beyond what the documents state.
+8. ALWAYS respond in the same language as the user query. If the user query is in Korean, respond in Korean. If in English, respond in English. Translate information from documents as needed.
+
+Your answer:

@@ -1,0 +1,1881 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HE Team LLM Assistant - Enhanced</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="config.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #0a0a0a;
+            color: #ffffff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 320px;
+            height: 100vh;
+            background: linear-gradient(180deg, #1a1a1a 0%, #0f0f0f 100%);
+            border-right: 1px solid #2a2a2a;
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            left: 0;
+            top: 0;
+            z-index: 100;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .sidebar-header {
+            padding: 24px 20px;
+            border-bottom: 1px solid #2a2a2a;
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+        }
+
+        .sidebar-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(45deg, #ffffff, #e2e8f0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .sidebar-subtitle {
+            font-size: 14px;
+            opacity: 0.8;
+        }
+
+        /* New Features Section */
+        .features-section {
+            padding: 16px 20px;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .features-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #94a3b8;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .feature-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .feature-btn {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: rgba(37, 99, 235, 0.1);
+            border: 1px solid rgba(37, 99, 235, 0.2);
+            border-radius: 8px;
+            color: #ffffff;
+            text-decoration: none;
+            font-size: 14px;
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+
+        .feature-btn:hover {
+            background: rgba(37, 99, 235, 0.2);
+            border-color: rgba(37, 99, 235, 0.4);
+            transform: translateY(-1px);
+        }
+
+        .feature-btn i {
+            font-size: 16px;
+            color: #60a5fa;
+        }
+
+        /* File Upload Area */
+        .file-upload-section {
+            padding: 16px 20px;
+            border-bottom: 1px solid #2a2a2a;
+        }
+
+        .upload-area {
+            border: 2px dashed #374151;
+            border-radius: 8px;
+            padding: 20px;
+            text-align: center;
+            transition: all 0.3s;
+            cursor: pointer;
+            background: rgba(55, 65, 81, 0.1);
+        }
+
+        .upload-area:hover,
+        .upload-area.drag-over {
+            border-color: #60a5fa;
+            background: rgba(96, 165, 250, 0.1);
+        }
+
+        .upload-icon {
+            font-size: 24px;
+            color: #6b7280;
+            margin-bottom: 8px;
+        }
+
+        .upload-text {
+            font-size: 14px;
+            color: #9ca3af;
+            margin-bottom: 4px;
+        }
+
+        .upload-subtext {
+            font-size: 12px;
+            color: #6b7280;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        /* Uploaded Files List */
+        .files-list {
+            max-height: 200px;
+            overflow-y: auto;
+            padding: 8px 0;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            margin: 4px 0;
+            background: rgba(55, 65, 81, 0.1);
+            border-radius: 6px;
+            font-size: 13px;
+        }
+
+        .file-item i {
+            color: #60a5fa;
+            font-size: 14px;
+        }
+
+        .file-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-actions {
+            display: flex;
+            gap: 4px;
+        }
+
+        .file-action-btn {
+            background: none;
+            border: none;
+            color: #9ca3af;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            font-size: 12px;
+            transition: all 0.2s;
+        }
+
+        .file-action-btn:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        /* Search Context Styles */
+        .search-keywords {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 8px;
+        }
+
+        .keyword-tag {
+            background: rgba(59, 130, 246, 0.1);
+            color: #60a5fa;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+        }
+
+        .search-result-item {
+            margin-bottom: 8px;
+            padding: 6px;
+            background: rgba(55, 65, 81, 0.1);
+            border-radius: 4px;
+            border-left: 2px solid rgba(34, 197, 94, 0.4);
+        }
+
+        .search-result-title {
+            font-weight: 500;
+            color: #ffffff;
+            font-size: 12px;
+            margin-bottom: 2px;
+        }
+
+        .search-result-title a {
+            color: #60a5fa;
+            text-decoration: none;
+            display: block;
+            word-break: break-word;
+        }
+
+        .search-result-title a:hover {
+            text-decoration: underline;
+        }
+
+        .search-result-snippet {
+            color: #9ca3af;
+            font-size: 11px;
+            line-height: 1.3;
+            margin-top: 3px;
+        }
+
+        .search-result-source {
+            color: #64748b;
+            font-size: 10px;
+            margin-top: 2px;
+        }
+
+        /* Main Content Area */
+        .main-content {
+            margin-left: 320px;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: #0f0f0f;
+        }
+
+        .chat-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #2a2a2a;
+            background: rgba(26, 26, 26, 0.8);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .user-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .action-btn {
+            background: rgba(55, 65, 81, 0.2);
+            border: 1px solid rgba(55, 65, 81, 0.4);
+            border-radius: 8px;
+            color: #9ca3af;
+            cursor: pointer;
+            padding: 8px 12px;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+
+        .action-btn:hover {
+            background: rgba(55, 65, 81, 0.4);
+            border-color: rgba(96, 165, 250, 0.4);
+            color: #ffffff;
+        }
+
+        .action-btn span {
+            margin-left: 6px;
+            font-size: 13px;
+        }
+
+        #newChatBtn {
+            background: rgba(34, 197, 94, 0.1);
+            border-color: rgba(34, 197, 94, 0.3);
+            color: #22c55e;
+        }
+
+        #newChatBtn:hover {
+            background: rgba(34, 197, 94, 0.2);
+            border-color: rgba(34, 197, 94, 0.5);
+            color: #ffffff;
+            transform: translateY(-1px);
+        }
+
+        .chat-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .mode-indicators {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .mode-indicator {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            border: 1px solid;
+        }
+
+        .mode-indicator.normal-active {
+            background: rgba(156, 163, 175, 0.1);
+            border-color: rgba(156, 163, 175, 0.3);
+            color: #9ca3af;
+        }
+
+        .mode-indicator.rag-active {
+            background: rgba(34, 197, 94, 0.1);
+            border-color: rgba(34, 197, 94, 0.3);
+            color: #22c55e;
+        }
+
+        .mode-indicator.document-active {
+            background: rgba(168, 85, 247, 0.1);
+            border-color: rgba(168, 85, 247, 0.3);
+            color: #a855f7;
+        }
+
+        .mode-indicator.file-active {
+            background: rgba(249, 115, 22, 0.1);
+            border-color: rgba(249, 115, 22, 0.3);
+            color: #f97316;
+        }
+
+        .mode-indicator.search-active {
+            background: rgba(59, 130, 246, 0.1);
+            border-color: rgba(59, 130, 246, 0.3);
+            color: #3b82f6;
+        }
+
+        .mode-indicator.enhanced-search-active {
+            background: rgba(16, 185, 129, 0.1);
+            border-color: rgba(16, 185, 129, 0.3);
+            color: #10b981;
+        }
+
+        /* Chat Area */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            scroll-behavior: smooth;
+        }
+
+        .message {
+            margin-bottom: 24px;
+            display: flex;
+            gap: 12px;
+        }
+
+        .message.user {
+            flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .message.user .message-avatar {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        }
+
+        .message.assistant .message-avatar {
+            background: linear-gradient(135deg, #059669, #047857);
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 16px 20px;
+            border-radius: 18px;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+
+        .message.user .message-content {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: white;
+            border-bottom-right-radius: 6px;
+        }
+
+        .message.assistant .message-content {
+            background: #1e1e1e;
+            border: 1px solid #2a2a2a;
+            border-bottom-left-radius: 6px;
+        }
+
+        /* Search Info */
+        .search-info {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            margin: 8px 20px;
+            background: rgba(37, 99, 235, 0.1);
+            border: 1px solid rgba(37, 99, 235, 0.2);
+            border-radius: 6px;
+            font-size: 12px;
+            color: #60a5fa;
+        }
+
+        .search-info i {
+            font-size: 12px;
+        }
+
+        /* Input Area */
+        .input-area {
+            padding: 24px;
+            border-top: 1px solid #2a2a2a;
+            background: rgba(26, 26, 26, 0.8);
+            backdrop-filter: blur(10px);
+        }
+
+        .input-container {
+            display: flex;
+            align-items: end;
+            gap: 12px;
+            background: #1a1a1a;
+            border: 2px solid #2a2a2a;
+            border-radius: 24px;
+            padding: 8px;
+            transition: border-color 0.2s;
+        }
+
+        .input-container:focus-within {
+            border-color: #2563eb;
+        }
+
+        .message-input {
+            flex: 1;
+            background: none;
+            border: none;
+            color: #ffffff;
+            font-size: 14px;
+            padding: 12px 16px;
+            resize: none;
+            outline: none;
+            max-height: 120px;
+            line-height: 1.4;
+        }
+
+        .message-input::placeholder {
+            color: #6b7280;
+        }
+
+        .input-buttons {
+            display: flex;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .input-btn {
+            background: none;
+            border: none;
+            color: #9ca3af;
+            cursor: pointer;
+            padding: 10px;
+            border-radius: 50%;
+            transition: all 0.2s;
+            font-size: 16px;
+        }
+
+        .input-btn:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .input-btn.primary {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            color: white;
+        }
+
+        .input-btn.primary:hover {
+            background: linear-gradient(135deg, #1d4ed8, #1e40af);
+            transform: translateY(-1px);
+        }
+
+        .input-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Mode Selection Buttons */
+        .mode-selection {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .mode-btn {
+            padding: 8px 12px;
+            border: 1px solid #374151;
+            border-radius: 20px;
+            background: rgba(55, 65, 81, 0.1);
+            color: #9ca3af;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .mode-btn:hover {
+            border-color: #60a5fa;
+            color: #ffffff;
+        }
+
+        .mode-btn.active {
+            border-color: #2563eb;
+            background: rgba(37, 99, 235, 0.2);
+            color: #60a5fa;
+        }
+
+        /* Loading indicator */
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 16px 20px;
+            color: #9ca3af;
+            font-size: 14px;
+        }
+
+        .loading-dots {
+            display: flex;
+            gap: 4px;
+        }
+
+        .loading-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #60a5fa;
+            animation: loading-pulse 1.4s infinite ease-in-out;
+        }
+
+        .loading-dot:nth-child(2) { animation-delay: -0.32s; }
+        .loading-dot:nth-child(3) { animation-delay: -0.16s; }
+
+        @keyframes loading-pulse {
+            0%, 80%, 100% { opacity: 0.2; }
+            40% { opacity: 1; }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+            
+            .main-content {
+                margin-left: 0;
+            }
+        }
+
+        /* Settings Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid #2a2a2a;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #ffffff;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #9ca3af;
+            cursor: pointer;
+            font-size: 18px;
+            padding: 4px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        .setting-group {
+            margin-bottom: 20px;
+        }
+
+        .setting-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #ffffff;
+            margin-bottom: 8px;
+            display: block;
+        }
+
+        .setting-input {
+            width: 100%;
+            background: #0f0f0f;
+            border: 1px solid #2a2a2a;
+            border-radius: 8px;
+            color: #ffffff;
+            font-size: 14px;
+            padding: 12px 16px;
+            transition: border-color 0.2s;
+        }
+
+        .setting-input:focus {
+            outline: none;
+            border-color: #2563eb;
+        }
+
+        .setting-description {
+            font-size: 12px;
+            color: #9ca3af;
+            margin-top: 4px;
+        }
+
+        .modal-footer {
+            padding: 20px 24px;
+            border-top: 1px solid #2a2a2a;
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+        }
+
+        .modal-btn {
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 1px solid;
+            transition: all 0.2s;
+        }
+
+        .modal-btn.primary {
+            background: linear-gradient(135deg, #2563eb, #1d4ed8);
+            border-color: #2563eb;
+            color: white;
+        }
+
+        .modal-btn.primary:hover {
+            background: linear-gradient(135deg, #1d4ed8, #1e40af);
+            transform: translateY(-1px);
+        }
+
+        .modal-btn.secondary {
+            background: rgba(55, 65, 81, 0.2);
+            border-color: rgba(55, 65, 81, 0.4);
+            color: #9ca3af;
+        }
+
+        .modal-btn.secondary:hover {
+            background: rgba(55, 65, 81, 0.4);
+            color: #ffffff;
+        }
+
+        /* Utility classes */
+        .hidden { display: none !important; }
+        .text-success { color: #22c55e; }
+        .text-error { color: #ef4444; }
+        .text-warning { color: #f59e0b; }
+    </style>
+</head>
+<body>
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-title">HE Team LLM Assistant</div>
+            <div class="sidebar-subtitle">v. 2.1.1, '25.10.17</div>
+        </div>
+
+        <!-- Features Section -->
+        <div class="features-section">
+            <div class="features-title">CHAT MODES</div>
+            <div class="feature-buttons">
+                <button class="feature-btn mode-btn" id="normalModeBtn" data-mode="normal">
+                    <i class="fas fa-comments"></i>
+                    <span>Normal Chat</span>
+                </button>
+                <button class="feature-btn mode-btn" id="ragModeBtn" data-mode="rag">
+                    <i class="fas fa-search"></i>
+                    <span>Existing RAG Search</span>
+                </button>
+                <button class="feature-btn mode-btn" id="documentModeBtn" data-mode="document">
+                    <i class="fas fa-book-open"></i>
+                    <span>Read Existing Docs</span>
+                </button>
+                <button class="feature-btn mode-btn" id="fileModeBtn" data-mode="file">
+                    <i class="fas fa-file-alt"></i>
+                    <span>Analyze Provided File</span>
+                </button>
+                <button class="feature-btn mode-btn" id="searchModeBtn" data-mode="search">
+                    <i class="fas fa-globe"></i>
+                    <span>Web Search</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- File Upload Section -->
+        <div class="file-upload-section">
+            <div class="features-title">File Management</div>
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">
+                    <i class="fas fa-cloud-upload-alt"></i>
+                </div>
+                <div class="upload-text">Click or drag files here to upload</div>
+                <div class="upload-subtext">Supports: PDF, DOCX, XLSX, TXT, MD, PY, JS, JSON, CSV, HTML, XML, YML</div>
+                <input type="file" id="fileInput" accept=".pdf,.docx,.xlsx,.xls,.txt,.md,.py,.js,.json,.csv,.html,.xml,.yml,.yaml" multiple>
+            </div>
+            
+            <div class="files-list" id="filesList">
+                <!-- Uploaded files will be listed here -->
+            </div>
+        </div>
+
+        <!-- Status/Info Section -->
+        <div class="features-section" id="statusSection">
+            <div class="features-title">System Status</div>
+            <div id="systemStatus" style="font-size: 13px; color: #9ca3af;">
+                Initializing...
+            </div>
+        </div>
+
+        <!-- Search Context Section -->
+        <div class="features-section" id="searchContextSection" style="display: none;">
+            <div class="features-title">Search Context</div>
+            <div id="searchKeywords" style="font-size: 12px; margin-bottom: 8px; color: #64748b;">
+                <!-- Keywords will be displayed here -->
+            </div>
+            <div id="searchResults" style="font-size: 12px; max-height: 300px; overflow-y: auto;">
+                <!-- Search results will be displayed here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <div class="chat-header">
+            <div class="chat-title">AI Assistant Chat</div>
+            <div class="header-actions">
+                <div class="mode-indicators" id="modeIndicators">
+                    <!-- Mode indicators will be added here -->
+                </div>
+                <div class="user-actions">
+                    <button class="action-btn" id="newChatBtn" title="Start New Chat">
+                        <i class="fas fa-plus"></i>
+                        <span>New Chat</span>
+                    </button>
+                    <button class="action-btn" id="settingsBtn" title="Settings">
+                        <i class="fas fa-cog"></i>
+                    </button>
+                    <button class="action-btn" id="logoutBtn" title="Logout">
+                        <i class="fas fa-sign-out-alt"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="chat-container">
+            <div class="messages-container" id="messagesContainer">
+                <!-- Messages will be added here -->
+            </div>
+
+            <div class="input-area">
+                <div class="mode-selection" id="modeSelection">
+                    <button class="mode-btn active" data-mode="normal">
+                        <i class="fas fa-comments"></i>
+                        <span>Normal Chat</span>
+                    </button>
+                    <button class="mode-btn" data-mode="rag">
+                        <i class="fas fa-search"></i>
+                        <span>Existing RAG Search</span>
+                    </button>
+                    <button class="mode-btn" data-mode="document">
+                        <i class="fas fa-book-open"></i>
+                        <span>Read Existing Docs</span>
+                    </button>
+                    <button class="mode-btn" data-mode="file" id="fileChatModeBtn" disabled>
+                        <i class="fas fa-file-alt"></i>
+                        <span>Analyze Provided File</span>
+                    </button>
+                    <button class="mode-btn" data-mode="search">
+                        <i class="fas fa-globe"></i>
+                        <span>Web Search</span>
+                    </button>
+                </div>
+
+                <div class="input-container">
+                    <textarea 
+                        class="message-input" 
+                        id="messageInput" 
+                        placeholder="Type your message here..." 
+                        rows="1"
+                        maxlength="4000"></textarea>
+                    <div class="input-buttons">
+                        <button class="input-btn" id="attachBtn" title="Attach file">
+                            <i class="fas fa-paperclip"></i>
+                        </button>
+                        <button class="input-btn primary" id="sendBtn" title="Send message">
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay hidden" id="settingsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">Settings</div>
+                <button class="modal-close" id="closeSettingsModal">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="setting-group">
+                    <label class="setting-label">LLM Model</label>
+                    <select class="setting-input" id="modelSelect">
+                        <option value="">Loading models...</option>
+                    </select>
+                    <div class="setting-description">Select the language model to use for conversations</div>
+                </div>
+                
+                <div class="setting-group">
+                    <label class="setting-label">Server URL</label>
+                    <input type="text" class="setting-input" id="serverUrlInput" placeholder="http://localhost:11434" readonly>
+                    <div class="setting-description">Ollama server URL (read-only)</div>
+                </div>
+                
+                <div class="setting-group">
+                    <label class="setting-label">Current User</label>
+                    <input type="text" class="setting-input" id="currentUserInput" readonly>
+                    <div class="setting-description">Your username</div>
+                </div>
+                
+                <div class="setting-group">
+                    <label class="setting-label">Change Password</label>
+                    <input type="password" class="setting-input" id="oldPasswordInput" placeholder="Current password">
+                    <input type="password" class="setting-input" id="newPasswordInput" placeholder="New password" style="margin-top: 8px;">
+                    <div class="setting-description">Leave blank if you don't want to change your password</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-btn secondary" id="cancelSettingsBtn">Cancel</button>
+                <button class="modal-btn primary" id="saveSettingsBtn">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Helper function to create API URLs
+        function apiUrl(path) {
+            return `${CONFIG.API_BASE_URL}${path}`;
+        }
+
+        // Global variables
+        let currentMode = 'normal';
+        let sessionId = null;
+        let selectedFileId = null;
+        let userToken = localStorage.getItem('session_token');
+
+        // Performance metrics
+        let lastResponseTime = 0;
+        let lastTokensPerSecond = 0;
+        let lastProcessingTime = 0;
+        
+        // Check authentication on page load
+        if (!userToken) {
+            window.location.href = 'login.html';
+        } else {
+            // Verify token is still valid
+            fetch(`${CONFIG.API_BASE_URL}/api/auth/me`, {
+                headers: {
+                    'Authorization': `Bearer ${userToken}`
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Invalid token');
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('User authenticated:', data.user);
+            })
+            .catch(error => {
+                console.log('Authentication failed:', error);
+                localStorage.removeItem('session_token');
+                localStorage.removeItem('user_data');
+                window.location.href = 'login.html';
+            });
+        }
+
+        // DOM Elements
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const messagesContainer = document.getElementById('messagesContainer');
+        const modeButtons = document.querySelectorAll('.mode-btn');
+        const modeIndicators = document.getElementById('modeIndicators');
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const filesList = document.getElementById('filesList');
+        const statusSection = document.getElementById('systemStatus');
+        const settingsBtn = document.getElementById('settingsBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const newChatBtn = document.getElementById('newChatBtn');
+        const settingsModal = document.getElementById('settingsModal');
+        const attachBtn = document.getElementById('attachBtn');
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            setupEventListeners();
+            loadUploadedFiles();
+            checkSystemStatus();
+            
+            // Add welcome message
+            addMessage('assistant', 'Hello! I\'m your enhanced AI assistant. I can help you with:\n\n• **Normal Chat** - General conversation and assistance\n• **RAG Search** - Search through your knowledge base\n• **Document Q&A** - Ask questions about your combined document\n• **File Analysis** - Upload and analyze files\n• **Web Search** - Get current information from the internet\n\nSelect a mode above or upload files to get started!');
+        });
+
+        function setupEventListeners() {
+            // Send message
+            sendBtn.addEventListener('click', sendMessage);
+            messageInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                }
+            });
+
+            // Mode selection
+            modeButtons.forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const mode = this.dataset.mode;
+                    if (!this.disabled) {
+                        selectMode(mode);
+                    }
+                });
+            });
+
+            // Feature buttons are handled by the generic mode button handler above
+
+            // Action buttons
+            newChatBtn.addEventListener('click', startNewChat);
+            settingsBtn.addEventListener('click', openSettingsModal);
+            logoutBtn.addEventListener('click', logout);
+
+            // File upload
+            uploadArea.addEventListener('click', () => fileInput.click());
+            uploadArea.addEventListener('dragover', handleDragOver);
+            uploadArea.addEventListener('dragleave', handleDragLeave);
+            uploadArea.addEventListener('drop', handleDrop);
+            fileInput.addEventListener('change', handleFileSelect);
+
+            // Auto-resize textarea
+            messageInput.addEventListener('input', function() {
+                this.style.height = 'auto';
+                this.style.height = this.scrollHeight + 'px';
+            });
+
+            // Action buttons already handled above in setupEventListeners
+            
+            // Attach button (trigger file input)
+            attachBtn.addEventListener('click', () => fileInput.click());
+            
+            // Settings modal events
+            document.getElementById('closeSettingsModal').addEventListener('click', closeSettingsModal);
+            document.getElementById('cancelSettingsBtn').addEventListener('click', closeSettingsModal);
+            document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
+            
+            // Close modal on backdrop click
+            settingsModal.addEventListener('click', function(e) {
+                if (e.target === settingsModal) {
+                    closeSettingsModal();
+                }
+            });
+        }
+
+        function selectMode(mode) {
+            currentMode = mode;
+            
+            // Update mode buttons
+            modeButtons.forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.mode === mode);
+            });
+
+            // Update mode indicators
+            updateModeIndicators();
+
+            // Update placeholder text
+            updateInputPlaceholder();
+
+            // Handle search context display
+            if (mode === 'search') {
+                // Context will be shown when search is performed
+            } else {
+                clearSearchContext();
+            }
+        }
+
+        function updateModeIndicators() {
+            modeIndicators.innerHTML = '';
+            
+            if (currentMode === 'normal') {
+                modeIndicators.innerHTML = '<div class="mode-indicator normal-active"><i class="fas fa-comments"></i> Normal Chat</div>';
+            } else if (currentMode === 'rag') {
+                modeIndicators.innerHTML = '<div class="mode-indicator rag-active"><i class="fas fa-search"></i> RAG Active</div>';
+            } else if (currentMode === 'document') {
+                modeIndicators.innerHTML = '<div class="mode-indicator document-active"><i class="fas fa-book-open"></i> Document Mode</div>';
+            } else if (currentMode === 'file' && selectedFileId) {
+                modeIndicators.innerHTML = '<div class="mode-indicator file-active"><i class="fas fa-file-alt"></i> File Selected</div>';
+            } else if (currentMode === 'search') {
+                modeIndicators.innerHTML = '<div class="mode-indicator search-active"><i class="fas fa-globe"></i> Web Search</div>';
+            }
+        }
+
+        function updateInputPlaceholder() {
+            const placeholders = {
+                normal: 'Type your message here...',
+                rag: 'Search existing RAG knowledge base...',
+                document: 'Ask questions about existing docs...',
+                file: 'Ask questions about the provided file...',
+                search: 'Ask questions and get current web results...',
+                enhanced_search: 'Ask questions with enhanced browser-based search...'
+            };
+            
+            messageInput.placeholder = placeholders[currentMode] || placeholders.normal;
+        }
+
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || sendBtn.disabled) return;
+
+            // Add user message
+            addMessage('user', message);
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+
+            // Show loading
+            const loadingId = showLoading();
+            setSendButtonState(true);
+
+            try {
+                let response;
+                const startTime = Date.now();
+                
+                switch (currentMode) {
+                    case 'rag':
+                        response = await sendRagMessage(message);
+                        break;
+                    case 'document':
+                        response = await sendDocumentMessage(message);
+                        break;
+                    case 'file':
+                        response = await sendFileMessage(message);
+                        break;
+                    case 'search':
+                        response = await sendSearchMessage(message);
+                        break;
+                    case 'enhanced_search':
+                        response = await sendEnhancedSearchMessage(message);
+                        break;
+                    default:
+                        response = await sendNormalMessage(message);
+                }
+
+                const endTime = Date.now();
+                const totalResponseTime = endTime - startTime;
+                
+                hideLoading(loadingId);
+                
+                if (response && response.response) {
+                    addMessage('assistant', response.response);
+                    if (response.session_id) {
+                        sessionId = response.session_id;
+                    }
+                    
+                    // Calculate and update performance metrics
+                    const tokensPerSecond = response.tokens_per_second || calculateTokensPerSecond(response.response, totalResponseTime);
+                    const processingTime = response.search_processing_time || response.processing_time || 0;
+                    updatePerformanceMetrics(totalResponseTime, tokensPerSecond, processingTime);
+                    
+                } else {
+                    addMessage('assistant', 'Sorry, I encountered an error processing your request.');
+                }
+                
+            } catch (error) {
+                hideLoading(loadingId);
+                addMessage('assistant', `Error: ${error.message}`);
+            }
+
+            setSendButtonState(false);
+        }
+
+        async function sendNormalMessage(message) {
+            const response = await fetch(apiUrl('/api/chat'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${userToken}`
+                },
+                body: JSON.stringify({
+                    message: message,
+                    session_id: sessionId
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return await response.json();
+        }
+
+        async function sendRagMessage(message) {
+            const response = await fetch(apiUrl('/api/chat/rag'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${userToken}`
+                },
+                body: JSON.stringify({
+                    message: message,
+                    session_id: sessionId
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return await response.json();
+        }
+
+        async function sendDocumentMessage(message) {
+            // For document analysis, use RAG chat which searches the knowledge base
+            const response = await fetch(apiUrl('/api/chat/rag'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${userToken}`
+                },
+                body: JSON.stringify({
+                    message: message,
+                    session_id: sessionId
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return await response.json();
+        }
+
+        async function sendFileMessage(message) {
+            if (!selectedFileId) {
+                throw new Error('No file selected for analysis');
+            }
+
+            const response = await fetch(apiUrl(`/api/files/${selectedFileId}/read`), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${userToken}`
+                },
+                body: JSON.stringify({
+                    question: message,
+                    session_id: sessionId
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            return await response.json();
+        }
+
+        async function sendSearchMessage(message) {
+            const response = await fetch(apiUrl('/api/chat/web-search'), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${userToken}`
+                },
+                body: JSON.stringify({
+                    message: message,
+                    session_id: sessionId
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const result = await response.json();
+            
+            // Get and display search context if available
+            if (result.keyword_extraction_used && result.optimized_queries) {
+                // Use search results from the response instead of making another API call
+                displaySearchContext(message, result.optimized_queries, result.successful_query, result.search_results || []);
+            }
+
+            return result;
+        }
+
+        // Enhanced search is now handled by the main web search functionality
+        async function sendEnhancedSearchMessage(message) {
+            // Use the standard web search endpoint with enhanced processing
+            return await sendSearchMessage(message);
+        }
+
+        function addSearchInfo(query, sourceCount) {
+            const infoDiv = document.createElement('div');
+            infoDiv.className = 'search-info';
+            infoDiv.innerHTML = `
+                <i class="fas fa-search"></i>
+                <span>Searched: "${query}" (${sourceCount} sources found)</span>
+            `;
+            chatContainer.appendChild(infoDiv);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function addMessage(sender, content) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender}`;
+            
+            const avatar = document.createElement('div');
+            avatar.className = 'message-avatar';
+            avatar.textContent = sender === 'user' ? 'U' : 'AI';
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'message-content';
+            contentDiv.textContent = content;
+            
+            messageDiv.appendChild(avatar);
+            messageDiv.appendChild(contentDiv);
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function showLoading() {
+            const loadingId = 'loading-' + Date.now();
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'loading';
+            loadingDiv.id = loadingId;
+            
+            loadingDiv.innerHTML = `
+                <div class="loading-dots">
+                    <div class="loading-dot"></div>
+                    <div class="loading-dot"></div>
+                    <div class="loading-dot"></div>
+                </div>
+                <span>AI is thinking...</span>
+            `;
+            
+            messagesContainer.appendChild(loadingDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            return loadingId;
+        }
+
+        function hideLoading(loadingId) {
+            const loadingElement = document.getElementById(loadingId);
+            if (loadingElement) {
+                loadingElement.remove();
+            }
+        }
+
+        function setSendButtonState(disabled) {
+            sendBtn.disabled = disabled;
+            sendBtn.style.opacity = disabled ? '0.5' : '1';
+        }
+
+        // File upload handling
+        function handleDragOver(e) {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            const files = e.dataTransfer.files;
+            uploadFiles(files);
+        }
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            uploadFiles(files);
+        }
+
+        async function uploadFiles(files) {
+            for (let file of files) {
+                await uploadSingleFile(file);
+            }
+            loadUploadedFiles();
+        }
+
+        async function uploadSingleFile(file) {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch(apiUrl('/api/files/upload'), {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${userToken}`
+                    },
+                    body: formData
+                });
+
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification(`File uploaded: ${file.name}`, 'success');
+                } else {
+                    showNotification(`Upload failed: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                showNotification(`Upload error: ${error.message}`, 'error');
+            }
+        }
+
+        async function loadUploadedFiles() {
+            try {
+                const response = await fetch(apiUrl('/api/files'), {
+                    headers: {
+                        'Authorization': `Bearer ${userToken}`
+                    }
+                });
+
+                const result = await response.json();
+                displayFiles(result.files || []);
+                
+                // Enable file mode if files are available
+                const fileModeBtn = document.querySelector('[data-mode="file"]');
+                if (result.files && result.files.length > 0) {
+                    fileModeBtn.disabled = false;
+                    fileModeBtn.style.opacity = '1';
+                } else {
+                    fileModeBtn.disabled = true;
+                    fileModeBtn.style.opacity = '0.5';
+                }
+                
+            } catch (error) {
+                console.error('Error loading files:', error);
+            }
+        }
+
+        function displayFiles(files) {
+            filesList.innerHTML = '';
+            
+            files.forEach(file => {
+                const fileDiv = document.createElement('div');
+                fileDiv.className = 'file-item';
+                
+                fileDiv.innerHTML = `
+                    <i class="fas ${getFileIcon(file.file_type)}"></i>
+                    <span class="file-name" title="${file.original_name}">${file.original_name}</span>
+                    <div class="file-actions">
+                        <button class="file-action-btn select-file-btn" data-file-id="${file.file_id}" title="Select for analysis">
+                            <i class="fas fa-check"></i>
+                        </button>
+                        <button class="file-action-btn delete-file-btn" data-file-id="${file.file_id}" title="Delete file">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                `;
+                
+                // Add event listeners for the buttons
+                const selectBtn = fileDiv.querySelector('.select-file-btn');
+                const deleteBtn = fileDiv.querySelector('.delete-file-btn');
+                
+                selectBtn.addEventListener('click', () => selectFile(file.file_id));
+                deleteBtn.addEventListener('click', () => deleteFile(file.file_id));
+                
+                filesList.appendChild(fileDiv);
+            });
+        }
+
+        function getFileIcon(fileType) {
+            const icons = {
+                '.pdf': 'fa-file-pdf',
+                '.docx': 'fa-file-word',
+                '.xlsx': 'fa-file-excel',
+                '.xls': 'fa-file-excel',
+                '.txt': 'fa-file-alt',
+                '.md': 'fa-file-alt',
+                '.py': 'fa-file-code',
+                '.js': 'fa-file-code',
+                '.json': 'fa-file-code'
+            };
+            
+            return icons[fileType] || 'fa-file';
+        }
+
+        async function selectFile(fileId) {
+            selectedFileId = fileId;
+            selectMode('file');
+            
+            // Highlight selected file
+            document.querySelectorAll('.file-item').forEach(item => {
+                item.style.backgroundColor = '';
+            });
+            
+            // Find and highlight the selected file
+            const selectedButton = document.querySelector(`[data-file-id="${fileId}"]`);
+            if (selectedButton) {
+                selectedButton.closest('.file-item').style.backgroundColor = 'rgba(37, 99, 235, 0.2)';
+            }
+            
+            showNotification('File selected for analysis', 'success');
+        }
+
+        async function deleteFile(fileId) {
+            if (!confirm('Are you sure you want to delete this file?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(apiUrl(`/api/files/${fileId}`), {
+                    method: 'DELETE',
+                    headers: {
+                        'Authorization': `Bearer ${userToken}`
+                    }
+                });
+
+                if (response.ok) {
+                    showNotification('File deleted successfully', 'success');
+                    loadUploadedFiles();
+                    
+                    if (selectedFileId === fileId) {
+                        selectedFileId = null;
+                        selectMode('normal');
+                    }
+                } else {
+                    showNotification('Failed to delete file', 'error');
+                }
+            } catch (error) {
+                showNotification(`Delete error: ${error.message}`, 'error');
+            }
+        }
+
+        async function checkSystemStatus() {
+            try {
+                const response = await fetch(apiUrl('/health'));
+                const health = await response.json();
+                
+                let ragStatus = 'Unknown';
+                try {
+                    const ragResponse = await fetch(apiUrl('/api/rag/stats'), {
+                        headers: { 'Authorization': `Bearer ${userToken}` }
+                    });
+                    const ragData = await ragResponse.json();
+                    ragStatus = `${ragData.stats.document_count} documents`;
+                } catch (e) {
+                    ragStatus = 'Not ready';
+                }
+                
+                const llmStatusIcon = health.status === 'healthy' ? '✅' : 
+                                    health.status === 'ollama_unreachable' ? '🔸' : '❌';
+                const llmStatusText = health.status === 'ollama_unreachable' ? 'Ollama Unreachable' : 
+                                    health.status === 'error' ? 'Error' : 'Ready';
+                
+                // Format performance metrics
+                const responseTimeText = lastResponseTime > 0 ? `${lastResponseTime}ms` : 'N/A';
+                const tokensPerSecText = lastTokensPerSecond > 0 ? `${lastTokensPerSecond.toFixed(1)} tok/s` : 'N/A';
+                const processingTimeText = lastProcessingTime > 0 ? `${lastProcessingTime}ms` : 'N/A';
+                
+                statusSection.innerHTML = `
+                    <div style="margin-bottom: 4px;">LLM: ${llmStatusIcon} ${health.model || 'Unknown'} (${llmStatusText})</div>
+                    <div style="margin-bottom: 4px;">RAG: ${ragStatus}</div>
+                    <div style="margin-bottom: 4px;">Web Search: ${health.web_search_enabled ? '✅ Enabled' : '❌ Disabled'}</div>
+                    <div style="margin-bottom: 4px;">Keywords: ${health.keyword_extraction_enabled ? '✅ Enabled' : '❌ Disabled'}</div>
+                    <div style="margin-bottom: 4px;">Response Time: ${responseTimeText}</div>
+                    <div style="margin-bottom: 4px;">Speed: ${tokensPerSecText}</div>
+                    <div style="margin-bottom: 4px;">Processing: ${processingTimeText}</div>
+                    <div>Server: ${health.ollama_url}</div>
+                    ${health.error ? `<div style="color: #ef4444; margin-top: 4px; font-size: 12px;">Error: ${health.error}</div>` : ''}
+                `;
+                
+            } catch (error) {
+                console.error('System status check failed:', error);
+                statusSection.innerHTML = `<div class="text-error">System check failed: ${error.message || 'Unknown error'}</div>`;
+            }
+        }
+
+        function showNotification(message, type) {
+            // Simple notification - you can enhance this
+            const notification = document.createElement('div');
+            notification.textContent = message;
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                padding: 12px 20px;
+                border-radius: 6px;
+                color: white;
+                z-index: 1000;
+                font-size: 14px;
+                background: ${type === 'success' ? '#22c55e' : type === 'error' ? '#ef4444' : '#3b82f6'};
+            `;
+            
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+
+        // New Chat function
+        async function startNewChat() {
+            if (confirm('Start a new chat? This will clear the current conversation.')) {
+                // Clear current session
+                sessionId = null;
+                
+                // Clear messages container
+                messagesContainer.innerHTML = '';
+                
+                // Reset to normal mode
+                selectMode('normal');
+                
+                // Clear any selected file
+                selectedFileId = null;
+                document.querySelectorAll('.file-item').forEach(item => {
+                    item.style.backgroundColor = '';
+                });
+                
+                // Add welcome message
+                addMessage('assistant', 'Hello! I\'m your enhanced AI assistant. I can help you with:\n\n• **Normal Chat** - General conversation and assistance\n• **RAG Search** - Search through your knowledge base\n• **Document Q&A** - Ask questions about your combined document\n• **File Analysis** - Upload and analyze files\n• **Web Search** - Get current information from the internet\n\nSelect a mode above or upload files to get started!');
+                
+                showNotification('New chat started', 'success');
+            }
+        }
+
+        // Settings and user management functions
+        async function logout() {
+            if (!confirm('Are you sure you want to logout?')) {
+                return;
+            }
+
+            try {
+                await fetch(apiUrl('/api/auth/logout'), {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${userToken}`
+                    }
+                });
+            } catch (error) {
+                console.log('Logout request failed:', error);
+            }
+
+            // Clear local data and redirect
+            localStorage.removeItem('session_token');
+            localStorage.removeItem('user_data');
+            window.location.href = 'login.html';
+        }
+
+        async function openSettingsModal() {
+            settingsModal.classList.remove('hidden');
+            
+            // Load current settings
+            await loadCurrentSettings();
+            await loadAvailableModels();
+        }
+
+        function closeSettingsModal() {
+            settingsModal.classList.add('hidden');
+            
+            // Clear password fields
+            document.getElementById('oldPasswordInput').value = '';
+            document.getElementById('newPasswordInput').value = '';
+        }
+
+        async function loadCurrentSettings() {
+            try {
+                // Load current user info
+                const userResponse = await fetch(apiUrl('/api/auth/me'), {
+                    headers: { 'Authorization': `Bearer ${userToken}` }
+                });
+                const userData = await userResponse.json();
+                document.getElementById('currentUserInput').value = userData.user.username;
+
+                // Load current config
+                const configResponse = await fetch(apiUrl('/api/config'));
+                const config = await configResponse.json();
+                document.getElementById('serverUrlInput').value = config.ollama?.host || 'Unknown';
+                
+            } catch (error) {
+                console.error('Error loading settings:', error);
+            }
+        }
+
+        async function loadAvailableModels() {
+            try {
+                const response = await fetch(apiUrl('/api/models'));
+                const data = await response.json();
+                
+                const modelSelect = document.getElementById('modelSelect');
+                modelSelect.innerHTML = '';
+                
+                if (data.models && data.models.length > 0) {
+                    data.models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model.name;
+                        option.textContent = `${model.name} (${model.size})`;
+                        modelSelect.appendChild(option);
+                    });
+                    
+                    // Get current model
+                    const configResponse = await fetch(apiUrl('/api/config'));
+                    const config = await configResponse.json();
+                    modelSelect.value = config.ollama?.model || '';
+                } else {
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = 'No models available';
+                    modelSelect.appendChild(option);
+                }
+            } catch (error) {
+                console.error('Error loading models:', error);
+                const modelSelect = document.getElementById('modelSelect');
+                modelSelect.innerHTML = '<option value="">Error loading models</option>';
+            }
+        }
+
+        async function saveSettings() {
+            try {
+                const modelSelect = document.getElementById('modelSelect');
+                const oldPassword = document.getElementById('oldPasswordInput').value;
+                const newPassword = document.getElementById('newPasswordInput').value;
+                
+                let hasChanges = false;
+                
+                // Update model if changed
+                if (modelSelect.value) {
+                    const configResponse = await fetch(apiUrl('/api/config'));
+                    const currentConfig = await configResponse.json();
+                    
+                    if (currentConfig.ollama?.model !== modelSelect.value) {
+                        const updateResponse = await fetch(apiUrl('/api/config'), {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${userToken}`
+                            },
+                            body: JSON.stringify({ model: modelSelect.value })
+                        });
+                        
+                        if (updateResponse.ok) {
+                            hasChanges = true;
+                            showNotification('Model updated successfully', 'success');
+                        } else {
+                            throw new Error('Failed to update model');
+                        }
+                    }
+                }
+                
+                // Change password if provided
+                if (oldPassword && newPassword) {
+                    const passwordResponse = await fetch(apiUrl('/api/auth/change-password'), {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${userToken}`
+                        },
+                        body: JSON.stringify({
+                            old_password: oldPassword,
+                            new_password: newPassword
+                        })
+                    });
+                    
+                    if (passwordResponse.ok) {
+                        hasChanges = true;
+                        showNotification('Password changed successfully', 'success');
+                    } else {
+                        const errorData = await passwordResponse.json();
+                        throw new Error(errorData.error || 'Failed to change password');
+                    }
+                }
+                
+                if (hasChanges) {
+                    // Refresh system status
+                    checkSystemStatus();
+                }
+                
+                closeSettingsModal();
+                
+            } catch (error) {
+                showNotification(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        // Performance measurement functions
+        function updatePerformanceMetrics(responseTime, tokensPerSecond = 0, processingTime = 0) {
+            lastResponseTime = Math.round(responseTime);
+            lastTokensPerSecond = tokensPerSecond;
+            lastProcessingTime = Math.round(processingTime);
+            
+            // Update status display
+            checkSystemStatus();
+        }
+
+        function calculateTokensPerSecond(responseText, responseTimeMs) {
+            if (!responseText || responseTimeMs <= 0) return 0;
+            
+            // Rough estimation: average 4 characters per token
+            const estimatedTokens = responseText.length / 4;
+            const responseTimeSeconds = responseTimeMs / 1000;
+            return estimatedTokens / responseTimeSeconds;
+        }
+
+        // Search Context Display Functions
+        function showSearchContext() {
+            const searchContextSection = document.getElementById('searchContextSection');
+            searchContextSection.style.display = 'block';
+        }
+
+        function hideSearchContext() {
+            const searchContextSection = document.getElementById('searchContextSection');
+            searchContextSection.style.display = 'none';
+        }
+
+        // REMOVED: This function was causing duplicate searches
+        // Search results are now included in the chat response
+        // No need to make a second API call to /api/search/web
+
+        function displaySearchContext(originalMessage, optimizedQueries, successfulQuery, searchResults) {
+            const searchKeywordsDiv = document.getElementById('searchKeywords');
+            const searchResultsDiv = document.getElementById('searchResults');
+            
+            // Extract keywords from the successful query
+            const keywords = successfulQuery ? successfulQuery.split(' ') : optimizedQueries[0].split(' ');
+            
+            // Display keywords
+            searchKeywordsDiv.innerHTML = `
+                <div style="font-weight: 500; margin-bottom: 6px; color: #ffffff;">Search Keywords:</div>
+                <div class="search-keywords">
+                    ${keywords.map(keyword => `<span class="keyword-tag">${keyword}</span>`).join('')}
+                </div>
+                <div style="font-size: 10px; color: #64748b; margin-top: 4px;">
+                    Original: "${originalMessage.substring(0, 60)}${originalMessage.length > 60 ? '...' : ''}"
+                </div>
+                <div style="font-size: 10px; color: #64748b;">
+                    Optimized: "${successfulQuery || optimizedQueries[0]}"
+                </div>
+            `;
+
+            // Display search results
+            if (searchResults && searchResults.length > 0) {
+                searchResultsDiv.innerHTML = `
+                    <div style="font-weight: 500; margin-bottom: 8px; color: #ffffff;">Search Results:</div>
+                    ${searchResults.map(result => `
+                        <div class="search-result-item">
+                            <div class="search-result-title">
+                                <a href="${result.url}" target="_blank" rel="noopener noreferrer">${result.title}</a>
+                            </div>
+                            ${result.snippet ? `<div class="search-result-snippet">${result.snippet}</div>` : ''}
+                            <div class="search-result-source">${result.source || 'Web'}</div>
+                        </div>
+                    `).join('')}
+                `;
+            } else {
+                searchResultsDiv.innerHTML = `
+                    <div style="font-weight: 500; margin-bottom: 8px; color: #ffffff;">Search Results:</div>
+                    <div style="color: #9ca3af; font-size: 11px;">No results to display</div>
+                `;
+            }
+
+            showSearchContext();
+        }
+
+        function clearSearchContext() {
+            const searchKeywordsDiv = document.getElementById('searchKeywords');
+            const searchResultsDiv = document.getElementById('searchResults');
+            searchKeywordsDiv.innerHTML = '';
+            searchResultsDiv.innerHTML = '';
+            hideSearchContext();
+        }
+
+        // Auto-refresh files every 30 seconds
+        setInterval(loadUploadedFiles, 30000);
+    </script>
+</body>
+</html>

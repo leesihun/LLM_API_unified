@@ -1,0 +1,14 @@
+Explain the Python code execution result.
+
+Code Executed:
+```python
+{code}
+```
+
+Execution Result:
+- Success: {success}
+- Output: {output}
+- Errors: {errors}
+- Files Created: {files_created}
+
+Provide a clear, concise explanation of what happened during execution.

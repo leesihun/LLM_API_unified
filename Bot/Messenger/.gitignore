@@ -1,0 +1,34 @@
+node_modules/
+dist/
+dist-electron/
+build/
+release/
+*.exe
+*.AppImage
+*.dmg
+
+# DB
+server/data/*.db
+server/data/*.db-journal
+
+# Uploads
+server/uploads/*
+!server/uploads/.gitkeep
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

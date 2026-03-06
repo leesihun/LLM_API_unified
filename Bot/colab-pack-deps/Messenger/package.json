@@ -1,0 +1,25 @@
+{
+  "name": "huni-messenger",
+  "version": "1.0.0",
+  "private": true,
+  "description": "사내 실시간 채팅 메신저",
+  "workspaces": [
+    "shared",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "build:client": "npm run build --workspace=client",
+    "build:web": "npm run build:web --workspace=client",
+    "tunnel": "cloudflared tunnel --url http://localhost:3000",
+    "dev:public": "concurrently \"npm run dev:server\" \"npm run dev:client\" \"npm run tunnel\"",
+    "typecheck": "tsc --noEmit --project server/tsconfig.json && tsc --noEmit --project client/tsconfig.json"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.4.0"
+  }
+}
