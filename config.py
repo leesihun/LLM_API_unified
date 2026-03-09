@@ -242,7 +242,14 @@ JOBS_CLEANUP_DAYS = 30
 # Session Settings
 # ============================================================================
 MAX_CONVERSATION_HISTORY = 50
-SESSION_CLEANUP_DAYS = 7
+SESSION_CLEANUP_DAYS = 14
+
+# ============================================================================
+# Cleanup Settings (data retention — 2-week rolling window)
+# ============================================================================
+SCRATCH_CLEANUP_DAYS = 14       # data/scratch/{session_id}/ dirs
+TOOL_RESULTS_CLEANUP_DAYS = 14  # data/tool_results/{session_id}/ dirs
+LOG_ROTATION_DAYS = 14          # rotate data/logs/prompts.log after N days
 
 # ============================================================================
 # Streaming Settings

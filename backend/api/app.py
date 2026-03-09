@@ -79,18 +79,19 @@ def _cleanup_old_jobs():
 
 
 def _cleanup_old_tool_results():
-    """Delete tool result directories whose session no longer exists."""
+    """Delete tool result directories that are orphaned or older than TOOL_RESULTS_CLEANUP_DAYS."""
     tool_results_dir = config.TOOL_RESULTS_DIR
     if not tool_results_dir.exists():
         return
     sessions_dir = Path("data/sessions")
+    cutoff = datetime.now() - timedelta(days=config.TOOL_RESULTS_CLEANUP_DAYS)
     removed = 0
     for d in tool_results_dir.iterdir():
         if not d.is_dir():
             continue
-        # Keep if the owning session file still exists
         session_file = sessions_dir / f"{d.name}.json"
-        if session_file.exists():
+        too_old = datetime.fromtimestamp(d.stat().st_mtime) < cutoff
+        if session_file.exists() and not too_old:
             continue
         try:
             shutil.rmtree(d)
@@ -98,7 +99,51 @@ def _cleanup_old_tool_results():
         except Exception:
             pass
     if removed:
-        print(f"[Startup] Cleaned up {removed} orphaned tool result dir(s)")
+        print(f"[Startup] Cleaned up {removed} orphaned/old tool result dir(s)")
+
+
+def _cleanup_old_scratch():
+    """Delete scratch directories older than SCRATCH_CLEANUP_DAYS or with no session file."""
+    scratch_dir = config.SCRATCH_DIR
+    if not scratch_dir.exists():
+        return
+    sessions_dir = Path("data/sessions")
+    cutoff = datetime.now() - timedelta(days=config.SCRATCH_CLEANUP_DAYS)
+    removed = 0
+    for d in scratch_dir.iterdir():
+        if not d.is_dir():
+            continue
+        session_file = sessions_dir / f"{d.name}.json"
+        too_old = datetime.fromtimestamp(d.stat().st_mtime) < cutoff
+        if session_file.exists() and not too_old:
+            continue
+        try:
+            shutil.rmtree(d)
+            removed += 1
+        except Exception:
+            pass
+    if removed:
+        print(f"[Startup] Cleaned up {removed} orphaned/old scratch dir(s)")
+
+
+def _cleanup_old_prompts_log():
+    """Rotate prompts.log if it was created more than LOG_ROTATION_DAYS ago."""
+    log_path = config.PROMPTS_LOG_PATH
+    if not log_path.exists():
+        return
+    cutoff = datetime.now() - timedelta(days=config.LOG_ROTATION_DAYS)
+    created = datetime.fromtimestamp(log_path.stat().st_ctime)
+    if created >= cutoff:
+        return
+    try:
+        bak = log_path.with_suffix(".log.bak")
+        if bak.exists():
+            bak.unlink()
+        log_path.rename(bak)
+        log_path.touch()
+        print(f"[Startup] Rotated prompts.log (was {(datetime.now() - created).days} days old)")
+    except Exception:
+        pass
 
 
 @app.on_event("startup")
@@ -109,6 +154,8 @@ async def startup_event():
     _cleanup_old_sessions()
     _cleanup_old_jobs()
     _cleanup_old_tool_results()
+    _cleanup_old_scratch()
+    _cleanup_old_prompts_log()
 
     from backend.core.llm_backend import llm_backend
     available = await llm_backend.is_available()
