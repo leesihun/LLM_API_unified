@@ -702,6 +702,20 @@ class RAGTool:
                 "error": f"Error deleting document: {str(e)}"
             }
 
+    def cleanup(self):
+        """Release embedding model from GPU/CPU memory"""
+        if self.embedding_model is not None:
+            del self.embedding_model
+            self.embedding_model = None
+        try:
+            import gc
+            gc.collect()
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
     def _chunk_text(self, text: str) -> List[str]:
         """
         Split text into chunks

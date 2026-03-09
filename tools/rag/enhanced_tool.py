@@ -603,6 +603,30 @@ class EnhancedRAGTool:
         index_path = self.user_index_dir / f"{collection_name}.index"
         faiss.write_index(index, str(index_path))
 
+    def cleanup(self):
+        """Release embedding model and reranker from GPU/CPU memory"""
+        if self.embedding_model is not None:
+            del self.embedding_model
+            self.embedding_model = None
+        if self.chunker is not None:
+            self.chunker.embedding_model = None
+            self.chunker = None
+        if self.reranker is not None:
+            self.reranker.cleanup()
+            self.reranker = None
+        if self.hybrid_retriever is not None:
+            self.hybrid_retriever.bm25 = None
+            self.hybrid_retriever.tokenized_corpus = None
+            self.hybrid_retriever = None
+        try:
+            import gc
+            gc.collect()
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+
     # Delegate other methods to keep compatibility
     def list_collections(self):
         """Import from original tool"""

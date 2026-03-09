@@ -127,12 +127,25 @@ class RerankerCrossEncoder:
         if self.model is None:
             try:
                 from sentence_transformers import CrossEncoder
-                self.model = CrossEncoder(self.model_name)
+                import config
+                self.model = CrossEncoder(self.model_name, device=config.RAG_EMBEDDING_DEVICE)
             except ImportError:
                 raise ImportError(
                     "sentence-transformers not installed. "
                     "Install with: pip install sentence-transformers"
                 )
+
+    def cleanup(self):
+        """Release model from GPU/CPU memory"""
+        if self.model is not None:
+            del self.model
+            self.model = None
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
     @staticmethod
     def _sigmoid(x: float) -> float:

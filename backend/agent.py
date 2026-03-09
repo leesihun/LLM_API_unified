@@ -279,11 +279,14 @@ class AgentLoop:
                     "available_collections": available_collections,
                 }
 
-            return tool.retrieve(
-                collection_name=requested_collection,
-                query=arguments["query"],
-                max_results=arguments.get("max_results"),
-            )
+            try:
+                return tool.retrieve(
+                    collection_name=requested_collection,
+                    query=arguments["query"],
+                    max_results=arguments.get("max_results"),
+                )
+            finally:
+                tool.cleanup()
 
         elif name == "file_reader":
             from tools.file_ops import FileReaderTool

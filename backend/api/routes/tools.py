@@ -217,30 +217,33 @@ async def upload_to_rag(
         content = await file.read()
         file_ext = Path(file.filename).suffix.lower()
 
-        binary_formats = ['.pdf', '.docx']
-        if file_ext in binary_formats:
-            with tempfile.NamedTemporaryFile(mode='wb', suffix=file_ext, delete=False) as tmp_file:
-                tmp_file.write(content)
-                tmp_path = tmp_file.name
-            try:
-                result = tool.upload_document(
-                    collection_name=collection_name, document_path=tmp_path,
-                    document_content=None, document_name=file.filename,
-                )
-            finally:
+        try:
+            binary_formats = ['.pdf', '.docx']
+            if file_ext in binary_formats:
+                with tempfile.NamedTemporaryFile(mode='wb', suffix=file_ext, delete=False) as tmp_file:
+                    tmp_file.write(content)
+                    tmp_path = tmp_file.name
                 try:
-                    os.unlink(tmp_path)
-                except Exception:
-                    pass
-        else:
-            try:
-                content_str = content.decode('utf-8')
-            except UnicodeDecodeError:
-                content_str = content.decode('latin-1')
-            result = tool.upload_document(
-                collection_name=collection_name, document_path=file.filename,
-                document_content=content_str,
-            )
+                    result = tool.upload_document(
+                        collection_name=collection_name, document_path=tmp_path,
+                        document_content=None, document_name=file.filename,
+                    )
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except Exception:
+                        pass
+            else:
+                try:
+                    content_str = content.decode('utf-8')
+                except UnicodeDecodeError:
+                    content_str = content.decode('latin-1')
+                result = tool.upload_document(
+                    collection_name=collection_name, document_path=file.filename,
+                    document_content=content_str,
+                )
+        finally:
+            tool.cleanup()
 
         return result
     except Exception as e:
@@ -256,7 +259,10 @@ async def list_rag_documents(collection_name: str, current_user: dict = Depends(
 @router.delete("/rag/collections/{collection_name}/documents/{document_id}")
 async def delete_rag_document(collection_name: str, document_id: str, current_user: dict = Depends(get_current_user)):
     tool = RAGTool(username=current_user["username"])
-    return tool.delete_document(collection_name, document_id)
+    try:
+        return tool.delete_document(collection_name, document_id)
+    finally:
+        tool.cleanup()
 
 
 @router.post("/rag/query", response_model=ToolResponse)
