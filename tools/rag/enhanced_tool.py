@@ -170,6 +170,8 @@ class EnhancedRAGTool:
         Returns:
             Upload result
         """
+        vram_before = self._vram_mb()
+        self._reset_peak_vram()
         self._load_embedding_model()
 
         collection_dir = self.user_docs_dir / collection_name
@@ -232,6 +234,8 @@ class EnhancedRAGTool:
         # Add to index
         start_idx = index.ntotal
         index.add(np.array(embeddings).astype('float32'))
+        vram_peak = self._peak_vram_mb()
+        vram_after = self._vram_mb()
 
         # Update metadata (include timestamp in hash to avoid collision on re-upload)
         upload_time = time.time()
@@ -256,7 +260,7 @@ class EnhancedRAGTool:
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2)
 
-        return {
+        result = {
             "success": True,
             "document_name": doc_name,
             "chunks_created": len(chunks),
@@ -264,6 +268,12 @@ class EnhancedRAGTool:
             "chunking_time": chunk_time,
             "embedding_time": embed_time
         }
+        if vram_before is not None:
+            result["vram_before_mb"] = round(vram_before, 1)
+            result["vram_after_mb"] = round(vram_after, 1) if vram_after is not None else None
+            result["vram_peak_mb"] = round(vram_peak, 1) if vram_peak is not None else None
+            result["vram_delta_mb"] = round((vram_after - vram_before), 1) if vram_after is not None else None
+        return result
 
     def retrieve(
         self,
@@ -603,9 +613,47 @@ class EnhancedRAGTool:
         index_path = self.user_index_dir / f"{collection_name}.index"
         faiss.write_index(index, str(index_path))
 
+    def _vram_mb(self) -> Optional[float]:
+        """Return current GPU memory allocated in MB, or None if CUDA unavailable."""
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return torch.cuda.memory_allocated() / (1024 ** 2)
+        except ImportError:
+            pass
+        return None
+
+    def _reset_peak_vram(self):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
+        except ImportError:
+            pass
+
+    def _peak_vram_mb(self) -> Optional[float]:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return torch.cuda.max_memory_allocated() / (1024 ** 2)
+        except ImportError:
+            pass
+        return None
+
     def cleanup(self):
         """Release embedding model and reranker from GPU/CPU memory"""
+        try:
+            import torch
+            has_cuda = torch.cuda.is_available()
+        except ImportError:
+            has_cuda = False
+
         if self.embedding_model is not None:
+            if has_cuda:
+                try:
+                    self.embedding_model.cpu()
+                except Exception:
+                    pass
             del self.embedding_model
             self.embedding_model = None
         if self.chunker is not None:
@@ -618,14 +666,12 @@ class EnhancedRAGTool:
             self.hybrid_retriever.bm25 = None
             self.hybrid_retriever.tokenized_corpus = None
             self.hybrid_retriever = None
-        try:
-            import gc
-            gc.collect()
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+
+        import gc
+        gc.collect()
+        if has_cuda:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
 
     # Delegate other methods to keep compatibility
     def list_collections(self):
@@ -646,4 +692,8 @@ class EnhancedRAGTool:
     def delete_document(self, collection_name: str, document_id: str):
         """Import from original tool"""
         from tools.rag.tool import RAGTool
-        return RAGTool(self.username).delete_document(collection_name, document_id)
+        tool = RAGTool(self.username)
+        try:
+            return tool.delete_document(collection_name, document_id)
+        finally:
+            tool.cleanup()

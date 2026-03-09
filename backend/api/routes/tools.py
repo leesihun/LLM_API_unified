@@ -271,8 +271,8 @@ async def query_rag(request: RAGQueryRequest, current_user: Optional[dict] = Dep
     username = current_user["username"] if current_user else request.username or "guest"
     start_time = time.time()
 
+    tool = RAGTool(username=username)
     try:
-        tool = RAGTool(username=username)
         final_max = request.max_results or config.RAG_MAX_RESULTS
 
         retrieval_result = tool.retrieve(
@@ -323,3 +323,5 @@ async def query_rag(request: RAGQueryRequest, current_user: Optional[dict] = Dep
             success=False, answer=f"RAG query error: {e}", data={},
             metadata={"execution_time": time.time() - start_time}, error=str(e),
         )
+    finally:
+        tool.cleanup()

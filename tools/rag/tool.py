@@ -158,6 +158,8 @@ class RAGTool:
             )
         
         # Standard upload path for non-PDFs or when optimization disabled
+        vram_before = self._vram_mb()
+        self._reset_peak_vram()
         self._load_embedding_model()
 
         collection_dir = self.user_docs_dir / collection_name
@@ -235,6 +237,8 @@ class RAGTool:
         print(f"[RAG] Adding embeddings to index (indices {start_idx} to {start_idx + len(embeddings) - 1})...")
         index.add(np.array(embeddings).astype('float32'))
         print(f"[RAG] Index now has {index.ntotal} vectors")
+        vram_peak = self._peak_vram_mb()
+        vram_after = self._vram_mb()
 
         # Update metadata (include timestamp in hash to avoid collision on re-upload)
         upload_time = time.time()
@@ -271,12 +275,18 @@ class RAGTool:
             }
 
         print(f"[RAG] Upload complete!")
-        return {
+        result = {
             "success": True,
             "document_name": doc_name,
             "chunks_created": len(chunks),
             "total_chunks": index.ntotal
         }
+        if vram_before is not None:
+            result["vram_before_mb"] = round(vram_before, 1)
+            result["vram_after_mb"] = round(vram_after, 1) if vram_after is not None else None
+            result["vram_peak_mb"] = round(vram_peak, 1) if vram_peak is not None else None
+            result["vram_delta_mb"] = round((vram_after - vram_before), 1) if vram_after is not None else None
+        return result
 
     def retrieve(
         self,
@@ -702,19 +712,55 @@ class RAGTool:
                 "error": f"Error deleting document: {str(e)}"
             }
 
-    def cleanup(self):
-        """Release embedding model from GPU/CPU memory"""
-        if self.embedding_model is not None:
-            del self.embedding_model
-            self.embedding_model = None
+    def _vram_mb(self) -> Optional[float]:
+        """Return current GPU memory allocated in MB, or None if CUDA unavailable."""
         try:
-            import gc
-            gc.collect()
             import torch
             if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                return torch.cuda.memory_allocated() / (1024 ** 2)
         except ImportError:
             pass
+        return None
+
+    def _reset_peak_vram(self):
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.reset_peak_memory_stats()
+        except ImportError:
+            pass
+
+    def _peak_vram_mb(self) -> Optional[float]:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                return torch.cuda.max_memory_allocated() / (1024 ** 2)
+        except ImportError:
+            pass
+        return None
+
+    def cleanup(self):
+        """Release embedding model from GPU/CPU memory"""
+        try:
+            import torch
+            has_cuda = torch.cuda.is_available()
+        except ImportError:
+            has_cuda = False
+
+        if self.embedding_model is not None:
+            if has_cuda:
+                try:
+                    self.embedding_model.cpu()
+                except Exception:
+                    pass
+            del self.embedding_model
+            self.embedding_model = None
+
+        import gc
+        gc.collect()
+        if has_cuda:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
 
     def _chunk_text(self, text: str) -> List[str]:
         """
@@ -883,6 +929,9 @@ class RAGTool:
             pages_per_batch=20  # Process 20 pages per worker
         )
         
+        vram_before = self._vram_mb()
+        self._reset_peak_vram()
+
         try:
             result = uploader.upload_pdf_optimized(
                 pdf_path=pdf_path,
@@ -894,6 +943,13 @@ class RAGTool:
                 progress_callback=progress_callback,
                 show_progress_bar=True  # Enable text-based progress bar by default
             )
+            if result.get("success") and vram_before is not None:
+                vram_after = self._vram_mb()
+                vram_peak = self._peak_vram_mb()
+                result["vram_before_mb"] = round(vram_before, 1)
+                result["vram_after_mb"] = round(vram_after, 1) if vram_after is not None else None
+                result["vram_peak_mb"] = round(vram_peak, 1) if vram_peak is not None else None
+                result["vram_delta_mb"] = round((vram_after - vram_before), 1) if vram_after is not None else None
             return result
             
         except Exception as e:

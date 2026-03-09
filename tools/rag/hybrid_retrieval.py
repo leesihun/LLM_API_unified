@@ -137,15 +137,24 @@ class RerankerCrossEncoder:
 
     def cleanup(self):
         """Release model from GPU/CPU memory"""
-        if self.model is not None:
-            del self.model
-            self.model = None
         try:
             import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+            has_cuda = torch.cuda.is_available()
         except ImportError:
-            pass
+            has_cuda = False
+
+        if self.model is not None:
+            if has_cuda:
+                try:
+                    self.model.model.cpu()
+                except Exception:
+                    pass
+            del self.model
+            self.model = None
+
+        if has_cuda:
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
 
     @staticmethod
     def _sigmoid(x: float) -> float:
