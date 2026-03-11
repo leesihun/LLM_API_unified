@@ -10,6 +10,13 @@ type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 const onlineUsers = new Map<number, Set<string>>();
 // Track socket -> userId mapping
 const socketUserMap = new Map<string, number>();
+// Track typing state: socketId -> Set<roomId> (for cleanup on disconnect)
+const socketTypingRooms = new Map<string, Set<number>>();
+
+// Auto-clear typing after this many ms if no stop is received
+const TYPING_TIMEOUT_MS = 15_000;
+// Track typing timeouts: `${userId}:${roomId}` -> timeout handle
+const typingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
 let ioRef: Server<ClientToServerEvents, ServerToClientEvents> | null = null;
 
@@ -155,7 +162,7 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       io.to(`room:${roomId}`).emit('message_read', { messageId, userId, roomId });
     });
 
-    // Typing indicators
+    // Typing indicators — with server-side timeout to prevent stuck indicators
     socket.on('typing_start', (roomId: number) => {
       const user = queryOne('SELECT name FROM users WHERE id = ?', [userId]);
       socket.to(`room:${roomId}`).emit('user_typing', {
@@ -163,10 +170,35 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
         userId,
         userName: user?.name || 'Unknown',
       });
+
+      // Track this socket as typing in this room (for disconnect cleanup)
+      if (!socketTypingRooms.has(socket.id)) {
+        socketTypingRooms.set(socket.id, new Set());
+      }
+      socketTypingRooms.get(socket.id)!.add(roomId);
+
+      // Auto-clear typing after timeout
+      const timeoutKey = `${userId}:${roomId}`;
+      const existing = typingTimeouts.get(timeoutKey);
+      if (existing) clearTimeout(existing);
+      typingTimeouts.set(timeoutKey, setTimeout(() => {
+        typingTimeouts.delete(timeoutKey);
+        socketTypingRooms.get(socket.id)?.delete(roomId);
+        io.to(`room:${roomId}`).emit('user_stop_typing', { roomId, userId });
+      }, TYPING_TIMEOUT_MS));
     });
 
     socket.on('typing_stop', (roomId: number) => {
       socket.to(`room:${roomId}`).emit('user_stop_typing', { roomId, userId });
+
+      // Clean up tracking
+      socketTypingRooms.get(socket.id)?.delete(roomId);
+      const timeoutKey = `${userId}:${roomId}`;
+      const existing = typingTimeouts.get(timeoutKey);
+      if (existing) {
+        clearTimeout(existing);
+        typingTimeouts.delete(timeoutKey);
+      }
     });
 
     // Toggle reaction (add if not exists, remove if exists)
@@ -229,6 +261,16 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       const user = queryOne('SELECT name FROM users WHERE id = ?', [userId]);
       const userName = user?.name || 'Unknown';
 
+      // Clear typing indicator before leaving
+      io.to(`room:${roomId}`).emit('user_stop_typing', { roomId, userId });
+      socketTypingRooms.get(socket.id)?.delete(roomId);
+      const timeoutKey = `${userId}:${roomId}`;
+      const existingTimeout = typingTimeouts.get(timeoutKey);
+      if (existingTimeout) {
+        clearTimeout(existingTimeout);
+        typingTimeouts.delete(timeoutKey);
+      }
+
       run('DELETE FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, userId]);
 
       socket.leave(`room:${roomId}`);
@@ -236,10 +278,25 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       io.to(`room:${roomId}`).emit('member_left', { roomId, userId, userName });
     });
 
-    // Disconnect
+    // Disconnect — clean up typing indicators and online status
     socket.on('disconnect', () => {
       const uid = socketUserMap.get(socket.id);
       if (uid !== undefined) {
+        // Clear typing indicators for all rooms this socket was typing in
+        const typingRooms = socketTypingRooms.get(socket.id);
+        if (typingRooms) {
+          for (const roomId of typingRooms) {
+            io.to(`room:${roomId}`).emit('user_stop_typing', { roomId, userId: uid });
+            const timeoutKey = `${uid}:${roomId}`;
+            const existing = typingTimeouts.get(timeoutKey);
+            if (existing) {
+              clearTimeout(existing);
+              typingTimeouts.delete(timeoutKey);
+            }
+          }
+          socketTypingRooms.delete(socket.id);
+        }
+
         const sockets = onlineUsers.get(uid);
         if (sockets) {
           sockets.delete(socket.id);

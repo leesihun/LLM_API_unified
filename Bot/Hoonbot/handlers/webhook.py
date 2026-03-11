@@ -139,19 +139,22 @@ async def handle_webhook(request: Request):
     if sender_name == config.MESSENGER_BOT_NAME or is_bot:
         return {"ok": True}
 
-    # Handle file/image messages — convert to text description
+    # Handle file/image messages — download and forward to LLM API
+    file_info = None
     if msg_type == "image":
         file_name = data.get("fileName", "image")
         file_url = data.get("fileUrl", "")
-        content = f"[User sent an image: {file_name}] {content or ''}".strip()
         if file_url:
-            content += f"\nFile URL: {file_url}"
+            file_info = {"url": file_url, "name": file_name}
+        if not content:
+            content = f"[Image: {file_name}]"
     elif msg_type == "file":
         file_name = data.get("fileName", "file")
         file_url = data.get("fileUrl", "")
-        content = f"[User sent a file: {file_name}] {content or ''}".strip()
         if file_url:
-            content += f"\nFile URL: {file_url}"
+            file_info = {"url": file_url, "name": file_name}
+        if not content:
+            content = f"[File: {file_name}]"
     elif msg_type != "text":
         return {"ok": True}
 
@@ -177,7 +180,7 @@ async def handle_webhook(request: Request):
     if msg_id:
         asyncio.create_task(messenger.mark_read(room_id, [msg_id]))
 
-    _schedule_debounced(room_id, clean_content, sender_name, msg_id)
+    _schedule_debounced(room_id, clean_content, sender_name, msg_id, file_info)
     return {"ok": True}
 
 
@@ -185,24 +188,32 @@ async def handle_webhook(request: Request):
 # Debounce — combines rapid-fire messages into one
 # ---------------------------------------------------------------------------
 
-def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: int | None = None) -> None:
+def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: int | None = None, file_info: dict | None = None) -> None:
     entry = _room_debounce.get(room_id)
     if entry and entry["task"] and not entry["task"].done():
         entry["task"].cancel()
+        # Stop typing for the cancelled task to prevent stuck indicators
+        asyncio.create_task(messenger.stop_typing(room_id))
         combined = entry["content"] + "\n" + content
+        combined_files = list(entry.get("files") or [])
     else:
         combined = content
+        combined_files = []
+
+    if file_info:
+        combined_files.append(file_info)
 
     async def _debounce():
         await asyncio.sleep(config.DEBOUNCE_SECONDS)
         final = _room_debounce.pop(room_id, None)
         if final:
-            await process_message(room_id, final["content"], final["sender"], final.get("msg_id"))
+            await process_message(room_id, final["content"], final["sender"], final.get("msg_id"), file_infos=final.get("files"))
 
     _room_debounce[room_id] = {
         "content": combined,
         "sender": sender_name,
         "msg_id": msg_id,
+        "files": combined_files,
         "task": asyncio.create_task(_debounce()),
     }
 
@@ -211,7 +222,7 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: in
 # Message processing — streaming or synchronous
 # ---------------------------------------------------------------------------
 
-async def process_message(room_id: int, content: str, sender_name: str, reply_to_id: int | None = None, _is_retry: bool = False) -> None:
+async def process_message(room_id: int, content: str, sender_name: str, reply_to_id: int | None = None, _is_retry: bool = False, file_infos: list | None = None) -> None:
     """Core message processing pipeline with structured logging and timing."""
     start = time.monotonic()
     log_prefix = f"[Room {room_id}] [{sender_name}]"
@@ -227,6 +238,18 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
 
         headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
         existing_session_id = _get_session_id(room_id)
+
+        # Download attached files from Messenger
+        downloaded_files: list[tuple[str, bytes]] = []
+        if file_infos:
+            for fi in file_infos:
+                result = await messenger.download_file(fi["url"])
+                if result:
+                    file_bytes, filename = result
+                    downloaded_files.append((fi["name"], file_bytes))
+                    logger.info(f"{log_prefix} Downloaded file: {fi['name']} ({len(file_bytes)} bytes)")
+                else:
+                    logger.warning(f"{log_prefix} Failed to download: {fi['name']}")
 
         if existing_session_id:
             # Track message count and nudge memory flush when session is getting long
@@ -262,16 +285,16 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             logger.info(f"{log_prefix} Starting new session")
 
         if config.STREAMING_ENABLED:
-            reply = await _process_streaming(room_id, llm_data, headers, existing_session_id, log_prefix, reply_to_id)
+            reply = await _process_streaming(room_id, llm_data, headers, existing_session_id, log_prefix, reply_to_id, downloaded_files)
         else:
-            reply = await _process_sync(room_id, llm_data, headers, existing_session_id, log_prefix, reply_to_id)
+            reply = await _process_sync(room_id, llm_data, headers, existing_session_id, log_prefix, reply_to_id, downloaded_files)
 
         if reply is None:
             # Session was deleted (404) — retry once with a fresh session
             if not _is_retry:
                 logger.info(f"{log_prefix} Retrying with fresh session after 404")
                 await messenger.stop_typing(room_id)
-                return await process_message(room_id, content, sender_name, reply_to_id, _is_retry=True)
+                return await process_message(room_id, content, sender_name, reply_to_id, _is_retry=True, file_infos=file_infos)
             logger.warning(f"{log_prefix} Session 404 on retry — giving up")
             return
 
@@ -305,12 +328,14 @@ async def _save_session_from_response(room_id: int, result: dict, existing_sessi
 # Synchronous (non-streaming) processing
 # ---------------------------------------------------------------------------
 
-async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_session_id: str | None, log_prefix: str, reply_to_id: int | None) -> str | None:
+async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_session_id: str | None, log_prefix: str, reply_to_id: int | None, downloaded_files: list[tuple[str, bytes]] | None = None) -> str | None:
     """Send request, wait for full response, send to Messenger."""
+    files_payload = [("files", (name, data, "application/octet-stream")) for name, data in (downloaded_files or [])]
     async with httpx.AsyncClient(timeout=float(config.LLM_TIMEOUT_SECONDS)) as client:
         response = await client.post(
             f"{config.LLM_API_URL}/v1/chat/completions",
             data=llm_data,
+            files=files_payload or None,
             headers=headers,
         )
 
@@ -334,9 +359,10 @@ async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_se
 # Streaming processing — shows tool status in real time
 # ---------------------------------------------------------------------------
 
-async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existing_session_id: str | None, log_prefix: str, reply_to_id: int | None) -> str | None:
+async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existing_session_id: str | None, log_prefix: str, reply_to_id: int | None, downloaded_files: list[tuple[str, bytes]] | None = None) -> str | None:
     """Stream SSE from LLM API, send tool status updates, then final reply."""
     llm_data["stream"] = "true"
+    files_payload = [("files", (name, data, "application/octet-stream")) for name, data in (downloaded_files or [])]
 
     full_text = ""
     tool_status_msgs: list[int] = []  # message IDs for tool status messages we sent
@@ -348,6 +374,7 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                 "POST",
                 f"{config.LLM_API_URL}/v1/chat/completions",
                 data=llm_data,
+                files=files_payload or None,
                 headers=headers,
             ) as response:
                 if response.status_code in (404, 500) and existing_session_id:

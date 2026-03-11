@@ -75,6 +75,15 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
     fetchMessages();
     socket?.emit('join_room', room.id);
 
+    // Clear stale typing indicators from previous room
+    setTypingUsers(new Map());
+
+    // Clear any pending typing timeout from previous room
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = null;
+    }
+
     // Fetch pinned messages
     api.get(`/rooms/${room.id}/pins`).then((res) => {
       if (!cancelled) {
@@ -83,8 +92,12 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
       }
     }).catch(() => {});
 
+    const prevRoomId = room.id;
     return () => {
       cancelled = true;
+      // Stop typing and leave previous room on cleanup
+      socket?.emit('typing_stop', prevRoomId);
+      socket?.emit('leave_room', prevRoomId);
     };
   }, [room.id, user.id, socket, scrollToBottom]);
 
@@ -165,13 +178,34 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
       );
     };
 
+    // Client-side typing auto-clear timeouts (safety net)
+    const typingAutoClears = new Map<number, ReturnType<typeof setTimeout>>();
+
     const handleTyping = (data: { roomId: number; userId: number; userName: string }) => {
       if (data.roomId !== room.id || data.userId === user.id) return;
       setTypingUsers((prev) => new Map(prev).set(data.userId, data.userName));
+
+      // Auto-clear after 20s if no stop event arrives (client-side safety net)
+      const existing = typingAutoClears.get(data.userId);
+      if (existing) clearTimeout(existing);
+      typingAutoClears.set(data.userId, setTimeout(() => {
+        typingAutoClears.delete(data.userId);
+        setTypingUsers((prev) => {
+          const next = new Map(prev);
+          next.delete(data.userId);
+          return next;
+        });
+      }, 20_000));
     };
 
     const handleStopTyping = (data: { roomId: number; userId: number }) => {
       if (data.roomId !== room.id) return;
+      // Clear auto-clear timeout
+      const existing = typingAutoClears.get(data.userId);
+      if (existing) {
+        clearTimeout(existing);
+        typingAutoClears.delete(data.userId);
+      }
       setTypingUsers((prev) => {
         const next = new Map(prev);
         next.delete(data.userId);
@@ -227,6 +261,9 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
       socket.off('message_pinned', handleMessagePinned);
       socket.off('message_unpinned', handleMessageUnpinned);
       socket.off('room_messages_cleared', handleMessagesCleared);
+      // Clear all auto-clear timers
+      for (const timer of typingAutoClears.values()) clearTimeout(timer);
+      typingAutoClears.clear();
     };
   }, [socket, room.id, user.id, scrollToBottom]);
 
@@ -365,6 +402,10 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
   const sendClipboardImage = async () => {
     if (!clipboardPreview || !socket) return;
 
+    // Clear typing indicator
+    socket.emit('typing_stop', room.id);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+
     try {
       const res = await axios.post(`${getUploadBaseUrl()}/upload/image-base64`, {
         data: clipboardPreview,
@@ -390,6 +431,10 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
 
   const uploadAndSendFile = async (file: File) => {
     if (!socket) throw new Error('Socket not connected');
+
+    // Clear typing indicator
+    socket.emit('typing_stop', room.id);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
     setUploadError(null);
     setUploadProgress(0);
@@ -608,6 +653,8 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
   // Leave room
   const handleLeaveRoom = () => {
     if (!confirm('이 채팅방에서 나가시겠습니까?')) return;
+    socket?.emit('typing_stop', room.id);
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     socket?.emit('leave_room_permanent', room.id);
     onLeaveRoom(room.id);
   };

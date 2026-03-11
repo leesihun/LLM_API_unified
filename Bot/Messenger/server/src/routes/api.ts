@@ -785,8 +785,12 @@ router.delete('/bots/keys/:key', (req: Request, res: Response) => {
 });
 
 // ===========================================================================
-// TYPING INDICATORS
+// TYPING INDICATORS (REST API — used by bots)
 // ===========================================================================
+
+// Auto-clear typing after this many ms if no stop-typing call arrives
+const API_TYPING_TIMEOUT_MS = 15_000;
+const apiTypingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
 router.post('/typing', (req: Request, res: Response) => {
   const { roomId } = req.body;
@@ -807,6 +811,18 @@ router.post('/typing', (req: Request, res: Response) => {
       userId: sender.id,
       userName: sender.name,
     });
+
+    // Auto-clear after timeout (prevents stuck indicators if stop-typing never arrives)
+    const timeoutKey = `api:${sender.id}:${roomId}`;
+    const existing = apiTypingTimeouts.get(timeoutKey);
+    if (existing) clearTimeout(existing);
+    apiTypingTimeouts.set(timeoutKey, setTimeout(() => {
+      apiTypingTimeouts.delete(timeoutKey);
+      ioInstance?.to(`room:${roomId}`).emit('user_stop_typing', {
+        roomId: Number(roomId),
+        userId: sender.id,
+      });
+    }, API_TYPING_TIMEOUT_MS));
   }
 
   res.json({ success: true });
@@ -830,6 +846,14 @@ router.post('/stop-typing', (req: Request, res: Response) => {
       roomId: Number(roomId),
       userId: sender.id,
     });
+
+    // Clear any pending auto-timeout
+    const timeoutKey = `api:${sender.id}:${roomId}`;
+    const existing = apiTypingTimeouts.get(timeoutKey);
+    if (existing) {
+      clearTimeout(existing);
+      apiTypingTimeouts.delete(timeoutKey);
+    }
   }
 
   res.json({ success: true });

@@ -296,6 +296,23 @@ async def resolve_home_room_by_name(name: str, bot_user_id: int) -> Optional[int
     return None
 
 
+async def download_file(file_url: str) -> tuple[bytes, str] | None:
+    """Download a file from Messenger given a relative fileUrl path.
+
+    Returns (file_bytes, filename) or None on failure.
+    """
+    try:
+        client = _get_client()
+        full_url = f"{config.MESSENGER_URL}{file_url}"
+        resp = await client.get(full_url, headers={"x-api-key": _api_key})
+        resp.raise_for_status()
+        filename = file_url.rsplit("/", 1)[-1]
+        return resp.content, filename
+    except Exception as e:
+        logger.warning(f"[Messenger] File download failed for {file_url}: {e}")
+        return None
+
+
 async def get_room_messages(room_id: int, limit: int = 20) -> list:
     try:
         client = _get_client()

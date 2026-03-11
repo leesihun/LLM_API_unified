@@ -18,7 +18,12 @@
       "Bash(grep -E \"get_api_key|_get_client|_headers|_split_message|_insert_line_breaks|search_messages|send_file|send_base64_image|pin_message|unpin_message|get_pins|create_watcher|list_watchers|delete_watcher|create_room\" \"c:\\\\Users\\\\Lee\\\\Desktop\\\\Huni\\\\LLM_API_fast\\\\Bot\\\\Hoonbot\"/**/*.py)",
       "Bash(npm run typecheck)",
       "Bash(npm run)",
-      "Bash(npm run build:portable)"
+      "Bash(npm run build:portable)",
+      "Bash(xargs grep -l \"send_typing\\\\|stop_typing\")",
+      "Bash(xargs grep -l \"Message\\\\|webhook\")",
+      "Bash(xargs grep -l \"webhook\\\\|Webhook\")",
+      "Read(//dev/**)",
+      "Bash(grep -E \"\\\\.py$|\\\\.md$\")"
     ]
   }
 }

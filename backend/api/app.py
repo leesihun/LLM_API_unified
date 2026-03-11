@@ -136,7 +136,7 @@ def _cleanup_old_prompts_log():
     if created >= cutoff:
         return
     try:
-        bak = log_path.with_suffix(".log.bak")
+        bak = log_path.with_name(log_path.name + ".bak")
         if bak.exists():
             bak.unlink()
         log_path.rename(bak)
