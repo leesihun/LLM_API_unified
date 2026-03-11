@@ -29,13 +29,16 @@ base_url = config.MESSENGER_URL  # abort if empty
 
 ### 2. Detect target room
 
-1. Explicit room ID in request → use directly
-2. Explicit room name → resolve to ID:
+Every message arrives prefixed with `[Room: <id> | From: <sender>]`. Use that room ID as the default target.
+
+Override order:
+1. Explicit room ID in request → use that
+2. Explicit room name in request → resolve to ID:
    - Call `messenger.get_bot_info()` → get bot `id`
    - `GET /api/rooms?userId=<bot_id>` → find exact case-insensitive name match
    - No match → `"Room '<name>' not found"` — stop
    - Multiple matches → `"Ambiguous room name — matches: <list>"` — stop
-3. Neither given → ask the user for a room ID or name — stop
+3. Neither given → use the room ID from the message prefix
 
 ### 3. Validate files
 

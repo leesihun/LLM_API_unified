@@ -23,7 +23,8 @@
       "Bash(xargs grep -l \"Message\\\\|webhook\")",
       "Bash(xargs grep -l \"webhook\\\\|Webhook\")",
       "Read(//dev/**)",
-      "Bash(grep -E \"\\\\.py$|\\\\.md$\")"
+      "Bash(grep -E \"\\\\.py$|\\\\.md$\")",
+      "Bash(grep -E \"\\\\.\\(md|py\\)$\")"
     ]
   }
 }

@@ -256,7 +256,7 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             count = _room_msg_count.get(room_id, 0) + 1
             _room_msg_count[room_id] = count
 
-            user_content = content
+            user_content = f"[Room: {room_id} | From: {sender_name}]\n{content}"
             if count == config.MEMORY_FLUSH_THRESHOLD:
                 user_content += (
                     "\n\n[System: This session is getting long. "
@@ -276,7 +276,7 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             _room_msg_count[room_id] = 0  # Reset counter for new session
             context = build_llm_context()
             messages = [
-                {"role": "user", "content": f"{context}\n\n---\n\nUser: {content}"},
+                {"role": "user", "content": f"{context}\n\n---\n\n[Room: {room_id} | From: {sender_name}]\n{content}"},
             ]
             llm_data = {
                 "model": config.LLM_MODEL,
