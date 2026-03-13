@@ -6,6 +6,7 @@ import sys
 import time
 import subprocess
 import re
+import asyncio
 import httpx
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
@@ -13,14 +14,21 @@ from datetime import datetime
 import config
 from tools.python_coder.base import BasePythonExecutor
 
+# ---------- Buffered logger (opened once, not per-line) ----------
+import logging as _logging
+
+_tool_logger = _logging.getLogger("python_coder.native")
+if not _tool_logger.handlers:
+    _handler = _logging.FileHandler(config.PROMPTS_LOG_PATH, encoding='utf-8')
+    _handler.setFormatter(_logging.Formatter('%(message)s'))
+    _tool_logger.addHandler(_handler)
+    _tool_logger.setLevel(_logging.INFO)
+    _tool_logger.propagate = False
+
 
 def log_to_prompts_file(message: str):
-    """Write message to prompts.log"""
-    try:
-        with open(config.PROMPTS_LOG_PATH, 'a', encoding='utf-8') as f:
-            f.write(message + '\n')
-    except Exception as e:
-        print(f"[WARNING] Failed to write to prompts.log: {e}")
+    """Write message to prompts.log via buffered handler."""
+    _tool_logger.info(message)
 
 
 class NativePythonExecutor(BasePythonExecutor):
@@ -40,7 +48,7 @@ class NativePythonExecutor(BasePythonExecutor):
     # Public API
     # ------------------------------------------------------------------
 
-    def execute(
+    async def execute(
         self,
         instruction: str,
         timeout: Optional[int] = None,
@@ -56,7 +64,7 @@ class NativePythonExecutor(BasePythonExecutor):
         start_time = time.time()
 
         existing_py_files = [f for f in self.list_files() if f.endswith('.py')]
-        code, script_name = self._generate_code(instruction, existing_py_files)
+        code, script_name = await self._generate_code(instruction, existing_py_files)
 
         script_path = self.workspace / script_name
 
@@ -71,7 +79,7 @@ class NativePythonExecutor(BasePythonExecutor):
     # Code generation from instruction
     # ------------------------------------------------------------------
 
-    def _generate_code(self, instruction: str, existing_py_files: List[str]) -> Tuple[str, str]:
+    async def _generate_code(self, instruction: str, existing_py_files: List[str]) -> Tuple[str, str]:
         """Generate Python code from natural language instruction via LLM."""
         files_context = self._build_workspace_context(existing_py_files)
 
@@ -98,7 +106,7 @@ class NativePythonExecutor(BasePythonExecutor):
         if existing_py_files:
             print(f"[PYTHON] Workspace context: {existing_py_files}")
 
-        code = self._llm_call_sync(prompt)
+        code = await self._llm_call_async(prompt)
         script_name = self._generate_script_name(code)
 
         print(f"[PYTHON] Generated {len(code)} chars → {script_name}")
@@ -115,11 +123,11 @@ class NativePythonExecutor(BasePythonExecutor):
         return "".join(parts)
 
     # ------------------------------------------------------------------
-    # Synchronous LLM call (safe inside async event loop)
+    # Async LLM call (non-blocking)
     # ------------------------------------------------------------------
 
-    def _llm_call_sync(self, prompt: str) -> str:
-        """Call llama.cpp synchronously to generate code."""
+    async def _llm_call_async(self, prompt: str) -> str:
+        """Call llama.cpp asynchronously to generate code."""
         url = f"{config.LLAMACPP_HOST.rstrip('/')}/v1/chat/completions"
         temperature = config.TOOL_PARAMETERS.get(
             'python_coder', {}
@@ -133,8 +141,9 @@ class NativePythonExecutor(BasePythonExecutor):
             "temperature": temperature,
         }
 
-        resp = httpx.post(url, json=payload, timeout=config.PYTHON_CODER_TIMEOUT)
-        resp.raise_for_status()
+        async with httpx.AsyncClient(timeout=config.PYTHON_CODER_TIMEOUT) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
 
         content = resp.json()["choices"][0]["message"]["content"]
         return self._extract_python_code(content)

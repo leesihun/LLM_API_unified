@@ -2,6 +2,7 @@
 LLM Interceptor for logging all LLM interactions.
 Wraps LlamaCppBackend and logs requests/responses to prompts.log.
 """
+import asyncio
 import json
 import time
 from datetime import datetime
@@ -99,7 +100,8 @@ class LLMInterceptor:
         lines.append("")
         return '\n'.join(lines)
 
-    def _log_interaction(self, log_data: Dict):
+    def _log_interaction_sync(self, log_data: Dict):
+        """Synchronous log write — called from a thread pool to avoid blocking."""
         try:
             if "id" not in log_data:
                 log_data["id"] = str(uuid.uuid4())[:8]
@@ -108,6 +110,15 @@ class LLMInterceptor:
                 f.write(formatted)
         except Exception as e:
             print(f"Warning: Failed to log LLM interaction: {e}")
+
+    def _log_interaction(self, log_data: Dict):
+        """Non-blocking log: offloads file I/O to a thread pool."""
+        try:
+            loop = asyncio.get_running_loop()
+            loop.run_in_executor(None, self._log_interaction_sync, log_data)
+        except RuntimeError:
+            # No running loop (e.g. during shutdown) — fall back to sync
+            self._log_interaction_sync(log_data)
 
     def _estimate_tokens(self, messages: List[Dict]) -> int:
         total = 0
@@ -128,6 +139,12 @@ class LLMInterceptor:
         tools: Optional[List[Dict[str, Any]]] = None,
         session_id: str = None,
         agent_type: str = None,
+        top_p: float = None,
+        top_k: int = None,
+        min_p: float = None,
+        max_tokens: int = None,
+        repeat_penalty: float = None,
+        id_slot: int = None,
     ):
         """Returns LLMResponse from backend.chat()."""
         from backend.core.llm_backend import LLMResponse
@@ -163,7 +180,12 @@ class LLMInterceptor:
         }
 
         try:
-            result: LLMResponse = await self.backend.chat(messages, model, temperature, tools=tools)
+            result: LLMResponse = await self.backend.chat(
+                messages, model, temperature, tools=tools,
+                top_p=top_p, top_k=top_k, min_p=min_p,
+                max_tokens=max_tokens, repeat_penalty=repeat_penalty,
+                id_slot=id_slot,
+            )
             duration = time.time() - start_time
 
             response_text = result.content or ""
@@ -177,7 +199,7 @@ class LLMInterceptor:
             }
             if result.tool_calls:
                 tc_summary = [{"name": tc.function.name, "args": tc.function.arguments} for tc in result.tool_calls]
-                response_log["response_tool_calls"] = json.dumps(tc_summary, ensure_ascii=False)[:500]
+                response_log["response_tool_calls"] = json.dumps(tc_summary, ensure_ascii=False)[:3000]
 
             print(f"[LLM] Response received in {duration:.2f}s")
             if result.tool_calls:
@@ -211,6 +233,12 @@ class LLMInterceptor:
         tools: Optional[List[Dict[str, Any]]] = None,
         session_id: str = None,
         agent_type: str = None,
+        top_p: float = None,
+        top_k: int = None,
+        min_p: float = None,
+        max_tokens: int = None,
+        repeat_penalty: float = None,
+        id_slot: int = None,
     ) -> AsyncIterator:
         """Yields StreamEvent objects from backend.chat_stream()."""
         start_time = time.time()
@@ -237,12 +265,20 @@ class LLMInterceptor:
         }
 
         collected_text = ""
+        collected_tool_calls = None
 
         try:
-            async for event in self.backend.chat_stream(messages, model, temperature, tools=tools):
-                from backend.core.llm_backend import TextEvent
+            async for event in self.backend.chat_stream(
+                messages, model, temperature, tools=tools,
+                top_p=top_p, top_k=top_k, min_p=min_p,
+                max_tokens=max_tokens, repeat_penalty=repeat_penalty,
+                id_slot=id_slot,
+            ):
+                from backend.core.llm_backend import TextEvent, ToolCallDeltaEvent
                 if isinstance(event, TextEvent):
                     collected_text += event.content
+                elif isinstance(event, ToolCallDeltaEvent):
+                    collected_tool_calls = event.tool_calls
                 yield event
 
             duration = time.time() - start_time
@@ -253,6 +289,15 @@ class LLMInterceptor:
             response_log["estimated_tokens"] = {
                 "input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens,
             }
+
+            if collected_tool_calls:
+                tc_summary = [
+                    {"name": tc.function.name, "args": tc.function.arguments}
+                    for tc in collected_tool_calls
+                ]
+                response_log["response_tool_calls"] = json.dumps(
+                    tc_summary, ensure_ascii=False
+                )[:3000]
 
         except Exception as e:
             response_log["success"] = False

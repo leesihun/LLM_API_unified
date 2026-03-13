@@ -27,7 +27,20 @@ OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "lla
 DEFAULT_TEMPERATURE = 0.7
 DEFAULT_TOP_P = 0.9
 DEFAULT_TOP_K = 40
+DEFAULT_MIN_P = 0.05
 DEFAULT_MAX_TOKENS = 128000
+DEFAULT_REPEAT_PENALTY = 1.1
+
+# ============================================================================
+# llama.cpp Performance Tuning
+# ============================================================================
+# cache_prompt: tell llama.cpp to reuse KV cache for shared prompt prefixes
+# (biggest speedup for agent loops where system prompt + tool schemas are identical)
+LLAMACPP_CACHE_PROMPT = True
+# Connection pool size for persistent HTTP connections to llama.cpp
+LLAMACPP_CONNECTION_POOL_SIZE = 20
+# Number of parallel slots on llama.cpp server (for id_slot session pinning)
+LLAMACPP_SLOTS = 4
 
 # ============================================================================
 # Agent Settings

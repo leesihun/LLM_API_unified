@@ -9,6 +9,7 @@ Modern agentic workflow following:
 import asyncio
 import json
 import time
+from datetime import datetime
 from typing import List, Dict, Any, Optional, AsyncIterator
 from uuid import uuid4
 
@@ -64,6 +65,10 @@ def _build_tool_schemas() -> List[Dict[str, Any]]:
 _CACHED_SYSTEM_PROMPT: str = _load_system_prompt()
 _CACHED_TOOL_SCHEMAS: List[Dict[str, Any]] = _build_tool_schemas()
 
+# Module-level RAG collections cache: {username: {"collections": [...], "expires_at": float}}
+_rag_collections_cache: Dict[str, Dict[str, Any]] = {}
+_RAG_CACHE_TTL: float = 60.0
+
 
 def reload_prompt_cache():
     """Reload cached prompt and schemas (call after config changes)."""
@@ -105,26 +110,181 @@ class AgentLoop:
         self.tool_calls_log: List[Dict[str, Any]] = []
         self._iteration_boundaries: List[int] = []
         self._available_rag_collections: Optional[List[str]] = None
+        self._tool_cache: Dict[str, Any] = {}
+
+    # ------------------------------------------------------------------
+    # Sampling parameters forwarded to llama.cpp
+    # ------------------------------------------------------------------
+
+    def _sampling_kwargs(self) -> Dict[str, Any]:
+        """Return sampling + slot-pinning params to forward to the LLM backend."""
+        kwargs: Dict[str, Any] = {}
+        if hasattr(config, 'DEFAULT_TOP_P'):
+            kwargs["top_p"] = config.DEFAULT_TOP_P
+        if hasattr(config, 'DEFAULT_TOP_K'):
+            kwargs["top_k"] = config.DEFAULT_TOP_K
+        if hasattr(config, 'DEFAULT_MIN_P'):
+            kwargs["min_p"] = config.DEFAULT_MIN_P
+        if hasattr(config, 'DEFAULT_MAX_TOKENS'):
+            kwargs["max_tokens"] = config.DEFAULT_MAX_TOKENS
+        if hasattr(config, 'DEFAULT_REPEAT_PENALTY'):
+            kwargs["repeat_penalty"] = config.DEFAULT_REPEAT_PENALTY
+        # Pin session to a stable llama.cpp KV cache slot for consistent cache hits
+        num_slots = getattr(config, 'LLAMACPP_SLOTS', 0)
+        if num_slots > 0 and self.session_id:
+            kwargs["id_slot"] = hash(self.session_id) % num_slots
+        return kwargs
+
+    # ------------------------------------------------------------------
+    # Prompts.log logging (agent-level events)
+    # ------------------------------------------------------------------
+
+    def _log(self, message: str):
+        """Append a line to prompts.log."""
+        try:
+            config.PROMPTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(config.PROMPTS_LOG_PATH, 'a', encoding='utf-8') as f:
+                f.write(message + '\n')
+        except Exception as e:
+            print(f"[AGENT-LOG] Failed to write to prompts.log: {e}")
+
+    def _log_block(self, lines: List[str]):
+        """Write multiple lines to prompts.log as a single block."""
+        self._log('\n'.join(lines))
+
+    def _log_iteration_start(self, iteration: int, streaming: bool = False):
+        tag = "STREAM " if streaming else ""
+        self._log_block([
+            "",
+            "~" * 80,
+            f">>> AGENT {tag}ITERATION {iteration + 1}/{self.max_iterations}",
+            "~" * 80,
+            f"  Session:     {self.session_id or 'N/A'}",
+            f"  Username:    {self.username or 'N/A'}",
+            f"  Timestamp:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "~" * 80,
+            "",
+        ])
+
+    def _log_tool_calls_requested(self, tool_calls: List[ToolCall], iteration: int):
+        lines = [
+            "",
+            "-" * 80,
+            f">>> LLM REQUESTED TOOL CALLS (Iteration {iteration + 1})",
+            "-" * 80,
+            f"  Tool Count:  {len(tool_calls)}",
+            f"  Timestamp:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+        ]
+        for i, tc in enumerate(tool_calls, 1):
+            lines.append(f"  [{i}] {tc.function.name} (id: {tc.id})")
+            for k, v in tc.function.arguments.items():
+                sv = str(v)
+                if len(sv) > 500:
+                    sv = sv[:500] + f"... [{len(sv)} chars total]"
+                lines.append(f"      {k}: {sv}")
+            lines.append("")
+        lines.append("-" * 80)
+        lines.append("")
+        self._log_block(lines)
+
+    def _log_tool_result(self, tool_name: str, tool_call_id: str,
+                         result: Dict[str, Any], duration: float):
+        success = result.get("success", True)
+        lines = [
+            "",
+            "." * 80,
+            f"<<< TOOL RESULT: {tool_name} [{tool_call_id or 'N/A'}]",
+            "." * 80,
+            f"  Status:      {'SUCCESS' if success else 'FAILED'}",
+            f"  Duration:    {duration:.2f}s",
+        ]
+        if not success and result.get("error"):
+            lines.append(f"  Error:       {str(result['error'])[:500]}")
+        result_str = json.dumps(result, ensure_ascii=False, default=str)
+        if len(result_str) > 1500:
+            lines.append(f"  Result:      {result_str[:1500]}")
+            lines.append(f"               ... [{len(result_str)} chars total]")
+        else:
+            lines.append(f"  Result:      {result_str}")
+        lines.append("." * 80)
+        lines.append("")
+        self._log_block(lines)
+
+    def _log_execution_summary(self, tool_calls: List[ToolCall],
+                               results: List[Dict[str, Any]],
+                               durations: List[float], iteration: int):
+        succeeded = sum(1 for r in results if r.get("success", True))
+        failed = len(results) - succeeded
+        wall_time = max(durations) if durations else 0
+        lines = [
+            "",
+            "-" * 80,
+            f">>> TOOL EXECUTION SUMMARY (Iteration {iteration + 1})",
+            "-" * 80,
+            f"  Tools Run:   {len(results)}",
+            f"  Succeeded:   {succeeded}",
+            f"  Failed:      {failed}",
+            f"  Wall Time:   {wall_time:.2f}s (parallel execution)",
+            "",
+        ]
+        for i, (tc, res, dur) in enumerate(zip(tool_calls, results, durations), 1):
+            status = "SUCCESS" if res.get("success", True) else "FAILED"
+            lines.append(f"  [{i}] {tc.function.name:<20s} -- {status} ({dur:.2f}s)")
+        lines.extend(["", "-" * 80, ""])
+        self._log_block(lines)
+
+    def _log_agent_complete(self, reason: str, iterations_used: int):
+        self._log_block([
+            "",
+            "~" * 80,
+            ">>> AGENT COMPLETE",
+            "~" * 80,
+            f"  Reason:      {reason}",
+            f"  Iterations:  {iterations_used}",
+            f"  Tool Calls:  {len(self.tool_calls_log)}",
+            f"  Session:     {self.session_id or 'N/A'}",
+            f"  Username:    {self.username or 'N/A'}",
+            f"  Timestamp:   {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "~" * 80,
+            "",
+        ])
 
     # ------------------------------------------------------------------
     # System prompt (cached, with per-request file attachments appended)
     # ------------------------------------------------------------------
 
-    def _build_system_prompt(self, attached_files: Optional[List[Dict[str, Any]]] = None) -> str:
-        prompt = _CACHED_SYSTEM_PROMPT
-        prompt += self._format_rag_collections_context()
+    def _build_system_prompt(self) -> str:
+        """Return the STATIC system prompt (byte-stable for KV cache reuse)."""
+        return _CACHED_SYSTEM_PROMPT
+
+    def _build_dynamic_context(self, attached_files: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
+        """Return per-request dynamic context (RAG, memo, files). Separate from
+        system prompt so the static prefix stays byte-identical for cache_prompt."""
+        parts = []
+        rag_ctx = self._format_rag_collections_context()
+        if rag_ctx:
+            parts.append(rag_ctx)
         if self.username and "memo" in self.enabled_tools:
             from tools.memo.tool import MemoTool
-            prompt += MemoTool.load_for_prompt(self.username)
+            memo_ctx = MemoTool.load_for_prompt(self.username)
+            if memo_ctx:
+                parts.append(memo_ctx)
         if attached_files:
-            prompt += self._format_attached_files(attached_files)
-        return prompt
+            parts.append(self._format_attached_files(attached_files))
+        return "\n".join(parts) if parts else None
 
     def _refresh_available_rag_collections(self):
-        """Load available RAG collections for the current user."""
+        """Load available RAG collections for the current user (60s module-level TTL cache)."""
         self._available_rag_collections = []
 
         if "rag" not in self.enabled_tools or not self.username:
+            return
+
+        # Check module-level cache first
+        cached = _rag_collections_cache.get(self.username)
+        if cached and time.time() < cached["expires_at"]:
+            self._available_rag_collections = cached["collections"]
             return
 
         try:
@@ -141,6 +301,10 @@ class AgentLoop:
                 if isinstance(c, dict) and isinstance(c.get("name"), str) and c.get("name")
             })
             self._available_rag_collections = names
+            _rag_collections_cache[self.username] = {
+                "collections": names,
+                "expires_at": time.time() + _RAG_CACHE_TTL,
+            }
         except Exception as e:
             print(f"[RAG] Failed to load available collections for prompt context: {e}")
 
@@ -204,7 +368,8 @@ class AgentLoop:
     # In-process tool execution (with parallel support)
     # ------------------------------------------------------------------
 
-    async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute_tool(self, name: str, arguments: Dict[str, Any],
+                           tool_call_id: str = None) -> Dict[str, Any]:
         start = time.time()
         print(f"\n{'='*70}")
         print(f"[TOOL] Executing: {name}")
@@ -214,44 +379,51 @@ class AgentLoop:
             print(f"  {k}: {sv[:150]}{'...' if len(sv) > 150 else ''}")
 
         try:
-            result = self._dispatch_tool(name, arguments)
+            result = await self._dispatch_tool(name, arguments)
             duration = time.time() - start
             print(f"[TOOL] {name} completed in {duration:.2f}s — success={result.get('success', '?')}")
             self.tool_calls_log.append({
                 "name": name, "input": arguments,
                 "success": result.get("success", True), "duration": duration,
             })
+            self._log_tool_result(name, tool_call_id, result, duration)
             return result
         except Exception as e:
             duration = time.time() - start
             print(f"[TOOL] {name} FAILED in {duration:.2f}s — {e}")
+            err_result = {"success": False, "error": str(e)}
             self.tool_calls_log.append({
                 "name": name, "input": arguments,
                 "success": False, "error": str(e), "duration": duration,
             })
-            return {"success": False, "error": str(e)}
+            self._log_tool_result(name, tool_call_id, err_result, duration)
+            return err_result
 
     async def _execute_tools_parallel(self, tool_calls: List[ToolCall]) -> List[Dict[str, Any]]:
         """Execute multiple tool calls concurrently."""
         tasks = [
-            self.execute_tool(tc.function.name, tc.function.arguments)
+            self.execute_tool(tc.function.name, tc.function.arguments, tool_call_id=tc.id)
             for tc in tool_calls
         ]
         return await asyncio.gather(*tasks)
 
-    def _dispatch_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def _dispatch_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        cache = self._tool_cache
+
         if name == "websearch":
-            from tools.web_search import WebSearchTool
-            tool = WebSearchTool()
-            return tool.search(
+            if "websearch" not in cache:
+                from tools.web_search import WebSearchTool
+                cache["websearch"] = WebSearchTool()
+            return cache["websearch"].search(
                 query=arguments["query"],
                 max_results=arguments.get("max_results"),
             )
 
         elif name == "python_coder":
-            from tools.python_coder import PythonCoderTool
-            tool = PythonCoderTool(session_id=self.session_id)
-            return tool.execute(
+            if "python_coder" not in cache:
+                from tools.python_coder import PythonCoderTool
+                cache["python_coder"] = PythonCoderTool(session_id=self.session_id)
+            return await cache["python_coder"].execute(
                 instruction=arguments["instruction"],
                 timeout=arguments.get("timeout"),
             )
@@ -289,54 +461,60 @@ class AgentLoop:
                 tool.cleanup()
 
         elif name == "file_reader":
-            from tools.file_ops import FileReaderTool
-            tool = FileReaderTool(username=self.username, session_id=self.session_id)
-            return tool.read(
+            if "file_reader" not in cache:
+                from tools.file_ops import FileReaderTool
+                cache["file_reader"] = FileReaderTool(username=self.username, session_id=self.session_id)
+            return cache["file_reader"].read(
                 path=arguments["path"],
                 offset=arguments.get("offset"),
                 limit=arguments.get("limit"),
             )
 
         elif name == "file_writer":
-            from tools.file_ops import FileWriterTool
-            tool = FileWriterTool(session_id=self.session_id)
-            return tool.write(
+            if "file_writer" not in cache:
+                from tools.file_ops import FileWriterTool
+                cache["file_writer"] = FileWriterTool(session_id=self.session_id)
+            return cache["file_writer"].write(
                 path=arguments["path"],
                 content=arguments["content"],
                 mode=arguments.get("mode", "write"),
             )
 
         elif name == "file_navigator":
-            from tools.file_ops import FileNavigatorTool
-            tool = FileNavigatorTool(username=self.username, session_id=self.session_id)
-            return tool.navigate(
+            if "file_navigator" not in cache:
+                from tools.file_ops import FileNavigatorTool
+                cache["file_navigator"] = FileNavigatorTool(username=self.username, session_id=self.session_id)
+            return cache["file_navigator"].navigate(
                 operation=arguments["operation"],
                 path=arguments.get("path"),
                 pattern=arguments.get("pattern"),
             )
 
         elif name == "shell_exec":
-            from tools.shell import ShellExecTool
-            tool = ShellExecTool(session_id=self.session_id)
-            return tool.execute(
+            if "shell_exec" not in cache:
+                from tools.shell import ShellExecTool
+                cache["shell_exec"] = ShellExecTool(session_id=self.session_id)
+            return await cache["shell_exec"].execute(
                 command=arguments["command"],
                 timeout=arguments.get("timeout", 300),
                 working_directory=arguments.get("working_directory"),
             )
 
         elif name == "memo":
-            from tools.memo import MemoTool
-            tool = MemoTool(username=self.username)
-            return tool.execute(
+            if "memo" not in cache:
+                from tools.memo import MemoTool
+                cache["memo"] = MemoTool(username=self.username)
+            return cache["memo"].execute(
                 operation=arguments["operation"],
                 key=arguments.get("key"),
                 value=arguments.get("value"),
             )
 
         elif name == "process_monitor":
-            from tools.process_monitor import ProcessMonitorTool
-            tool = ProcessMonitorTool(session_id=self.session_id)
-            return tool.execute(
+            if "process_monitor" not in cache:
+                from tools.process_monitor import ProcessMonitorTool
+                cache["process_monitor"] = ProcessMonitorTool(session_id=self.session_id)
+            return cache["process_monitor"].execute(
                 operation=arguments["operation"],
                 command=arguments.get("command"),
                 handle=arguments.get("handle"),
@@ -390,6 +568,8 @@ class AgentLoop:
         if len(content) <= budget:
             return content
 
+        self._log(f"  [MICROCOMPACT] {tool_name} result truncated: {len(content)} -> {budget} chars")
+
         # Save full result to disk for potential re-retrieval
         if self.session_id:
             call_id = str(uuid4())[:8]
@@ -419,6 +599,7 @@ class AgentLoop:
         # Messages before the current iteration's boundary are "old"
         old_boundary = self._iteration_boundaries[-1]
 
+        compressed_count = 0
         for i, msg in enumerate(msgs):
             if i >= old_boundary:
                 break
@@ -431,27 +612,60 @@ class AgentLoop:
             # Extract a brief summary from the content
             summary = content[:100].replace('\n', ' ')
             msg["content"] = f"[{tool_name} result — {summary}...]"
+            compressed_count += 1
+        if compressed_count:
+            self._log(f"  [MICROCOMPACT] Compressed {compressed_count} old tool result(s) "
+                      f"from iterations before {current_iteration + 1}")
 
     # ------------------------------------------------------------------
     # History limit enforcement
     # ------------------------------------------------------------------
 
     def _enforce_history_limit(self, msgs: List[Dict[str, Any]]):
-        """Enforce MAX_CONVERSATION_HISTORY via observation masking.
+        """Enforce MAX_CONVERSATION_HISTORY by dropping old messages.
 
-        When the conversation exceeds the limit, old tool-role messages
-        are compressed to short placeholders.  Assistant reasoning
-        (content) is kept intact so the model retains its chain of thought.
+        When the conversation exceeds the limit:
+        1. Keep system messages at the front (indices 0, 1, ...)
+        2. Drop oldest non-system messages, replacing with a compaction notice
+        3. Compress tool results in remaining old messages
+
         Operates in-place on *msgs*.
         """
         limit = config.MAX_CONVERSATION_HISTORY
         if len(msgs) <= limit:
             return
 
-        # Everything before this index is "old" and eligible for masking.
-        boundary = len(msgs) - limit
+        # Find where system messages end
+        system_end = 0
+        for i, msg in enumerate(msgs):
+            if msg.get("role") == "system":
+                system_end = i + 1
+            else:
+                break
+
+        non_system = msgs[system_end:]
+        excess = len(non_system) - limit
+
+        if excess > 0:
+            dropped = non_system[:excess]
+            kept = non_system[excess:]
+            # Build compaction notice
+            dropped_roles = {}
+            for m in dropped:
+                r = m.get("role", "unknown")
+                dropped_roles[r] = dropped_roles.get(r, 0) + 1
+            summary_parts = [f"{v} {k}" for k, v in dropped_roles.items()]
+            notice = f"[Compacted {len(dropped)} earlier messages: {', '.join(summary_parts)}]"
+            # Rebuild msgs in-place
+            msgs[system_end:] = [{"role": "system", "content": notice}] + kept
+            print(f"[AGENT] History compacted: dropped {len(dropped)} old messages "
+                  f"({len(msgs)} remaining, limit {limit})")
+
+        # Additionally compress old tool results in the kept portion
+        # (compress everything except the last limit//2 messages)
+        compress_boundary = len(msgs) - limit // 2
         masked = 0
-        for i in range(boundary):
+        for i in range(system_end, compress_boundary):
             msg = msgs[i]
             if msg.get("role") != "tool":
                 continue
@@ -459,12 +673,11 @@ class AgentLoop:
             if len(content) <= 120:
                 continue
             tool_name = msg.get("name", "tool")
-            summary = content[:80].replace("\n", " ")
-            msg["content"] = f"[{tool_name} result — {summary}...]"
+            summary = content[:50].replace("\n", " ")
+            msg["content"] = f"[{tool_name}: {summary}...]"
             masked += 1
         if masked:
-            print(f"[AGENT] History limit enforced: masked {masked} old tool result(s) "
-                  f"({len(msgs)} msgs, limit {limit})")
+            print(f"[AGENT] Compressed {masked} old tool result(s)")
 
     # ------------------------------------------------------------------
     # Non-streaming run
@@ -476,14 +689,21 @@ class AgentLoop:
         attached_files: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         self._refresh_available_rag_collections()
-        system_prompt = self._build_system_prompt(attached_files)
-        msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}] + list(messages)
+        # Static system prompt first (byte-stable → KV cache hit)
+        system_prompt = self._build_system_prompt()
+        msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        # Dynamic context in a separate message (changes per request, doesn't break prefix cache)
+        dynamic_ctx = self._build_dynamic_context(attached_files)
+        if dynamic_ctx:
+            msgs.append({"role": "system", "content": dynamic_ctx})
+        msgs.extend(messages)
         self._enforce_history_limit(msgs)
         tool_schemas = self._get_tool_schemas()
 
         for iteration in range(self.max_iterations):
             check_stop()
             print(f"\n[AGENT] Iteration {iteration + 1}/{self.max_iterations}")
+            self._log_iteration_start(iteration)
 
             # Track iteration boundaries for microcompaction
             self._iteration_boundaries.append(len(msgs))
@@ -493,16 +713,26 @@ class AgentLoop:
                 tools=tool_schemas,
                 session_id=self.session_id,
                 agent_type="agent",
+                **self._sampling_kwargs(),
             )
 
             if not response.tool_calls:
+                self._log_agent_complete("LLM returned final text response", iteration + 1)
                 return response.content or ""
+
+            # Log what the LLM wants to call
+            self._log_tool_calls_requested(response.tool_calls, iteration)
 
             # Append assistant message with tool_calls
             msgs.append(self._build_assistant_tool_msg(response.tool_calls))
 
-            # Execute all tools in parallel
+            # Execute all tools in parallel (individual results logged in execute_tool)
+            log_start = len(self.tool_calls_log)
             results = await self._execute_tools_parallel(response.tool_calls)
+            new_entries = self.tool_calls_log[log_start:]
+            durations = [e.get("duration", 0) for e in new_entries]
+            self._log_execution_summary(response.tool_calls, results, durations, iteration)
+
             for tc, result in zip(response.tool_calls, results):
                 msgs.append(self._build_tool_result_msg(tc, result))
 
@@ -511,10 +741,12 @@ class AgentLoop:
 
         # Max iterations reached — final answer without tools
         print(f"[AGENT] Max iterations ({self.max_iterations}) reached, requesting final answer")
+        self._log_agent_complete(f"Max iterations ({self.max_iterations}) reached", self.max_iterations)
         final_response: LLMResponse = await self.llm.chat(
             msgs, self.model, self.temperature,
             session_id=self.session_id,
             agent_type="agent:final",
+            **self._sampling_kwargs(),
         )
         return final_response.content or ""
 
@@ -528,14 +760,19 @@ class AgentLoop:
         attached_files: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[StreamEvent]:
         self._refresh_available_rag_collections()
-        system_prompt = self._build_system_prompt(attached_files)
-        msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}] + list(messages)
+        system_prompt = self._build_system_prompt()
+        msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        dynamic_ctx = self._build_dynamic_context(attached_files)
+        if dynamic_ctx:
+            msgs.append({"role": "system", "content": dynamic_ctx})
+        msgs.extend(messages)
         self._enforce_history_limit(msgs)
         tool_schemas = self._get_tool_schemas()
 
         for iteration in range(self.max_iterations):
             check_stop()
             print(f"\n[AGENT-STREAM] Iteration {iteration + 1}/{self.max_iterations}")
+            self._log_iteration_start(iteration, streaming=True)
 
             self._iteration_boundaries.append(len(msgs))
 
@@ -546,6 +783,7 @@ class AgentLoop:
                 tools=tool_schemas,
                 session_id=self.session_id,
                 agent_type="agent:stream",
+                **self._sampling_kwargs(),
             ):
                 if isinstance(event, TextEvent):
                     yield event
@@ -553,7 +791,11 @@ class AgentLoop:
                     collected_tool_event = event
 
             if not collected_tool_event:
+                self._log_agent_complete("LLM returned final text response (stream)", iteration + 1)
                 return
+
+            # Log what the LLM wants to call
+            self._log_tool_calls_requested(collected_tool_event.tool_calls, iteration)
 
             # Tool calls detected — emit status events and execute in parallel
             msgs.append(self._build_assistant_tool_msg(collected_tool_event.tool_calls))
@@ -566,9 +808,13 @@ class AgentLoop:
                     status="started",
                 )
 
-            # Execute all tools in parallel
+            # Execute all tools in parallel (individual results logged in execute_tool)
+            log_start = len(self.tool_calls_log)
             start_time = time.time()
             results = await self._execute_tools_parallel(collected_tool_event.tool_calls)
+            new_entries = self.tool_calls_log[log_start:]
+            durations = [e.get("duration", 0) for e in new_entries]
+            self._log_execution_summary(collected_tool_event.tool_calls, results, durations, iteration)
 
             # Emit "completed"/"failed" events and append results
             for tc, result in zip(collected_tool_event.tool_calls, results):
@@ -587,10 +833,12 @@ class AgentLoop:
 
         # Max iterations — final answer without tools
         print(f"[AGENT-STREAM] Max iterations ({self.max_iterations}) reached, requesting final answer")
+        self._log_agent_complete(f"Max iterations ({self.max_iterations}) reached (stream)", self.max_iterations)
         async for event in self.llm.chat_stream(
             msgs, self.model, self.temperature,
             session_id=self.session_id,
             agent_type="agent:stream:final",
+            **self._sampling_kwargs(),
         ):
             if isinstance(event, TextEvent):
                 yield event

@@ -2,6 +2,7 @@
 OpenCode Python Code Executor
 Two-stage execution: OpenCode generates code, then Python executor runs it
 """
+import asyncio
 import queue
 import re
 import subprocess
@@ -11,17 +12,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
+
 import config
 from tools.python_coder.base import BasePythonExecutor
 
+# ---------- Buffered logger (opened once, not per-line) ----------
+import logging as _logging
+
+_tool_logger = _logging.getLogger("python_coder.opencode")
+if not _tool_logger.handlers:
+    _handler = _logging.FileHandler(config.PROMPTS_LOG_PATH, encoding='utf-8')
+    _handler.setFormatter(_logging.Formatter('%(message)s'))
+    _tool_logger.addHandler(_handler)
+    _tool_logger.setLevel(_logging.INFO)
+    _tool_logger.propagate = False
+
 
 def log_to_prompts_file(message: str) -> None:
-    """Write message to prompts.log"""
-    try:
-        with open(config.PROMPTS_LOG_PATH, 'a', encoding='utf-8') as f:
-            f.write(message + '\n')
-    except Exception as e:
-        print(f"[WARNING] Failed to write to prompts.log: {e}")
+    """Write message to prompts.log via buffered handler."""
+    _tool_logger.info(message)
 
 
 class OpenCodeExecutor(BasePythonExecutor):
@@ -36,6 +46,8 @@ class OpenCodeExecutor(BasePythonExecutor):
 
     # Class-level session mapping: {llm_session_id: opencode_session_id}
     _session_map: Dict[str, str] = {}
+    # Class-level port-alive cache (avoids socket check on every call)
+    _port_alive_until: float = 0
 
     def __init__(self, session_id: str):
         """
@@ -53,7 +65,7 @@ class OpenCodeExecutor(BasePythonExecutor):
         self.python_timeout = getattr(config, 'PYTHON_EXECUTOR_TIMEOUT', 60)
         self.max_output_size = config.PYTHON_EXECUTOR_MAX_OUTPUT_SIZE
 
-    def execute(
+    async def execute(
         self,
         instruction: str,
         timeout: Optional[int] = None,
@@ -109,7 +121,7 @@ class OpenCodeExecutor(BasePythonExecutor):
         print(f"\n[OPENCODE] Code generation stage...")
         self._log_stage("CODE GENERATION (OpenCode)")
 
-        opencode_result = self._run_opencode(instruction, exec_timeout)
+        opencode_result = await self._run_opencode(instruction, exec_timeout)
 
         # Relocate .py files that landed in the project root (HTTP server mode)
         self._relocate_stray_files(root_py_before, project_root)
@@ -142,7 +154,17 @@ class OpenCodeExecutor(BasePythonExecutor):
             "error": None
         }
 
-    def _run_opencode(self, instruction: str, timeout: int) -> Dict[str, Any]:
+    def _is_server_available(self) -> bool:
+        """Check if OpenCode server is up, with 30s TTL cache."""
+        if time.time() < OpenCodeExecutor._port_alive_until:
+            return True
+        from tools.python_coder.opencode_server import get_server
+        alive = get_server()._is_port_in_use()
+        if alive:
+            OpenCodeExecutor._port_alive_until = time.time() + 30
+        return alive
+
+    async def _run_opencode(self, instruction: str, timeout: int) -> Dict[str, Any]:
         """
         Run OpenCode to generate Python code.
 
@@ -152,19 +174,23 @@ class OpenCodeExecutor(BasePythonExecutor):
         Returns:
             Dict with keys: success, output, session_id, error
         """
-        # --- HTTP server mode (fast path) ---
-        from tools.python_coder.opencode_server import get_server
-        srv = get_server()
-        if srv._is_port_in_use():
+        # --- HTTP server mode (fast path, with cached port check) ---
+        if self._is_server_available():
             print("[OPENCODE] Using HTTP server mode (no cold-start)")
-            http_result = self._run_opencode_http(instruction, timeout)
+            http_result = await self._run_opencode_http(instruction, timeout)
             if http_result["success"]:
                 return http_result
             print(f"[OPENCODE] HTTP mode failed ({http_result.get('error')}), "
                   "falling back to subprocess")
+            # Invalidate cache on failure
+            OpenCodeExecutor._port_alive_until = 0
 
-        # --- Subprocess fallback ---
+        # --- Subprocess fallback (run in thread to avoid blocking) ---
         print("[OPENCODE] Using subprocess mode")
+        return await asyncio.to_thread(self._run_opencode_subprocess, instruction, timeout)
+
+    def _run_opencode_subprocess(self, instruction: str, timeout: int) -> Dict[str, Any]:
+        """Subprocess fallback — runs in a thread via asyncio.to_thread."""
         cmd = self._build_command(instruction)
         print(f"[OPENCODE] Command: {' '.join(cmd[:6])}...")
 
@@ -244,7 +270,7 @@ class OpenCodeExecutor(BasePythonExecutor):
                 "error": f"OpenCode error: {str(e)}"
             }
 
-    def _run_opencode_http(self, instruction: str, timeout: int) -> Dict[str, Any]:
+    async def _run_opencode_http(self, instruction: str, timeout: int) -> Dict[str, Any]:
         """
         Run OpenCode via the persistent HTTP server.
 
@@ -256,7 +282,7 @@ class OpenCodeExecutor(BasePythonExecutor):
         Returns:
             Dict with keys: success, output, session_id, error
         """
-        import requests as _req
+        import json as _json
         from tools.python_coder.opencode_server import get_server
 
         base_url = get_server().server_url
@@ -264,87 +290,85 @@ class OpenCodeExecutor(BasePythonExecutor):
         # --- Session management: one OpenCode session per LLM session_id ---
         opencode_session_id = OpenCodeExecutor._session_map.get(self.session_id)
 
-        if not opencode_session_id:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=timeout, write=10.0, pool=5.0)) as client:
+            if not opencode_session_id:
+                try:
+                    resp = await client.post(
+                        f"{base_url}/session",
+                        json={"title": f"llm-{self.session_id[:8]}"},
+                    )
+                    resp.raise_for_status()
+                    opencode_session_id = resp.json()["id"]
+                    OpenCodeExecutor._session_map[self.session_id] = opencode_session_id
+                    print(f"[OPENCODE-HTTP] Created session: {opencode_session_id}")
+                except Exception as e:
+                    return {
+                        "success": False, "output": "", "session_id": None,
+                        "error": f"Failed to create OpenCode session: {e}",
+                    }
+            else:
+                print(f"[OPENCODE-HTTP] Reusing session: {opencode_session_id}")
+
+            # --- Send prompt, wait for full response ---
             try:
-                resp = _req.post(
-                    f"{base_url}/session",
-                    json={"title": f"llm-{self.session_id[:8]}"},
-                    timeout=10,
+                provider, model = config.OPENCODE_MODEL.split("/", 1)
+                resp = await client.post(
+                    f"{base_url}/session/{opencode_session_id}/message",
+                    json={
+                        "model": {
+                            "providerID": provider,
+                            "modelID": model,
+                        },
+                        "parts": [{"type": "text", "text": instruction}],
+                    },
                 )
                 resp.raise_for_status()
-                opencode_session_id = resp.json()["id"]
-                OpenCodeExecutor._session_map[self.session_id] = opencode_session_id
-                print(f"[OPENCODE-HTTP] Created session: {opencode_session_id}")
+                result = resp.json()
+
+                raw_dump = _json.dumps(result, indent=2, ensure_ascii=False, default=str)
+                self._log_stage(f"RAW HTTP RESPONSE ({len(raw_dump)} chars)")
+                for line in raw_dump.split('\n')[:200]:
+                    log_to_prompts_file(f"  {line}")
+
+                # Check for OpenCode-level errors (HTTP 200 but execution failed)
+                info = result.get("info", {})
+                oc_error = info.get("error")
+                if isinstance(oc_error, dict) and oc_error.get("data", {}).get("message"):
+                    error_msg = oc_error["data"]["message"].strip('"')
+                    self._log_stage(f"OpenCode error: {error_msg}")
+                    # Discard the broken session so the next call starts fresh
+                    OpenCodeExecutor._session_map.pop(self.session_id, None)
+                    return {
+                        "success": False,
+                        "output": "",
+                        "session_id": opencode_session_id,
+                        "error": f"OpenCode error: {error_msg}",
+                    }
+
+                text = self._extract_opencode_text(result)
+                self._log_stage(f"Extracted text ({len(text)} chars)")
+                for line in text.split('\n'):
+                    log_to_prompts_file(f"  {line}")
+
+                return {
+                    "success": True,
+                    "output": text,
+                    "session_id": opencode_session_id,
+                    "error": None,
+                }
+
+            except httpx.TimeoutException:
+                return {
+                    "success": False, "output": "",
+                    "session_id": opencode_session_id,
+                    "error": f"OpenCode HTTP timeout after {timeout}s",
+                }
             except Exception as e:
                 return {
-                    "success": False, "output": "", "session_id": None,
-                    "error": f"Failed to create OpenCode session: {e}",
-                }
-        else:
-            print(f"[OPENCODE-HTTP] Reusing session: {opencode_session_id}")
-
-        # --- Send prompt, wait for full response ---
-        try:
-            provider, model = config.OPENCODE_MODEL.split("/", 1)
-            resp = _req.post(
-                f"{base_url}/session/{opencode_session_id}/message",
-                json={
-                    "model": {
-                        "providerID": provider,
-                        "modelID": model,
-                    },
-                    "parts": [{"type": "text", "text": instruction}],
-                },
-                timeout=(10, timeout),
-            )
-            resp.raise_for_status()
-            result = resp.json()
-
-            import json as _json
-            raw_dump = _json.dumps(result, indent=2, ensure_ascii=False, default=str)
-            self._log_stage(f"RAW HTTP RESPONSE ({len(raw_dump)} chars)")
-            for line in raw_dump.split('\n')[:200]:
-                log_to_prompts_file(f"  {line}")
-
-            # Check for OpenCode-level errors (HTTP 200 but execution failed)
-            info = result.get("info", {})
-            oc_error = info.get("error")
-            if isinstance(oc_error, dict) and oc_error.get("data", {}).get("message"):
-                error_msg = oc_error["data"]["message"].strip('"')
-                self._log_stage(f"OpenCode error: {error_msg}")
-                # Discard the broken session so the next call starts fresh
-                OpenCodeExecutor._session_map.pop(self.session_id, None)
-                return {
-                    "success": False,
-                    "output": "",
+                    "success": False, "output": "",
                     "session_id": opencode_session_id,
-                    "error": f"OpenCode error: {error_msg}",
+                    "error": f"OpenCode HTTP error: {e}",
                 }
-
-            text = self._extract_opencode_text(result)
-            self._log_stage(f"Extracted text ({len(text)} chars)")
-            for line in text.split('\n'):
-                log_to_prompts_file(f"  {line}")
-
-            return {
-                "success": True,
-                "output": text,
-                "session_id": opencode_session_id,
-                "error": None,
-            }
-
-        except _req.exceptions.Timeout:
-            return {
-                "success": False, "output": "",
-                "session_id": opencode_session_id,
-                "error": f"OpenCode HTTP timeout after {timeout}s",
-            }
-        except Exception as e:
-            return {
-                "success": False, "output": "",
-                "session_id": opencode_session_id,
-                "error": f"OpenCode HTTP error: {e}",
-            }
 
     @staticmethod
     def _extract_opencode_text(result: Dict[str, Any]) -> str:

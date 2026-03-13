@@ -49,7 +49,11 @@ All settings live in `config.py`. Key settings to know:
 | `PYTHON_EXECUTOR_MODE` | `"opencode"` | `"native"` or `"opencode"` |
 | `OPENCODE_MODEL` | `"llama.cpp/MiniMax"` | `"provider/model"` format |
 | `TAVILY_API_KEY` | *(set this)* | Required for web search |
-| `MAX_CONVERSATION_HISTORY` | `50` | Defined but NOT enforced in code — conversations grow unbounded |
+| `LLAMACPP_CACHE_PROMPT` | `True` | KV cache reuse for shared prompt prefixes |
+| `LLAMACPP_CONNECTION_POOL_SIZE` | `10` | Persistent HTTP connection pool to llama.cpp |
+| `DEFAULT_MIN_P` | `0.05` | min_p sampler (llama.cpp's most effective sampler) |
+| `DEFAULT_REPEAT_PENALTY` | `1.1` | Repetition penalty sent to llama.cpp |
+| `MAX_CONVERSATION_HISTORY` | `50` | Enforced: old messages dropped + tool results compressed |
 | `SESSION_CLEANUP_DAYS` | `7` | Sessions auto-deleted after N days |
 | `MEMO_DIR` | `data/memory` | Per-user persistent memo storage |
 | `MEMO_MAX_ENTRIES` | `100` | Max memo entries per user |
@@ -172,6 +176,36 @@ Tool schemas in `tools_config.py`. `session_id` is stripped from all schemas bef
 4. Checks llama.cpp backend availability
 5. Starts OpenCode server if `PYTHON_EXECUTOR_MODE == "opencode"`
 
+### Recommended llama.cpp Server Launch Flags
+
+The API server sends `cache_prompt`, `id_slot`, sampling params, and tool schemas. For the llama.cpp server (remote machine) to fully utilize these, launch with:
+
+```bash
+llama-server \
+  --model MODEL.gguf \
+  --flash-attn auto \              # Flash attention (required for KV cache quant)
+  --cache-type-k q8_0 \            # Quantize KV cache keys — saves VRAM
+  --cache-type-v q8_0 \            # Quantize KV cache values
+  --cont-batching \                 # Dynamic batching
+  --parallel 4 \                    # Concurrent slots (match LLAMACPP_SLOTS in config.py)
+  --batch-size 2048 \               # Prompt processing batch size
+  --ubatch-size 512 \               # GPU micro-batch size
+  --ctx-size 8192 \                 # Adjust per model
+  --jinja \                         # Required for native tool calling
+  --threads $(nproc) \              # Physical cores, NOT hyperthreaded
+  --slot-prompt-similarity 0.5      # Slot matching threshold for cache reuse
+```
+
+**Speculative decoding** (if a draft model is available, 1.3-3x speedup):
+```bash
+  --model-draft SMALL_MODEL.gguf \  # e.g., 1B model from same family
+  --draft-max 8 \
+  --draft-min 4 \
+  --draft-p-min 0.9
+```
+
+**Key**: `--parallel` must match `config.LLAMACPP_SLOTS` (default 4) for `id_slot` session pinning to work correctly.
+
 ### Database & Storage
 
 - **SQLite** (`data/app.db`): users, sessions metadata (includes `title TEXT` column, migration applied on startup)
@@ -182,7 +216,7 @@ Tool schemas in `tools_config.py`. `session_id` is stripped from all schemas bef
 - **Tool Results**: `data/tool_results/{session_id}/` (microcompaction overflow)
 - **Memo**: `data/memory/{username}.json` — flat dict `{key: {value, updated_at}}` for cross-session memory
 - **Jobs**: `data/jobs/{job_id}.json` — background job state + streamed output chunks (FileLock)
-- **Logs**: `data/logs/prompts.log` (all LLM interactions via LLMInterceptor + direct tool execution logs from websearch/python_coder)
+- **Logs**: `data/logs/prompts.log` (all LLM interactions via LLMInterceptor + agent-level events from AgentLoop + direct tool execution logs from websearch/python_coder). Agent-level logging includes: iteration lifecycle, LLM tool call requests with full arguments, per-tool execution results, execution summaries, microcompaction events, and agent completion.
 
 ## Adding New Tools
 
@@ -208,7 +242,7 @@ Tool schemas in `tools_config.py`. `session_id` is stripped from all schemas bef
 10. **Memo NOT prompt-cached** — `MemoTool.load_for_prompt()` is called fresh each request so writes take effect immediately in the same session (unlike the static `_CACHED_SYSTEM_PROMPT`)
 11. **`rag_upload_async.py` is dead code** — the router exists but is never registered in `app.py`; to activate it, add `from backend.api.routes import rag_upload_async` and `app.include_router(rag_upload_async.router)` in `app.py`
 12. **`create_users.py` requires the server** — it hits HTTP endpoints, unlike `create_user_direct.py` which writes to the DB directly
-13. **`system.txt` has duplicate sections** — `process_monitor` and `memo` tool descriptions each appear twice in `prompts/system.txt`
+13. **`system.txt` is minimal** — tool descriptions live only in `tools_config.py` schemas; `system.txt` has behavior rules and the tool selection table only
 14. **file_reader has a 50KB cap** — `MAX_READ_BYTES = 50 * 1024` in `tools/file_ops/reader.py`; shell_exec also caps at 50KB per stream (`MAX_OUTPUT_SIZE`)
 15. **file_reader offset is 1-based** — the actual code treats offset as 1-based (line 1 = first line), but `tools_config.py` schema incorrectly says "0-indexed"
 16. **file_writer resolves relative paths from cwd, NOT scratch** — unlike `file_reader` which checks scratch first, then uploads, then cwd

@@ -13,7 +13,9 @@
       "Bash(xargs git check-ignore)",
       "Bash(git add Bot/Hoonbot/data/)",
       "Bash(git rm --cached Bot/Messenger/android-app)",
-      "Bash(git add .claude/settings.json)"
+      "Bash(git add .claude/settings.json)",
+      "WebSearch",
+      "Bash(grep -r \"print\\(\" /c/Users/Lee/Desktop/Huni/LLM_API_fast/tools/*.py --include=\"*.py\" -l)"
     ]
   }
 }

@@ -5,6 +5,7 @@ Chat completions endpoint (OpenAI-compatible with extensions)
 Both streaming and non-streaming go through the AgentLoop,
 which uses native tool calling via llama.cpp.
 """
+import asyncio
 import json
 import time
 import uuid
@@ -191,8 +192,12 @@ async def chat_completions(
                     yield {"data": "[DONE]"}
 
                     history.append({"role": "assistant", "content": assistant_message})
-                    conversation_store.save_conversation(session_id, history)
-                    db.update_session_message_count(session_id, len(history))
+                    asyncio.create_task(asyncio.to_thread(
+                        conversation_store.save_conversation, session_id, history
+                    ))
+                    asyncio.create_task(asyncio.to_thread(
+                        db.update_session_message_count, session_id, len(history)
+                    ))
 
                 except Exception as e:
                     error_data = {"error": {"message": str(e), "type": "internal_error"}}
@@ -204,8 +209,12 @@ async def chat_completions(
             assistant_message = await agent.run(agent_messages, file_metadata)
 
             history.append({"role": "assistant", "content": assistant_message})
-            conversation_store.save_conversation(session_id, history)
-            db.update_session_message_count(session_id, len(history))
+            asyncio.create_task(asyncio.to_thread(
+                conversation_store.save_conversation, session_id, history
+            ))
+            asyncio.create_task(asyncio.to_thread(
+                db.update_session_message_count, session_id, len(history)
+            ))
 
             return ChatCompletionResponse(
                 id=request_id,

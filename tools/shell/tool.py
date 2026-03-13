@@ -1,9 +1,8 @@
 """
 Shell Execution Tool
-Run shell commands in a subprocess.
+Run shell commands via async subprocess (non-blocking).
 """
-import subprocess
-import threading
+import asyncio
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -12,14 +11,19 @@ import config
 
 MAX_OUTPUT_SIZE = 50 * 1024  # 50KB cap per stream
 
+# Track already-created workspace directories to skip redundant mkdir calls
+_created_dirs: set = set()
+
 
 class ShellExecTool:
-    """Execute shell commands."""
+    """Execute shell commands via async subprocess."""
 
     def __init__(self, session_id: str):
         self.session_id = session_id
         self.workspace = config.SCRATCH_DIR / session_id
-        self.workspace.mkdir(parents=True, exist_ok=True)
+        if session_id not in _created_dirs:
+            self.workspace.mkdir(parents=True, exist_ok=True)
+            _created_dirs.add(session_id)
 
     def _resolve_working_directory(self, working_directory: Optional[str]) -> Path:
         """
@@ -37,14 +41,14 @@ class ShellExecTool:
             return cwd.resolve()
         return (Path.cwd() / cwd).resolve()
 
-    def execute(
+    async def execute(
         self,
         command: str,
         timeout: int = 300,
         working_directory: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Execute a shell command.
+        Execute a shell command asynchronously.
 
         On timeout, does NOT kill the process — returns partial output so far
         plus the PID, allowing the caller to decide whether to kill or wait.
@@ -59,39 +63,20 @@ class ShellExecTool:
 
         start = time.time()
         try:
-            proc = subprocess.Popen(
+            proc = await asyncio.create_subprocess_shell(
                 command,
-                shell=True,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
                 cwd=str(cwd),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                errors='replace',
             )
 
-            stdout_chunks: list = []
-            stderr_chunks: list = []
-
-            def _drain(pipe, chunks):
-                while True:
-                    chunk = pipe.read(4096)
-                    if not chunk:
-                        break
-                    chunks.append(chunk)
-
-            t_out = threading.Thread(target=_drain, args=(proc.stdout, stdout_chunks), daemon=True)
-            t_err = threading.Thread(target=_drain, args=(proc.stderr, stderr_chunks), daemon=True)
-            t_out.start()
-            t_err.start()
-
             try:
-                proc.wait(timeout=timeout)
-                t_out.join(1)
-                t_err.join(1)
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout
+                )
 
-                stdout = "".join(stdout_chunks)
-                stderr = "".join(stderr_chunks)
+                stdout = stdout_bytes.decode('utf-8', errors='replace')
+                stderr = stderr_bytes.decode('utf-8', errors='replace')
                 if len(stdout) > MAX_OUTPUT_SIZE:
                     stdout = stdout[:MAX_OUTPUT_SIZE] + "\n...[truncated]"
                 if len(stderr) > MAX_OUTPUT_SIZE:
@@ -108,25 +93,15 @@ class ShellExecTool:
                     "pid": proc.pid,
                 }
 
-            except subprocess.TimeoutExpired:
-                # Collect whatever arrived so far — do NOT kill the process
-                t_out.join(0.5)
-                t_err.join(0.5)
-
-                stdout = "".join(stdout_chunks)
-                stderr = "".join(stderr_chunks)
-                if len(stdout) > MAX_OUTPUT_SIZE:
-                    stdout = stdout[:MAX_OUTPUT_SIZE] + "\n...[truncated]"
-                if len(stderr) > MAX_OUTPUT_SIZE:
-                    stderr = stderr[:MAX_OUTPUT_SIZE] + "\n...[truncated]"
-
+            except asyncio.TimeoutError:
+                # Process is still running — collect whatever we can
                 duration = time.time() - start
                 return {
                     "success": False,
                     "still_running": True,
                     "error": f"Process still running after {timeout}s",
-                    "stdout": stdout,
-                    "stderr": stderr,
+                    "stdout": "",
+                    "stderr": "",
                     "duration": round(duration, 2),
                     "command": command,
                     "pid": proc.pid,

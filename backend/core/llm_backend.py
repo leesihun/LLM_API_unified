@@ -64,6 +64,16 @@ class LlamaCppBackend:
     def __init__(self, host: str = None):
         self.host = (host or config.LLAMACPP_HOST).rstrip("/")
         self._ssl_verify = self._resolve_ssl()
+        # Persistent connection pool — reuses TCP connections across requests
+        pool_size = getattr(config, 'LLAMACPP_CONNECTION_POOL_SIZE', 20)
+        self._client = httpx.AsyncClient(
+            verify=self._ssl_verify,
+            timeout=config.STREAM_TIMEOUT,
+            limits=httpx.Limits(
+                max_connections=pool_size,
+                max_keepalive_connections=pool_size // 2,
+            ),
+        )
 
     def _resolve_ssl(self):
         from pathlib import Path
@@ -72,30 +82,74 @@ class LlamaCppBackend:
             return str(cert_path)
         return True
 
-    async def _get_client(self, timeout: float = None) -> httpx.AsyncClient:
-        return httpx.AsyncClient(
-            verify=self._ssl_verify,
-            timeout=timeout or config.STREAM_TIMEOUT,
-        )
+    async def close(self):
+        """Shut down the persistent HTTP client."""
+        await self._client.aclose()
 
     async def is_available(self) -> bool:
         try:
-            async with await self._get_client(timeout=3.0) as client:
-                resp = await client.get(f"{self.host}/v1/models")
-                return resp.status_code == 200
+            resp = await self._client.get(
+                f"{self.host}/v1/models",
+                timeout=httpx.Timeout(3.0),
+            )
+            return resp.status_code == 200
         except Exception:
             return False
 
     async def list_models(self) -> List[str]:
-        async with await self._get_client(timeout=5.0) as client:
-            resp = await client.get(f"{self.host}/v1/models")
-            resp.raise_for_status()
-            data = resp.json()
-            return [m["id"] for m in data.get("data", [])]
+        resp = await self._client.get(
+            f"{self.host}/v1/models",
+            timeout=httpx.Timeout(5.0),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return [m["id"] for m in data.get("data", [])]
 
     # ------------------------------------------------------------------
     # Non-streaming chat (with optional tool calling)
     # ------------------------------------------------------------------
+
+    def _build_payload(
+        self,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: float,
+        stream: bool,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        repeat_penalty: Optional[float] = None,
+        id_slot: Optional[int] = None,
+    ) -> dict[str, Any]:
+        """Assemble the request payload with all llama.cpp parameters."""
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": stream,
+        }
+        if tools:
+            payload["tools"] = tools
+        # KV cache reuse — skip re-evaluating shared prompt prefix
+        if getattr(config, 'LLAMACPP_CACHE_PROMPT', True):
+            payload["cache_prompt"] = True
+        # Pin to a specific KV cache slot for consistent cache hits
+        if id_slot is not None:
+            payload["id_slot"] = id_slot
+        # Sampling parameters
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if top_k is not None:
+            payload["top_k"] = top_k
+        if min_p is not None:
+            payload["min_p"] = min_p
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if repeat_penalty is not None:
+            payload["repeat_penalty"] = repeat_penalty
+        return payload
 
     async def chat(
         self,
@@ -103,23 +157,26 @@ class LlamaCppBackend:
         model: str,
         temperature: float = 0.7,
         tools: Optional[List[Dict[str, Any]]] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        repeat_penalty: Optional[float] = None,
+        id_slot: Optional[int] = None,
     ) -> LLMResponse:
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "stream": False,
-        }
-        if tools:
-            payload["tools"] = tools
+        payload = self._build_payload(
+            messages, model, temperature, stream=False,
+            tools=tools, top_p=top_p, top_k=top_k, min_p=min_p,
+            max_tokens=max_tokens, repeat_penalty=repeat_penalty,
+            id_slot=id_slot,
+        )
 
-        async with await self._get_client() as client:
-            resp = await client.post(
-                f"{self.host}/v1/chat/completions",
-                json=payload,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+        resp = await self._client.post(
+            f"{self.host}/v1/chat/completions",
+            json=payload,
+        )
+        resp.raise_for_status()
+        data = resp.json()
 
         return self._parse_response(data)
 
@@ -159,67 +216,70 @@ class LlamaCppBackend:
         model: str,
         temperature: float = 0.7,
         tools: Optional[List[Dict[str, Any]]] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        min_p: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        repeat_penalty: Optional[float] = None,
+        id_slot: Optional[int] = None,
     ) -> AsyncIterator[StreamEvent]:
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "stream": True,
-        }
-        if tools:
-            payload["tools"] = tools
+        payload = self._build_payload(
+            messages, model, temperature, stream=True,
+            tools=tools, top_p=top_p, top_k=top_k, min_p=min_p,
+            max_tokens=max_tokens, repeat_penalty=repeat_penalty,
+            id_slot=id_slot,
+        )
 
         # State for accumulating tool call deltas across SSE chunks
         pending_tool_calls: dict[int, dict] = {}  # index -> {id, name, arguments_str}
         finish_reason = "stop"
 
-        async with await self._get_client() as client:
-            async with client.stream(
-                "POST",
-                f"{self.host}/v1/chat/completions",
-                json=payload,
-            ) as resp:
-                resp.raise_for_status()
-                async for raw_line in resp.aiter_lines():
-                    if not raw_line.startswith("data: "):
-                        continue
-                    data_str = raw_line[6:]
-                    if data_str.strip() == "[DONE]":
-                        break
+        async with self._client.stream(
+            "POST",
+            f"{self.host}/v1/chat/completions",
+            json=payload,
+        ) as resp:
+            resp.raise_for_status()
+            async for raw_line in resp.aiter_lines():
+                if not raw_line.startswith("data: "):
+                    continue
+                data_str = raw_line[6:]
+                if data_str.strip() == "[DONE]":
+                    break
 
-                    try:
-                        chunk = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
+                try:
+                    chunk = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
 
-                    choices = chunk.get("choices", [])
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta", {})
-                    chunk_finish = choices[0].get("finish_reason")
-                    if chunk_finish:
-                        finish_reason = chunk_finish
+                choices = chunk.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                chunk_finish = choices[0].get("finish_reason")
+                if chunk_finish:
+                    finish_reason = chunk_finish
 
-                    # Text content
-                    if "content" in delta and delta["content"]:
-                        yield TextEvent(content=delta["content"])
+                # Text content
+                if "content" in delta and delta["content"]:
+                    yield TextEvent(content=delta["content"])
 
-                    # Tool call deltas
-                    if "tool_calls" in delta:
-                        for tc_delta in delta["tool_calls"]:
-                            idx = tc_delta.get("index", 0)
-                            if idx not in pending_tool_calls:
-                                pending_tool_calls[idx] = {
-                                    "id": tc_delta.get("id", f"call_{idx}"),
-                                    "name": "",
-                                    "arguments_str": "",
-                                }
-                            entry = pending_tool_calls[idx]
-                            func_delta = tc_delta.get("function", {})
-                            if "name" in func_delta:
-                                entry["name"] += func_delta["name"]
-                            if "arguments" in func_delta:
-                                entry["arguments_str"] += func_delta["arguments"]
+                # Tool call deltas
+                if "tool_calls" in delta:
+                    for tc_delta in delta["tool_calls"]:
+                        idx = tc_delta.get("index", 0)
+                        if idx not in pending_tool_calls:
+                            pending_tool_calls[idx] = {
+                                "id": tc_delta.get("id", f"call_{idx}"),
+                                "name": "",
+                                "arguments_str": "",
+                            }
+                        entry = pending_tool_calls[idx]
+                        func_delta = tc_delta.get("function", {})
+                        if "name" in func_delta:
+                            entry["name"] += func_delta["name"]
+                        if "arguments" in func_delta:
+                            entry["arguments_str"] += func_delta["arguments"]
 
         # After the stream finishes, if we accumulated tool calls, yield them
         if pending_tool_calls:

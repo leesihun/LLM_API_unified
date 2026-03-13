@@ -169,6 +169,13 @@ async def startup_event():
         start_opencode_server()
 
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    from backend.core.llm_backend import _backend
+    await _backend.close()
+    print("[Shutdown] HTTP connection pool closed")
+
+
 @app.get("/")
 def root():
     return {
