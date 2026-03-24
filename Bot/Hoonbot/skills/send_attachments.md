@@ -8,11 +8,13 @@ Send one or more local files or images to a Messenger room.
 
 ## API
 
-- **Port:** `config.MESSENGER_URL` (10006)
-- **Auth:** `x-api-key: config.MESSENGER_API_KEY` (from `data/.apikey`)
-- `POST {MESSENGER_URL}/api/send-file` — local file (multipart)
-- `POST {MESSENGER_URL}/api/send-base64` — base64 image data
-- `GET {MESSENGER_URL}/api/rooms?userId=<bot_id>` — room name lookup
+- **Base URL:** `http://localhost:10006`
+- **Auth:** `x-api-key: <api_key>` — read from `<data_dir>/.apikey` using `file_reader`
+- `POST {base_url}/api/send-file` — local file (multipart)
+- `POST {base_url}/api/send-base64` — base64 image data (images only)
+- `GET {base_url}/api/rooms?userId=<bot_id>` — room name lookup
+
+The data directory path can be derived from the memory file path injected in the system prompt (same directory as `memory.md`).
 
 ---
 
@@ -20,22 +22,30 @@ Send one or more local files or images to a Messenger room.
 
 Execute in order. Stop and report on first failure.
 
-### 1. Resolve base URL
+### 1. Get credentials
 
-```python
-import config
-base_url = config.MESSENGER_URL  # abort if empty
+Use `file_reader` to read the API key:
 ```
+file_reader: <data_dir>/.apikey
+```
+Store it as `api_key`. The base URL is `http://localhost:10006`.
 
 ### 2. Detect target room
 
-Every message arrives prefixed with `[Room: <id> | From: <sender>]`. Use that room ID as the default target.
+Every message arrives prefixed with `[Room: <id> | From: <sender>]`. Use that room ID as the default.
 
 Override order:
 1. Explicit room ID in request → use that
-2. Explicit room name in request → resolve to ID:
-   - Call `messenger.get_bot_info()` → get bot `id`
-   - `GET /api/rooms?userId=<bot_id>` → find exact case-insensitive name match
+2. Explicit room name → resolve to ID:
+   ```
+   GET {base_url}/api/bots/me
+   x-api-key: <api_key>
+   → extract bot id from response
+
+   GET {base_url}/api/rooms?userId=<bot_id>
+   x-api-key: <api_key>
+   → find room whose name matches exactly (case-insensitive)
+   ```
    - No match → `"Room '<name>' not found"` — stop
    - Multiple matches → `"Ambiguous room name — matches: <list>"` — stop
 3. Neither given → use the room ID from the message prefix
@@ -54,50 +64,48 @@ No glob expansion or fuzzy matching. If any file fails, stop before uploading an
 
 **Local file from disk:**
 
-```
-POST {MESSENGER_URL}/api/send-file
-Content-Type: multipart/form-data  ← set by httpx automatically; do not set manually
-x-api-key: config.MESSENGER_API_KEY
+```python
+import os, httpx
 
-Form fields:
-  roomId   — room ID as string (required)
-  file     — file binary with original filename (required)
-  content  — caption (optional; defaults to filename)
+async def send_file(base_url, api_key, room_id, file_path, caption=None):
+    form = {"roomId": str(room_id)}
+    if caption:
+        form["content"] = caption
+    async with httpx.AsyncClient() as client:
+        with open(file_path, "rb") as f:
+            resp = await client.post(
+                f"{base_url}/api/send-file",
+                headers={"x-api-key": api_key},  # no Content-Type — httpx sets multipart boundary
+                data=form,
+                files={"file": (os.path.basename(file_path), f)},
+            )
+        resp.raise_for_status()
+    result = resp.json()
+    return result.get("message", {}).get("id") or result.get("id")
 ```
 
 Server classifies by extension: `.jpg .jpeg .png .gif .webp .bmp .svg` → `image`, everything else → `file`.
 
-```python
-async def send_file(room_id: int, file_path: str) -> int:
-    client = _get_client()
-    with open(file_path, "rb") as f:
-        resp = await client.post(
-            f"{config.MESSENGER_URL}/api/send-file",
-            headers={"x-api-key": config.MESSENGER_API_KEY},
-            data={"roomId": str(room_id)},
-            files={"file": (os.path.basename(file_path), f)},
-        )
-    resp.raise_for_status()
-    data = resp.json()
-    msg_id = data.get("message", {}).get("id") or data.get("id")
-    if not msg_id:
-        raise ValueError("message_id missing in upload response")
-    return msg_id
-```
-
 **Base64 image** (only when input is already base64, not a file path):
 
-```
-POST {MESSENGER_URL}/api/send-base64
-Content-Type: application/json
-x-api-key: config.MESSENGER_API_KEY
+```python
+import httpx
 
-{
-  "roomId": <room_id>,
-  "data": "data:image/png;base64,<encoded-bytes>",  ← full data URL prefix required
-  "fileName": "optional-name.png",
-  "content": "optional caption"
-}
+async def send_base64(base_url, api_key, room_id, data_url, file_name=None, caption=None):
+    body = {"roomId": room_id, "data": data_url}  # data_url MUST include full prefix: data:image/png;base64,...
+    if file_name:
+        body["fileName"] = file_name
+    if caption:
+        body["content"] = caption
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{base_url}/api/send-base64",
+            headers={"x-api-key": api_key},
+            json=body,  # httpx sets Content-Type: application/json automatically
+        )
+    resp.raise_for_status()
+    result = resp.json()
+    return result.get("message", {}).get("id") or result.get("id")
 ```
 
 **Do not:**

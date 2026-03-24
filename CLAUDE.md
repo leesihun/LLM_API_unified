@@ -44,13 +44,13 @@ All settings live in `config.py`. Key settings to know:
 |---------|---------|-------|
 | `LLAMACPP_HOST` | `http://localhost:5905` | llama.cpp server URL |
 | `LLAMACPP_MODEL` | `"default"` | Model name sent in requests |
-| `AGENT_MAX_ITERATIONS` | `50` | Max tool-calling loop iterations |
+| `AGENT_MAX_ITERATIONS` | `200` | Max tool-calling loop iterations |
 | `AGENT_SYSTEM_PROMPT` | `"system.txt"` | Prompt file in `prompts/` |
 | `PYTHON_EXECUTOR_MODE` | `"opencode"` | `"native"` or `"opencode"` |
 | `OPENCODE_MODEL` | `"llama.cpp/MiniMax"` | `"provider/model"` format |
 | `TAVILY_API_KEY` | *(set this)* | Required for web search |
 | `LLAMACPP_CACHE_PROMPT` | `True` | KV cache reuse for shared prompt prefixes |
-| `LLAMACPP_CONNECTION_POOL_SIZE` | `10` | Persistent HTTP connection pool to llama.cpp |
+| `LLAMACPP_CONNECTION_POOL_SIZE` | `20` | Persistent HTTP connection pool to llama.cpp |
 | `DEFAULT_MIN_P` | `0.05` | min_p sampler (llama.cpp's most effective sampler) |
 | `DEFAULT_REPEAT_PENALTY` | `1.1` | Repetition penalty sent to llama.cpp |
 | `MAX_CONVERSATION_HISTORY` | `50` | Enforced: old messages dropped + tool results compressed |

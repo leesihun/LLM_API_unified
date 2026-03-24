@@ -1,5 +1,6 @@
 """Async client for the Huni Messenger bot API with persistent connection pool."""
 import logging
+import os
 from typing import Optional
 
 import httpx
@@ -311,6 +312,49 @@ async def download_file(file_url: str) -> tuple[bytes, str] | None:
     except Exception as e:
         logger.warning(f"[Messenger] File download failed for {file_url}: {e}")
         return None
+
+
+async def send_file(room_id: int, file_path: str, caption: str | None = None) -> int:
+    """Upload a local file to a room. Returns message_id on success."""
+    client = _get_client()
+    with open(file_path, "rb") as f:
+        data = {"roomId": str(room_id)}
+        if caption:
+            data["content"] = caption
+        resp = await client.post(
+            f"{config.MESSENGER_URL}/api/send-file",
+            headers={"x-api-key": _api_key},  # no Content-Type — httpx sets multipart boundary
+            data=data,
+            files={"file": (os.path.basename(file_path), f)},
+        )
+    resp.raise_for_status()
+    result = resp.json()
+    msg_id = result.get("message", {}).get("id") or result.get("id")
+    if not msg_id:
+        raise ValueError("message_id missing in upload response")
+    return msg_id
+
+
+async def send_base64(room_id: int, data_url: str, file_name: str | None = None, caption: str | None = None) -> int:
+    """Send a base64 image to a room. data_url must include the full data URL prefix
+    (e.g. 'data:image/png;base64,...'). Returns message_id on success."""
+    client = _get_client()
+    body: dict = {"roomId": room_id, "data": data_url}
+    if file_name:
+        body["fileName"] = file_name
+    if caption:
+        body["content"] = caption
+    resp = await client.post(
+        f"{config.MESSENGER_URL}/api/send-base64",
+        headers={"x-api-key": _api_key},
+        json=body,  # httpx sets Content-Type: application/json automatically
+    )
+    resp.raise_for_status()
+    result = resp.json()
+    msg_id = result.get("message", {}).get("id") or result.get("id")
+    if not msg_id:
+        raise ValueError("message_id missing in upload response")
+    return msg_id
 
 
 async def get_room_messages(room_id: int, limit: int = 20) -> list:
