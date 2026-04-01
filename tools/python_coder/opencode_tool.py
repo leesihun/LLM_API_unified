@@ -16,19 +16,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 import config
+from backend.utils.prompts_log_append import log_to_prompts_file
 from tools.python_coder.base import BasePythonExecutor
-
-import logging as _logging
-
-from backend.utils.flush_logging import attach_flush_file_handler
-
-_tool_logger = _logging.getLogger("python_coder.opencode")
-attach_flush_file_handler(_tool_logger, config.PROMPTS_LOG_PATH)
-
-
-def log_to_prompts_file(message: str) -> None:
-    """Write message to prompts.log via buffered handler."""
-    _tool_logger.info(message)
 
 
 class OpenCodeExecutor(BasePythonExecutor):

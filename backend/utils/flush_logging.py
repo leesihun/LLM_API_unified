@@ -33,4 +33,4 @@ def print_agent_log_banner_once(agent_log_path) -> None:
             resolved = agent_log_path.resolve()
         except Exception:
             resolved = agent_log_path
-        print(f"[AGENT] Agent activity log: {resolved}", flush=True)
+        print(f"[AGENT] Logging to: {resolved}", flush=True)

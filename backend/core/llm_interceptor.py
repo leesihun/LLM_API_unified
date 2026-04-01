@@ -11,6 +11,7 @@ from pathlib import Path
 import uuid
 
 import config
+from backend.utils.prompts_log_append import append_capped_prompts_log
 
 
 class LLMInterceptor:
@@ -106,9 +107,10 @@ class LLMInterceptor:
             if "id" not in log_data:
                 log_data["id"] = str(uuid.uuid4())[:8]
             formatted = self._format_human_readable(log_data)
-            with open(self.log_path, 'a', encoding='utf-8') as f:
-                f.write(formatted)
-                f.flush()
+            append_capped_prompts_log(
+                formatted if formatted.endswith("\n") else formatted + "\n",
+                path=self.log_path,
+            )
         except Exception as e:
             print(f"Warning: Failed to log LLM interaction: {e}")
 

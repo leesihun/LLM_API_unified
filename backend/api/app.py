@@ -147,9 +147,9 @@ def _rotate_log_if_stale(log_path: Path, label: str):
 
 def _cleanup_old_logs():
     _rotate_log_if_stale(config.PROMPTS_LOG_PATH, "prompts.log")
-    agent_path = getattr(config, "AGENT_LOG_PATH", None)
-    if agent_path:
-        _rotate_log_if_stale(Path(agent_path), "agent.log")
+    agent_path = Path(getattr(config, "AGENT_LOG_PATH", config.PROMPTS_LOG_PATH))
+    if agent_path.resolve() != config.PROMPTS_LOG_PATH.resolve():
+        _rotate_log_if_stale(agent_path, str(agent_path.name))
 
 
 @app.on_event("startup")
@@ -164,10 +164,13 @@ async def startup_event():
     _cleanup_old_logs()
 
     try:
-        agent_p = Path(getattr(config, "AGENT_LOG_PATH", config.PROMPTS_LOG_PATH)).resolve()
-        prompts_p = config.PROMPTS_LOG_PATH.resolve()
-        print(f"[Startup] Agent log file: {agent_p}")
-        print(f"[Startup] LLM + combined log: {prompts_p}")
+        p = config.PROMPTS_LOG_PATH.resolve()
+        ap = Path(getattr(config, "AGENT_LOG_PATH", config.PROMPTS_LOG_PATH)).resolve()
+        if ap == p:
+            print(f"[Startup] Full log (LLM + agent + tools): {p}")
+        else:
+            print(f"[Startup] Agent-only log: {ap}")
+            print(f"[Startup] LLM + tools log: {p}")
     except Exception:
         pass
 

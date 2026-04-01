@@ -11,15 +11,7 @@ from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 
 import config
-
-
-def log_to_prompts_file(message: str):
-    """Write message to prompts.log"""
-    try:
-        with open(config.PROMPTS_LOG_PATH, 'a', encoding='utf-8') as f:
-            f.write(message + '\n')
-    except Exception as e:
-        print(f"[WARNING] Failed to write to prompts.log: {e}")
+from backend.utils.prompts_log_append import log_to_prompts_file
 
 
 class PythonCoderTool:

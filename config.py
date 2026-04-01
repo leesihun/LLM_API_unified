@@ -43,6 +43,14 @@ LLAMACPP_CONNECTION_POOL_SIZE = 20
 LLAMACPP_SLOTS = 4
 
 # ============================================================================
+# Logging Settings (before Agent — agent log target references PROMPTS_LOG_PATH)
+# ============================================================================
+LOG_DIR = Path("data/logs")
+PROMPTS_LOG_PATH = LOG_DIR / "prompts.log"
+# Oldest lines are dropped when the file would exceed this (see prompts_log_append).
+PROMPTS_LOG_MAX_LINES = 100_000
+
+# ============================================================================
 # Agent Settings
 # ============================================================================
 AGENT_MAX_ITERATIONS = 60
@@ -53,12 +61,10 @@ AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
 AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 80
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
-# False = write each block synchronously with flush (visible immediately in .log files).
+# False = write each block synchronously with flush (visible immediately).
 AGENT_LOG_ASYNC = False
-# Dedicated file for agent iterations, tool calls, and tool results (easy to tail).
-AGENT_LOG_PATH = Path("data/logs/agent.log")
-# Also append the same agent lines to prompts.log (LLM + tools in one file).
-AGENT_LOG_MIRROR_TO_PROMPTS = True
+# Same file as LLM interceptor + tools: one combined prompts.log (set to another Path to split).
+AGENT_LOG_PATH = PROMPTS_LOG_PATH
 
 # ============================================================================
 # Database Settings
@@ -86,12 +92,6 @@ MAX_FILE_SIZE_MB = 100
 # Prompts Settings
 # ============================================================================
 PROMPTS_DIR = Path("prompts")
-
-# ============================================================================
-# Logging Settings
-# ============================================================================
-LOG_DIR = Path("data/logs")
-PROMPTS_LOG_PATH = LOG_DIR / "prompts.log"
 
 # ============================================================================
 # Stop Signal Settings

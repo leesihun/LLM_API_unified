@@ -21,6 +21,7 @@ from backend.core.llm_backend import (
 )
 from backend.utils.stop_signal import check_stop
 from backend.utils.flush_logging import print_agent_log_banner_once
+from backend.utils.prompts_log_append import append_capped_prompts_log
 
 
 # ======================================================================
@@ -156,17 +157,12 @@ class AgentLoop:
         return self._log_verbosity() == "debug"
 
     def _write_log_sync(self, message: str):
-        agent_path = Path(getattr(config, "AGENT_LOG_PATH", config.PROMPTS_LOG_PATH))
-        print_agent_log_banner_once(agent_path)
-        agent_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(agent_path, "a", encoding="utf-8") as f:
-            f.write(message + "\n")
-            f.flush()
-        if getattr(config, "AGENT_LOG_MIRROR_TO_PROMPTS", True) and agent_path.resolve() != config.PROMPTS_LOG_PATH.resolve():
-            config.PROMPTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(config.PROMPTS_LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(message + "\n")
-                f.flush()
+        path = Path(getattr(config, "AGENT_LOG_PATH", config.PROMPTS_LOG_PATH))
+        print_agent_log_banner_once(path)
+        append_capped_prompts_log(
+            message if message.endswith("\n") else message + "\n",
+            path=path,
+        )
 
     def _log(self, message: str):
         """Append a line to prompts.log."""

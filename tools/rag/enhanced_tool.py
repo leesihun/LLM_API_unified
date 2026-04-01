@@ -18,17 +18,9 @@ from datetime import datetime
 import numpy as np
 
 import config
+from backend.utils.prompts_log_append import log_to_prompts_file
 from tools.rag.advanced_chunking import AdvancedChunker, get_optimal_chunk_size
 from tools.rag.hybrid_retrieval import HybridRetriever, RerankerCrossEncoder
-
-
-def log_to_prompts_file(message: str):
-    """Write message to prompts.log"""
-    try:
-        with open(config.PROMPTS_LOG_PATH, 'a', encoding='utf-8') as f:
-            f.write(message + '\n')
-    except Exception as e:
-        print(f"[WARNING] Failed to write to prompts.log: {e}")
 
 
 class EnhancedRAGTool:
