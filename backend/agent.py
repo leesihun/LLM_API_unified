@@ -9,6 +9,7 @@ Modern agentic workflow following:
 import asyncio
 import json
 import time
+from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional, AsyncIterator
 from uuid import uuid4
@@ -19,6 +20,7 @@ from backend.core.llm_backend import (
     ToolCallDeltaEvent, ToolCall, ToolStatusEvent, llm_backend,
 )
 from backend.utils.stop_signal import check_stop
+from backend.utils.flush_logging import print_agent_log_banner_once
 
 
 # ======================================================================
@@ -116,7 +118,7 @@ class AgentLoop:
     # Sampling parameters forwarded to llama.cpp
     # ------------------------------------------------------------------
 
-    def _sampling_kwargs(self) -> Dict[str, Any]:
+    def _sampling_kwargs(self, final_response: bool = False) -> Dict[str, Any]:
         """Return sampling + slot-pinning params to forward to the LLM backend."""
         kwargs: Dict[str, Any] = {}
         if hasattr(config, 'DEFAULT_TOP_P'):
@@ -125,7 +127,12 @@ class AgentLoop:
             kwargs["top_k"] = config.DEFAULT_TOP_K
         if hasattr(config, 'DEFAULT_MIN_P'):
             kwargs["min_p"] = config.DEFAULT_MIN_P
-        if hasattr(config, 'DEFAULT_MAX_TOKENS'):
+        if final_response:
+            if hasattr(config, 'DEFAULT_MAX_TOKENS'):
+                kwargs["max_tokens"] = config.DEFAULT_MAX_TOKENS
+        elif hasattr(config, 'AGENT_TOOL_LOOP_MAX_TOKENS'):
+            kwargs["max_tokens"] = config.AGENT_TOOL_LOOP_MAX_TOKENS
+        elif hasattr(config, 'DEFAULT_MAX_TOKENS'):
             kwargs["max_tokens"] = config.DEFAULT_MAX_TOKENS
         if hasattr(config, 'DEFAULT_REPEAT_PENALTY'):
             kwargs["repeat_penalty"] = config.DEFAULT_REPEAT_PENALTY
@@ -139,12 +146,41 @@ class AgentLoop:
     # Prompts.log logging (agent-level events)
     # ------------------------------------------------------------------
 
+    def _log_verbosity(self) -> str:
+        return str(getattr(config, "AGENT_LOG_VERBOSITY", "summary")).lower()
+
+    def _summary_logging_enabled(self) -> bool:
+        return self._log_verbosity() in {"summary", "debug"}
+
+    def _debug_logging_enabled(self) -> bool:
+        return self._log_verbosity() == "debug"
+
+    def _write_log_sync(self, message: str):
+        agent_path = Path(getattr(config, "AGENT_LOG_PATH", config.PROMPTS_LOG_PATH))
+        print_agent_log_banner_once(agent_path)
+        agent_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(agent_path, "a", encoding="utf-8") as f:
+            f.write(message + "\n")
+            f.flush()
+        if getattr(config, "AGENT_LOG_MIRROR_TO_PROMPTS", True) and agent_path.resolve() != config.PROMPTS_LOG_PATH.resolve():
+            config.PROMPTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with open(config.PROMPTS_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(message + "\n")
+                f.flush()
+
     def _log(self, message: str):
         """Append a line to prompts.log."""
+        if not self._summary_logging_enabled():
+            return
         try:
-            config.PROMPTS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(config.PROMPTS_LOG_PATH, 'a', encoding='utf-8') as f:
-                f.write(message + '\n')
+            if getattr(config, "AGENT_LOG_ASYNC", True):
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.run_in_executor(None, self._write_log_sync, message)
+                    return
+                except RuntimeError:
+                    pass
+            self._write_log_sync(message)
         except Exception as e:
             print(f"[AGENT-LOG] Failed to write to prompts.log: {e}")
 
@@ -167,6 +203,8 @@ class AgentLoop:
         ])
 
     def _log_tool_calls_requested(self, tool_calls: List[ToolCall], iteration: int):
+        if not self._summary_logging_enabled():
+            return
         lines = [
             "",
             "-" * 80,
@@ -178,10 +216,11 @@ class AgentLoop:
         ]
         for i, tc in enumerate(tool_calls, 1):
             lines.append(f"  [{i}] {tc.function.name} (id: {tc.id})")
+            arg_cap = 500 if self._debug_logging_enabled() else 280
             for k, v in tc.function.arguments.items():
                 sv = str(v)
-                if len(sv) > 500:
-                    sv = sv[:500] + f"... [{len(sv)} chars total]"
+                if len(sv) > arg_cap:
+                    sv = sv[:arg_cap] + f"... [{len(sv)} chars total]"
                 lines.append(f"      {k}: {sv}")
             lines.append("")
         lines.append("-" * 80)
@@ -190,6 +229,8 @@ class AgentLoop:
 
     def _log_tool_result(self, tool_name: str, tool_call_id: str,
                          result: Dict[str, Any], duration: float):
+        if not self._summary_logging_enabled():
+            return
         success = result.get("success", True)
         lines = [
             "",
@@ -201,12 +242,28 @@ class AgentLoop:
         ]
         if not success and result.get("error"):
             lines.append(f"  Error:       {str(result['error'])[:500]}")
-        result_str = json.dumps(result, ensure_ascii=False, default=str)
-        if len(result_str) > 1500:
-            lines.append(f"  Result:      {result_str[:1500]}")
-            lines.append(f"               ... [{len(result_str)} chars total]")
+        if self._debug_logging_enabled():
+            result_str = json.dumps(result, ensure_ascii=False, default=str)
+            if len(result_str) > 1500:
+                lines.append(f"  Result:      {result_str[:1500]}")
+                lines.append(f"               ... [{len(result_str)} chars total]")
+            else:
+                lines.append(f"  Result:      {result_str}")
         else:
-            lines.append(f"  Result:      {result_str}")
+            lines.append(f"  Executed:    {result.get('executed', 'N/A')}")
+            lines.append(f"  Return Code: {result.get('returncode', 'N/A')}")
+            preview_cap = 450
+            for key in ("stdout", "stderr", "output", "message"):
+                chunk = result.get(key)
+                if chunk is None:
+                    continue
+                s = str(chunk).strip()
+                if not s:
+                    continue
+                label = key.upper()
+                if len(s) > preview_cap:
+                    s = s[:preview_cap] + f"... [{len(str(chunk))} chars total]"
+                lines.append(f"  {label}:       {s}")
         lines.append("." * 80)
         lines.append("")
         self._log_block(lines)
@@ -269,10 +326,19 @@ class AgentLoop:
             from tools.memo.tool import MemoTool
             memo_ctx = MemoTool.load_for_prompt(self.username)
             if memo_ctx:
+                memo_cap = getattr(config, "AGENT_MEMO_MAX_CHARS", 2000)
+                if len(memo_ctx) > memo_cap:
+                    memo_ctx = memo_ctx[:memo_cap] + "\n...[memo context truncated]"
                 parts.append(memo_ctx)
         if attached_files:
             parts.append(self._format_attached_files(attached_files))
-        return "\n".join(parts) if parts else None
+        if not parts:
+            return None
+        dynamic_ctx = "\n".join(parts)
+        dynamic_cap = getattr(config, "AGENT_DYNAMIC_CONTEXT_MAX_CHARS", 6000)
+        if len(dynamic_ctx) > dynamic_cap:
+            dynamic_ctx = dynamic_ctx[:dynamic_cap] + "\n...[dynamic context truncated]"
+        return dynamic_ctx
 
     def _refresh_available_rag_collections(self):
         """Load available RAG collections for the current user (60s module-level TTL cache)."""
@@ -350,7 +416,8 @@ class AgentLoop:
                 if f.get('definitions'):
                     lines.append(f"   Definitions: {', '.join(f['definitions'][:5])}")
             if 'preview' in f:
-                lines.append(f"   Preview: {str(f['preview'])[:200]}...")
+                preview_cap = getattr(config, "AGENT_FILE_PREVIEW_MAX_CHARS", 120)
+                lines.append(f"   Preview: {str(f['preview'])[:preview_cap]}...")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -384,6 +451,7 @@ class AgentLoop:
             print(f"[TOOL] {name} completed in {duration:.2f}s — success={result.get('success', '?')}")
             self.tool_calls_log.append({
                 "name": name, "input": arguments,
+                "tool_call_id": tool_call_id,
                 "success": result.get("success", True), "duration": duration,
             })
             self._log_tool_result(name, tool_call_id, result, duration)
@@ -394,6 +462,7 @@ class AgentLoop:
             err_result = {"success": False, "error": str(e)}
             self.tool_calls_log.append({
                 "name": name, "input": arguments,
+                "tool_call_id": tool_call_id,
                 "success": False, "error": str(e), "duration": duration,
             })
             self._log_tool_result(name, tool_call_id, err_result, duration)
@@ -414,7 +483,8 @@ class AgentLoop:
             if "websearch" not in cache:
                 from tools.web_search import WebSearchTool
                 cache["websearch"] = WebSearchTool()
-            return cache["websearch"].search(
+            return await asyncio.to_thread(
+                cache["websearch"].search,
                 query=arguments["query"],
                 max_results=arguments.get("max_results"),
             )
@@ -429,8 +499,9 @@ class AgentLoop:
             )
 
         elif name == "rag":
-            from tools.rag import RAGTool
-            tool = RAGTool(username=self.username)
+            if "rag" not in cache:
+                from tools.rag import RAGTool
+                cache["rag"] = RAGTool(username=self.username)
             available_collections = self._get_available_rag_collections()
             requested_collection = arguments.get("collection_name")
 
@@ -451,20 +522,19 @@ class AgentLoop:
                     "available_collections": available_collections,
                 }
 
-            try:
-                return tool.retrieve(
-                    collection_name=requested_collection,
-                    query=arguments["query"],
-                    max_results=arguments.get("max_results"),
-                )
-            finally:
-                tool.cleanup()
+            return await asyncio.to_thread(
+                cache["rag"].retrieve,
+                collection_name=requested_collection,
+                query=arguments["query"],
+                max_results=arguments.get("max_results"),
+            )
 
         elif name == "file_reader":
             if "file_reader" not in cache:
                 from tools.file_ops import FileReaderTool
                 cache["file_reader"] = FileReaderTool(username=self.username, session_id=self.session_id)
-            return cache["file_reader"].read(
+            return await asyncio.to_thread(
+                cache["file_reader"].read,
                 path=arguments["path"],
                 offset=arguments.get("offset"),
                 limit=arguments.get("limit"),
@@ -474,7 +544,8 @@ class AgentLoop:
             if "file_writer" not in cache:
                 from tools.file_ops import FileWriterTool
                 cache["file_writer"] = FileWriterTool(session_id=self.session_id)
-            return cache["file_writer"].write(
+            return await asyncio.to_thread(
+                cache["file_writer"].write,
                 path=arguments["path"],
                 content=arguments["content"],
                 mode=arguments.get("mode", "write"),
@@ -484,7 +555,8 @@ class AgentLoop:
             if "file_navigator" not in cache:
                 from tools.file_ops import FileNavigatorTool
                 cache["file_navigator"] = FileNavigatorTool(username=self.username, session_id=self.session_id)
-            return cache["file_navigator"].navigate(
+            return await asyncio.to_thread(
+                cache["file_navigator"].navigate,
                 operation=arguments["operation"],
                 path=arguments.get("path"),
                 pattern=arguments.get("pattern"),
@@ -504,7 +576,8 @@ class AgentLoop:
             if "memo" not in cache:
                 from tools.memo import MemoTool
                 cache["memo"] = MemoTool(username=self.username)
-            return cache["memo"].execute(
+            return await asyncio.to_thread(
+                cache["memo"].execute,
                 operation=arguments["operation"],
                 key=arguments.get("key"),
                 value=arguments.get("value"),
@@ -514,7 +587,8 @@ class AgentLoop:
             if "process_monitor" not in cache:
                 from tools.process_monitor import ProcessMonitorTool
                 cache["process_monitor"] = ProcessMonitorTool(session_id=self.session_id)
-            return cache["process_monitor"].execute(
+            return await asyncio.to_thread(
+                cache["process_monitor"].execute,
                 operation=arguments["operation"],
                 command=arguments.get("command"),
                 handle=arguments.get("handle"),
@@ -610,7 +684,8 @@ class AgentLoop:
                 continue
             tool_name = msg.get("name", "tool")
             # Extract a brief summary from the content
-            summary = content[:100].replace('\n', ' ')
+            summary_cap = getattr(config, "AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS", 80)
+            summary = content[:summary_cap].replace('\n', ' ')
             msg["content"] = f"[{tool_name} result — {summary}...]"
             compressed_count += 1
         if compressed_count:
@@ -713,7 +788,7 @@ class AgentLoop:
                 tools=tool_schemas,
                 session_id=self.session_id,
                 agent_type="agent",
-                **self._sampling_kwargs(),
+                **self._sampling_kwargs(final_response=False),
             )
 
             if not response.tool_calls:
@@ -730,7 +805,11 @@ class AgentLoop:
             log_start = len(self.tool_calls_log)
             results = await self._execute_tools_parallel(response.tool_calls)
             new_entries = self.tool_calls_log[log_start:]
-            durations = [e.get("duration", 0) for e in new_entries]
+            duration_by_call_id = {
+                e.get("tool_call_id"): e.get("duration", 0)
+                for e in new_entries
+            }
+            durations = [duration_by_call_id.get(tc.id, 0) for tc in response.tool_calls]
             self._log_execution_summary(response.tool_calls, results, durations, iteration)
 
             for tc, result in zip(response.tool_calls, results):
@@ -746,7 +825,7 @@ class AgentLoop:
             msgs, self.model, self.temperature,
             session_id=self.session_id,
             agent_type="agent:final",
-            **self._sampling_kwargs(),
+            **self._sampling_kwargs(final_response=True),
         )
         return final_response.content or ""
 
@@ -783,7 +862,7 @@ class AgentLoop:
                 tools=tool_schemas,
                 session_id=self.session_id,
                 agent_type="agent:stream",
-                **self._sampling_kwargs(),
+                **self._sampling_kwargs(final_response=False),
             ):
                 if isinstance(event, TextEvent):
                     yield event
@@ -813,12 +892,18 @@ class AgentLoop:
             start_time = time.time()
             results = await self._execute_tools_parallel(collected_tool_event.tool_calls)
             new_entries = self.tool_calls_log[log_start:]
-            durations = [e.get("duration", 0) for e in new_entries]
+            duration_by_call_id = {
+                e.get("tool_call_id"): e.get("duration", 0)
+                for e in new_entries
+            }
+            durations = [duration_by_call_id.get(tc.id, 0) for tc in collected_tool_event.tool_calls]
             self._log_execution_summary(collected_tool_event.tool_calls, results, durations, iteration)
 
             # Emit "completed"/"failed" events and append results
             for tc, result in zip(collected_tool_event.tool_calls, results):
-                duration = time.time() - start_time
+                duration = duration_by_call_id.get(tc.id)
+                if duration is None:
+                    duration = time.time() - start_time
                 status = "completed" if result.get("success", True) else "failed"
                 yield ToolStatusEvent(
                     tool_name=tc.function.name,
@@ -838,7 +923,7 @@ class AgentLoop:
             msgs, self.model, self.temperature,
             session_id=self.session_id,
             agent_type="agent:stream:final",
-            **self._sampling_kwargs(),
+            **self._sampling_kwargs(final_response=True),
         ):
             if isinstance(event, TextEvent):
                 yield event

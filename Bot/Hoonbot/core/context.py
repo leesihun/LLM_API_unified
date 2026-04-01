@@ -55,16 +55,33 @@ def build_llm_context() -> str:
     """
     Return the full system context string to prepend to new LLM sessions:
       - Base system prompt (PROMPT.md)
-      - Absolute path to the memory file
-      - Absolute path to the skills directory
+      - Session variables (credentials, paths, identifiers)
       - Current memory content
     """
     context = load_system_prompt()
-    context += f"\n\n---\n\n## Memory File Location for This Session\n\nAbsolute path: `{os.path.abspath(MEMORY_FILE)}`"
-    context += f"\n\n## Skills Directory\n\nAbsolute path: `{os.path.abspath(SKILLS_DIR)}`"
+    context += _build_session_variables()
     memory = read_memory()
     if memory:
-        context += f"\n\n## Current Memory Content\n\n{memory}"
+        context += f"\n\n## Current Memory\n\n{memory}"
     else:
         context += "\n\n## Current Memory\n\n(No memory saved yet)"
     return context
+
+
+def _build_session_variables() -> str:
+    """
+    All runtime values in one block — PROMPT.md references these by name.
+    Regenerated each call so live config changes (e.g. re-registration) propagate.
+    """
+    return (
+        f"\n\n---\n\n## Session Variables\n\n"
+        f"Use these directly — do not read them from disk.\n\n"
+        f"- `messenger_url`: `{config.MESSENGER_URL}`\n"
+        f"- `messenger_api_key`: `{config.MESSENGER_API_KEY}`\n"
+        f"- `bot_user_id`: `{config.BOT_USER_ID}`\n"
+        f"- `bot_name`: `{config.MESSENGER_BOT_NAME}`\n"
+        f"- `home_room_id`: `{config.MESSENGER_HOME_ROOM_ID}`\n"
+        f"- `data_dir`: `{os.path.abspath(config.DATA_DIR)}`\n"
+        f"- `memory_file`: `{os.path.abspath(MEMORY_FILE)}`\n"
+        f"- `skills_dir`: `{os.path.abspath(SKILLS_DIR)}`\n"
+    )

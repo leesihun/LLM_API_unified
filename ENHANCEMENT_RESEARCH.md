@@ -543,3 +543,38 @@ Fully async `LlamaCppBackend` using `httpx.AsyncClient`. Prompt caching via `_CA
 | 8 | MCP integration | Medium | High | **Phase 4** |
 | 9 | llama.cpp optimizations | Low-Medium | Medium | **Ongoing** |
 | 10 | Long-running agent harnesses | Medium | Medium | **Phase 3** |
+
+---
+
+## LATENCY BENCHMARK HARNESS
+
+A reproducible benchmark script is now available at:
+
+- `use_cases/latency_benchmark.py`
+
+### What it measures
+
+- End-to-end wall time per scenario
+- Estimated agent iteration count (from `prompts.log`)
+- Estimated tool call count (from `prompts.log`)
+- Mean LLM turn duration for agent turns (from `STATS` blocks)
+
+### Scenarios
+
+- `simple_file_read`
+- `python_coder_analysis`
+- `python_coder_visualization` (optional heavy scenario)
+
+### How to run
+
+```bash
+python use_cases/latency_benchmark.py
+python use_cases/latency_benchmark.py --include-heavy
+```
+
+### Output
+
+- Results are written to:
+  - `use_cases/latency_benchmark_results.json`
+
+Use this harness before/after speed-related changes to quantify improvements and catch regressions.

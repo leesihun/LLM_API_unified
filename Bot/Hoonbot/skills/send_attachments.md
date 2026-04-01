@@ -1,159 +1,59 @@
-# Send Attachments to Room
+# Skill: Send Attachments
 
-Send one or more local files or images to a Messenger room.
+Send local files or base64 images to a Messenger room.
 
-**Trigger phrases:** attach / send / upload a file or image, share a picture or document in a room
+## Trigger
 
----
+attach, upload, send file, send image, share document
+
+## Required Inputs
+
+- target room — use current room from message header unless an explicit room name or ID is given
+- one or more file paths, or one base64 image data URL
+
+## Message Header Format
+
+Every message begins with:
+```
+[Room: <name> (id:<id>, <DM|group>) | From: <sender>]
+```
+Extract `id` from `id:<number>` in this line to get the current room ID.
 
 ## API
 
-- **Base URL:** `http://localhost:10006`
-- **Auth:** `x-api-key: <api_key>` — read from `<data_dir>/.apikey` using `file_reader`
-- `POST {base_url}/api/send-file` — local file (multipart)
-- `POST {base_url}/api/send-base64` — base64 image data (images only)
-- `GET {base_url}/api/rooms?userId=<bot_id>` — room name lookup
+- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
+- `POST {messenger_url}/api/send-file` for local files (multipart)
+- `POST {messenger_url}/api/send-base64` for base64 image payloads
 
-The data directory path can be derived from the memory file path injected in the system prompt (same directory as `memory.md`).
+## Hard Rules
 
----
+- Validate all paths before the first upload; if any path is invalid, stop with no uploads.
+- No glob expansion, no fuzzy path matching, no room fallback.
+- On `401` or `403`, stop immediately.
+- Upload files sequentially and stop at the first failed upload.
 
-## Workflow
+## Procedure
 
-Execute in order. Stop and report on first failure.
+1. Get `messenger_url`, `messenger_api_key`, and `bot_user_id` from session variables.
+2. Resolve the target room:
+   - **Explicit room ID**: use it directly.
+   - **Explicit room name**: call `GET {messenger_url}/api/rooms?userId={bot_user_id}` and match the name case-insensitively; stop if no match or multiple matches.
+   - **No explicit target**: extract `id` from the message header.
+3. Validate attachment input:
+   - File mode: every path exists and is a file.
+   - Base64 mode: input starts with `data:image/` and contains `;base64,`.
+4. Send attachments:
+   - File mode → `POST {messenger_url}/api/send-file` with `roomId`, optional `content`, and `file`.
+   - Base64 mode → `POST {messenger_url}/api/send-base64` with `roomId`, `data`, optional `fileName`, optional `content`.
+5. Parse the message ID as `response.message.id`. If missing, stop and report an invalid API response.
 
-### 1. Get credentials
+## Response Format
 
-Use `file_reader` to read the API key:
-```
-file_reader: <data_dir>/.apikey
-```
-Store it as `api_key`. The base URL is `http://localhost:10006`.
+Success:
+`Uploaded <n> attachment(s) to room <room_id>: <file> -> <message_id>, ...`
 
-### 2. Detect target room
+Failure before upload:
+`Upload aborted. reason=<reason>. fix=<required user correction>.`
 
-Every message arrives prefixed with `[Room: <id> | From: <sender>]`. Use that room ID as the default.
-
-Override order:
-1. Explicit room ID in request → use that
-2. Explicit room name → resolve to ID:
-   ```
-   GET {base_url}/api/bots/me
-   x-api-key: <api_key>
-   → extract bot id from response
-
-   GET {base_url}/api/rooms?userId=<bot_id>
-   x-api-key: <api_key>
-   → find room whose name matches exactly (case-insensitive)
-   ```
-   - No match → `"Room '<name>' not found"` — stop
-   - Multiple matches → `"Ambiguous room name — matches: <list>"` — stop
-3. Neither given → use the room ID from the message prefix
-
-### 3. Validate files
-
-For each file path:
-1. Resolve to absolute path
-2. `os.path.exists(path)` — must exist
-3. `os.path.isfile(path)` — must be a file, not a directory
-4. `mimetypes.guess_type(path)` — detect MIME (best effort)
-
-No glob expansion or fuzzy matching. If any file fails, stop before uploading anything.
-
-### 4. Upload files
-
-**Local file from disk:**
-
-```python
-import os, httpx
-
-async def send_file(base_url, api_key, room_id, file_path, caption=None):
-    form = {"roomId": str(room_id)}
-    if caption:
-        form["content"] = caption
-    async with httpx.AsyncClient() as client:
-        with open(file_path, "rb") as f:
-            resp = await client.post(
-                f"{base_url}/api/send-file",
-                headers={"x-api-key": api_key},  # no Content-Type — httpx sets multipart boundary
-                data=form,
-                files={"file": (os.path.basename(file_path), f)},
-            )
-        resp.raise_for_status()
-    result = resp.json()
-    return result.get("message", {}).get("id") or result.get("id")
-```
-
-Server classifies by extension: `.jpg .jpeg .png .gif .webp .bmp .svg` → `image`, everything else → `file`.
-
-**Base64 image** (only when input is already base64, not a file path):
-
-```python
-import httpx
-
-async def send_base64(base_url, api_key, room_id, data_url, file_name=None, caption=None):
-    body = {"roomId": room_id, "data": data_url}  # data_url MUST include full prefix: data:image/png;base64,...
-    if file_name:
-        body["fileName"] = file_name
-    if caption:
-        body["content"] = caption
-    async with httpx.AsyncClient() as client:
-        resp = await client.post(
-            f"{base_url}/api/send-base64",
-            headers={"x-api-key": api_key},
-            json=body,  # httpx sets Content-Type: application/json automatically
-        )
-    resp.raise_for_status()
-    result = resp.json()
-    return result.get("message", {}).get("id") or result.get("id")
-```
-
-**Do not:**
-- Use the two-step flow `/api/upload-file` → `/api/send-message`
-- Retry on `401`/`403` — report immediately
-- Fall back to a different room on failure
-
-### 5. Parse message ID from response (HTTP 201)
-
-```
-resp.json()["message"]["id"]  ← primary
-resp.json()["id"]             ← fallback
-neither → raise ValueError("message_id missing in upload response")
-```
-
----
-
-## Multi-file uploads
-
-Uploads are **not atomic** — no rollback. Each file is uploaded independently in order. If file N fails, files 1..N-1 remain in the room. Always report what succeeded and what failed.
-
----
-
-## Response format
-
-**All succeeded:**
-```
-Uploaded 2 file(s) to room <room_id>.
-- photo.png   → message_id=<id>  [image]
-- report.pdf  → message_id=<id>  [file]
-```
-
-**Partial failure:**
-```
-Partial upload to room <room_id> — stopped at first failure.
-Uploaded:
-  - photo.png → message_id=<id>
-Failed:
-  - report.pdf
-    endpoint: POST /api/send-file
-    status: <http_status>
-    error: <server error message>
-Note: files already uploaded are not rolled back.
-```
-
-**Aborted before any upload:**
-```
-Upload aborted — no files were sent.
-reason: <what failed>
-fix: <what the user should provide or correct>
-```
+Failure during upload:
+`Partial upload to room <room_id>. uploaded=<list>. failed=<file>. status=<code>. error=<message>.`

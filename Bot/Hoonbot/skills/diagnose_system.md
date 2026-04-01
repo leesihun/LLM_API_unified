@@ -1,74 +1,39 @@
-# Diagnose System
+# Skill: Diagnose System
 
-Run a full system health check on this Linux machine. Execute the following checks using `shell_exec` and report results in a clean summary.
+Run a strict host health check and return one concise report.
 
-## 1. CPU
+## Trigger
 
-```bash
-lscpu | grep -E 'Model name|^CPU\(s\)|Thread|Core|MHz' && echo "---" && top -bn1 | grep '%Cpu' | head -1
-```
+diagnose system, health check, server status, resource usage
 
-## 2. RAM
+## Required Inputs
 
-```bash
-free -h --si | grep -E 'Mem|Swap'
-```
+- none (no Messenger API calls needed)
 
-## 3. GPU Utilization & VRAM
+## Tool
 
-```bash
-nvidia-smi --query-gpu=name,utilization.gpu,memory.total,memory.used,memory.free,temperature.gpu,power.draw --format=csv,noheader,nounits
-```
+- `shell_exec`
 
-If `nvidia-smi` is not found, fall back to:
+## Commands (Run In Order)
 
-```bash
-lspci | grep -i vga
-```
+1. CPU: `lscpu`
+2. Load: `uptime`
+3. RAM/Swap: `free -h --si`
+4. Disk: `df -h`
+5. Top memory processes: `ps aux --sort=-%mem | head -11`
+6. GPU (strict): `nvidia-smi --query-gpu=name,utilization.gpu,memory.total,memory.used,memory.free,temperature.gpu,power.draw --format=csv,noheader,nounits`
 
-## 4. Disk Status (All Mounts)
+## Hard Rules
 
-```bash
-df -h --type=ext4 --type=xfs --type=btrfs --type=zfs --type=ntfs --type=vfat 2>/dev/null || df -h --exclude-type=tmpfs --exclude-type=devtmpfs --exclude-type=squashfs --exclude-type=overlay
-```
+- If any command fails, report failure and stop.
+- No fallback commands.
+- Include warning flags:
+  - CPU load > 95%
+  - RAM > 70%
+  - Swap > 50%
+  - Any disk > 80%
+  - GPU temp > 80C or VRAM > 95%
 
-## 5. System Uptime & Load
+## Response Format
 
-```bash
-uptime
-```
-
-## 6. Top Processes by Memory
-
-```bash
-ps aux --sort=-%mem | head -11
-```
-
-## Output Format
-
-Present results as a single organized summary:
-
-```
-=== System Diagnostics ===
-
-CPU: <name>, <cores>C/<threads>T, <load>% load
-RAM: <used>/<total> (<pct>%)
-Swap: <used>/<total>
-GPU: <name>, <util>% util, VRAM <used>/<total> MB, <temp>°C
-Disks:
-  /dev/sda1 on /       — <used>/<total> (<pct>%)
-  /dev/sdb1 on /data   — <used>/<total> (<pct>%)
-  ...
-Uptime: <days>d <hours>h, load avg: <1m> <5m> <15m>
-
-Top Memory Consumers:
-  1. <process> — <ram> MB (<pct>%)
-  2. ...
-```
-
-Flag any warnings:
-- CPU load > 95%
-- RAM usage > 70%
-- GPU temp > 80°C or VRAM usage > 95%
-- Any disk > 80% full
-- Swap usage > 50%
+`System Diagnostics: CPU=<...>; RAM=<...>; Swap=<...>; GPU=<...>; Disks=<...>; Uptime=<...>; TopMem=<...>; Warnings=<list|none>.`

@@ -30,6 +30,8 @@ Choose the lightest tool that gets the job done:
 
 - When presenting tool results, interpret and summarize them — do not repeat raw JSON.
 - When multiple tools return results, synthesize them into a unified answer.
-- If you need to explore files, use `file_navigator` first to understand the structure, then `file_reader` to read specific files.
-- When using python_coder, Write the code with python_coder, execute it with shell_exec. Always remember to execute it after python_coder!
-- For multi-step tasks, plan your tool calls to minimize iterations.
+- Each tool-calling iteration is a full model round-trip. Batch related tool calls in one turn whenever possible.
+- If the user already gives a file path, use `file_reader` directly. Use `file_navigator` only when paths are unknown.
+- If a path lookup fails, normalize the path once and retry once. Do not loop through equivalent path variants repeatedly.
+- `python_coder` is self-contained: it generates code and executes it in one call. Do not run an extra `shell_exec` for the generated script unless `python_coder` reports generation/execution failure.
+- For multi-step tasks, minimize iterations by choosing the most direct valid tool path.

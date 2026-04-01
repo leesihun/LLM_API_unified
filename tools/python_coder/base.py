@@ -39,9 +39,12 @@ class BasePythonExecutor(ABC):
             timeout: Execution timeout in seconds (optional)
 
         Returns:
-            Execution result dictionary with standardized format:
+            Execution result dictionary with strict standardized format:
             {
                 "success": bool,
+                "execution_mode": "native" | "opencode",
+                "script_path": Optional[str],
+                "executed": bool,
                 "stdout": str,
                 "stderr": str,
                 "returncode": int,

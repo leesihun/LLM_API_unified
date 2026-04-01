@@ -6,6 +6,7 @@ import asyncio
 import queue
 import re
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime
@@ -17,16 +18,12 @@ import httpx
 import config
 from tools.python_coder.base import BasePythonExecutor
 
-# ---------- Buffered logger (opened once, not per-line) ----------
 import logging as _logging
 
+from backend.utils.flush_logging import attach_flush_file_handler
+
 _tool_logger = _logging.getLogger("python_coder.opencode")
-if not _tool_logger.handlers:
-    _handler = _logging.FileHandler(config.PROMPTS_LOG_PATH, encoding='utf-8')
-    _handler.setFormatter(_logging.Formatter('%(message)s'))
-    _tool_logger.addHandler(_handler)
-    _tool_logger.setLevel(_logging.INFO)
-    _tool_logger.propagate = False
+attach_flush_file_handler(_tool_logger, config.PROMPTS_LOG_PATH)
 
 
 def log_to_prompts_file(message: str) -> None:
@@ -46,6 +43,8 @@ class OpenCodeExecutor(BasePythonExecutor):
 
     # Class-level session mapping: {llm_session_id: opencode_session_id}
     _session_map: Dict[str, str] = {}
+    _session_locks: Dict[str, asyncio.Lock] = {}
+    _http_client: Optional[httpx.AsyncClient] = None
     # Class-level port-alive cache (avoids socket check on every call)
     _port_alive_until: float = 0
 
@@ -64,6 +63,146 @@ class OpenCodeExecutor(BasePythonExecutor):
         self.timeout = config.OPENCODE_TIMEOUT
         self.python_timeout = getattr(config, 'PYTHON_EXECUTOR_TIMEOUT', 60)
         self.max_output_size = config.PYTHON_EXECUTOR_MAX_OUTPUT_SIZE
+
+    def _get_session_lock(self) -> asyncio.Lock:
+        lock = OpenCodeExecutor._session_locks.get(self.session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            OpenCodeExecutor._session_locks[self.session_id] = lock
+        return lock
+
+    @staticmethod
+    def _opencode_log_mode() -> str:
+        return str(getattr(config, "OPENCODE_LOG_VERBOSITY", "summary")).lower()
+
+    @classmethod
+    def _debug_log_enabled(cls) -> bool:
+        return cls._opencode_log_mode() == "debug"
+
+    @classmethod
+    def _summary_log_enabled(cls) -> bool:
+        return cls._opencode_log_mode() in {"summary", "debug"}
+
+    @classmethod
+    def _get_http_client(cls) -> httpx.AsyncClient:
+        if cls._http_client is None:
+            cls._http_client = httpx.AsyncClient(
+                timeout=httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=5.0),
+                limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            )
+        return cls._http_client
+
+    def _build_execution_result(
+        self,
+        success: bool,
+        script_path: Optional[str],
+        executed: bool,
+        stdout: str,
+        stderr: str,
+        returncode: int,
+        execution_time: float,
+        files: Dict[str, Any],
+        error: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "success": bool(success and executed and returncode == 0),
+            "execution_mode": "opencode",
+            "script_path": script_path,
+            "executed": executed,
+            "stdout": stdout,
+            "stderr": stderr,
+            "returncode": returncode,
+            "execution_time": execution_time,
+            "files": files,
+            "workspace": str(self.workspace),
+            "error": error,
+        }
+
+    def _select_candidate_script(
+        self,
+        before_files: set[Path],
+        after_files: set[Path],
+        opencode_output: str,
+    ) -> Optional[Path]:
+        new_or_updated: set[Path] = set(after_files - before_files)
+        for path in (after_files & before_files):
+            try:
+                if path.stat().st_mtime > time.time() - 120:
+                    new_or_updated.add(path)
+            except OSError:
+                continue
+        return self._find_python_file_to_run(new_or_updated, opencode_output)
+
+    def _is_runnable_python_file(self, script_path: Path) -> Tuple[bool, str]:
+        if not script_path.exists():
+            return False, f"Missing generated script: {script_path}"
+        try:
+            content = script_path.read_text(encoding="utf-8").strip()
+        except Exception as exc:
+            return False, f"Failed to read generated script: {exc}"
+        if not content:
+            return False, "Generated script is empty"
+        if "```" in content:
+            return False, "Generated script contains markdown fences and is not directly runnable"
+        return True, ""
+
+    def _attempt_recovery_execution(
+        self,
+        workspace_py_after: set[Path],
+        opencode_output: str,
+        timeout: int,
+        reason: str,
+    ) -> Dict[str, Any]:
+        self._log_stage(f"RECOVERY EXECUTION: {reason}")
+        script_path = self._find_python_file_to_run(workspace_py_after, opencode_output)
+        if script_path is None:
+            return {
+                "executed": False,
+                "script_path": None,
+                "stdout": "",
+                "stderr": "",
+                "returncode": -1,
+                "error": f"{reason}. Recovery failed: no python file available in workspace.",
+            }
+
+        command = f'"{sys.executable}" "{script_path.name}"'
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=min(timeout, self.python_timeout),
+                cwd=str(self.workspace),
+                encoding="utf-8",
+                errors="replace",
+            )
+            return {
+                "executed": True,
+                "script_path": str(script_path.resolve()),
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "returncode": result.returncode,
+                "error": None if result.returncode == 0 else (result.stderr or reason),
+            }
+        except subprocess.TimeoutExpired:
+            return {
+                "executed": False,
+                "script_path": str(script_path.resolve()),
+                "stdout": "",
+                "stderr": f"Recovery execution timeout after {timeout}s",
+                "returncode": -1,
+                "error": f"{reason}. Recovery execution timeout.",
+            }
+        except Exception as exc:
+            return {
+                "executed": False,
+                "script_path": str(script_path.resolve()),
+                "stdout": "",
+                "stderr": str(exc),
+                "returncode": -1,
+                "error": f"{reason}. Recovery execution failed: {exc}",
+            }
 
     async def execute(
         self,
@@ -87,22 +226,13 @@ class OpenCodeExecutor(BasePythonExecutor):
 
         workspace_abs = str(self.workspace.resolve())
         prefix = (
-            "CODE GENERATION MODE - Write complete, correct Python code for the following task.\n\n"
-            f"WORKING DIRECTORY: {workspace_abs}\n\n"
-            "MANDATORY STEPS (complete all before stopping):\n"
-            "1. Plan: Identify prerequisites, dependencies, and what the final output should look like\n"
-            f"2. Write: Create a complete single .py file in {workspace_abs}\n"
-            "   - Include descriptive print statements for every major step\n"
-            "   - The LAST lines of the script MUST print a completion summary:\n"
-            "     print('=== TASK COMPLETE ===')\n"
-            "     print('Done: [what was accomplished]')\n"
-            "     print('Output: [key results or file paths produced]')\n"
-            "3. Verify: Review the code for correctness\n\n"
-            "REQUIREMENTS:\n"
-            "- Write complete, runnable Python code — do NOT execute it\n"
-            "- Include informative prints throughout the script\n"
-            f"- Python file must be saved in {workspace_abs}\n"
-            "- Use absolute paths when accessing files in other directories\n\n"
+            "Write one complete runnable Python script for the task.\n\n"
+            f"WORKING DIRECTORY: {workspace_abs}\n"
+            "RULES:\n"
+            f"- Save exactly one .py file under {workspace_abs}\n"
+            "- Use informative print statements for major steps\n"
+            "- Use absolute paths when accessing files outside the working directory\n"
+            "- Do not return markdown or explanations, only perform the coding work\n\n"
             "TASK: "
         )
 
@@ -111,13 +241,12 @@ class OpenCodeExecutor(BasePythonExecutor):
         # Log execution start
         self._log_start(instruction, exec_timeout)
 
-        # Track files before OpenCode runs
+        # Track files before OpenCode runs (workspace + project root relocation path)
+        workspace_py_before = set(self._get_python_files())
         project_root = Path(config.__file__).resolve().parent
         root_py_before = set(project_root.glob("*.py"))
 
-        # =====================================================================
-        # STAGE 1: OpenCode generates Python code (execution skipped)
-        # =====================================================================
+        # Stage 1: OpenCode generates/updates a script
         print(f"\n[OPENCODE] Code generation stage...")
         self._log_stage("CODE GENERATION (OpenCode)")
 
@@ -126,33 +255,142 @@ class OpenCodeExecutor(BasePythonExecutor):
         # Relocate .py files that landed in the project root (HTTP server mode)
         self._relocate_stray_files(root_py_before, project_root)
 
-        execution_time = time.time() - start_time
+        workspace_py_after = set(self._get_python_files())
         files = self._get_workspace_files()
+        opencode_output = opencode_result.get("output", "")
 
         if not opencode_result["success"]:
-            self._log_result(False, -1, execution_time, opencode_result["output"], "", files, opencode_result["error"])
-            return {
-                "success": False,
-                "stdout": opencode_result["output"],
-                "stderr": opencode_result["error"] or "",
-                "returncode": -1,
-                "execution_time": execution_time,
-                "files": files,
-                "workspace": str(self.workspace),
-                "error": opencode_result["error"]
-            }
+            recovery = self._attempt_recovery_execution(
+                workspace_py_after=workspace_py_after,
+                opencode_output=opencode_output,
+                timeout=exec_timeout,
+                reason=f"OpenCode failed: {opencode_result.get('error', 'unknown error')}",
+            )
+            execution_time = time.time() - start_time
+            files = self._get_workspace_files()
+            result = self._build_execution_result(
+                success=recovery["returncode"] == 0,
+                script_path=recovery.get("script_path"),
+                executed=recovery.get("executed", False),
+                stdout=recovery.get("stdout", ""),
+                stderr=recovery.get("stderr", ""),
+                returncode=recovery.get("returncode", -1),
+                execution_time=execution_time,
+                files=files,
+                error=recovery.get("error", opencode_result.get("error")),
+            )
+            self._log_result(
+                result["success"],
+                result["returncode"],
+                result["execution_time"],
+                result["stdout"],
+                result["stderr"],
+                result["files"],
+                result["error"],
+            )
+            return result
 
-        self._log_result(True, 0, execution_time, opencode_result["output"], "", files, None)
-        return {
-            "success": True,
-            "stdout": opencode_result["output"],
-            "stderr": "",
-            "returncode": 0,
-            "execution_time": execution_time,
-            "files": files,
-            "workspace": str(self.workspace),
-            "error": None
-        }
+        # Stage 2: deterministically choose and execute script
+        candidate_script = self._select_candidate_script(
+            before_files=workspace_py_before,
+            after_files=workspace_py_after,
+            opencode_output=opencode_output,
+        )
+
+        if candidate_script is None:
+            recovery = self._attempt_recovery_execution(
+                workspace_py_after=workspace_py_after,
+                opencode_output=opencode_output,
+                timeout=exec_timeout,
+                reason="OpenCode did not generate a runnable Python script",
+            )
+            execution_time = time.time() - start_time
+            files = self._get_workspace_files()
+            result = self._build_execution_result(
+                success=recovery["returncode"] == 0,
+                script_path=recovery.get("script_path"),
+                executed=recovery.get("executed", False),
+                stdout=recovery.get("stdout", ""),
+                stderr=recovery.get("stderr", ""),
+                returncode=recovery.get("returncode", -1),
+                execution_time=execution_time,
+                files=files,
+                error=recovery.get("error"),
+            )
+            self._log_result(
+                result["success"],
+                result["returncode"],
+                result["execution_time"],
+                result["stdout"],
+                result["stderr"],
+                result["files"],
+                result["error"],
+            )
+            return result
+
+        runnable, reason = self._is_runnable_python_file(candidate_script)
+        if not runnable:
+            recovery = self._attempt_recovery_execution(
+                workspace_py_after=workspace_py_after,
+                opencode_output=opencode_output,
+                timeout=exec_timeout,
+                reason=reason,
+            )
+            execution_time = time.time() - start_time
+            files = self._get_workspace_files()
+            result = self._build_execution_result(
+                success=recovery["returncode"] == 0,
+                script_path=recovery.get("script_path"),
+                executed=recovery.get("executed", False),
+                stdout=recovery.get("stdout", ""),
+                stderr=recovery.get("stderr", ""),
+                returncode=recovery.get("returncode", -1),
+                execution_time=execution_time,
+                files=files,
+                error=recovery.get("error"),
+            )
+            self._log_result(
+                result["success"],
+                result["returncode"],
+                result["execution_time"],
+                result["stdout"],
+                result["stderr"],
+                result["files"],
+                result["error"],
+            )
+            return result
+
+        python_result = self._run_python_file(candidate_script, min(exec_timeout, self.python_timeout))
+        combined_stdout = self._combine_outputs(
+            opencode_output=opencode_output,
+            python_file=candidate_script,
+            python_stdout=python_result["stdout"],
+            python_stderr=python_result["stderr"],
+            python_returncode=python_result["returncode"],
+        )
+
+        execution_time = time.time() - start_time
+        result = self._build_execution_result(
+            success=python_result["returncode"] == 0,
+            script_path=str(candidate_script.resolve()),
+            executed=True,
+            stdout=combined_stdout,
+            stderr=python_result["stderr"],
+            returncode=python_result["returncode"],
+            execution_time=execution_time,
+            files=self._get_workspace_files(),
+            error=None if python_result["returncode"] == 0 else python_result["stderr"],
+        )
+        self._log_result(
+            result["success"],
+            result["returncode"],
+            result["execution_time"],
+            result["stdout"],
+            result["stderr"],
+            result["files"],
+            result["error"],
+        )
+        return result
 
     def _is_server_available(self) -> bool:
         """Check if OpenCode server is up, with 30s TTL cache."""
@@ -225,14 +463,15 @@ class OpenCodeExecutor(BasePythonExecutor):
                     raise subprocess.TimeoutExpired(cmd, timeout)
 
                 stdout_lines.append(line)
-                self._log_stream_line(line.rstrip('\n\r'))
+                if self._debug_log_enabled():
+                    self._log_stream_line(line.rstrip('\n\r'))
 
             # Wait for completion
             remaining = max(1, deadline - time.time())
             returncode = process.wait(timeout=remaining)
 
             # Collect stderr
-            stderr_thread.join(timeout=1)
+            stderr_thread.join(timeout=0.2 if returncode == 0 else 1)
             while not stderr_queue.empty():
                 stderr_lines.append(stderr_queue.get_nowait())
 
@@ -282,20 +521,19 @@ class OpenCodeExecutor(BasePythonExecutor):
         Returns:
             Dict with keys: success, output, session_id, error
         """
-        import json as _json
         from tools.python_coder.opencode_server import get_server
 
         base_url = get_server().server_url
-
-        # --- Session management: one OpenCode session per LLM session_id ---
-        opencode_session_id = OpenCodeExecutor._session_map.get(self.session_id)
-
-        async with httpx.AsyncClient(timeout=httpx.Timeout(connect=10.0, read=timeout, write=10.0, pool=5.0)) as client:
+        client = self._get_http_client()
+        async with self._get_session_lock():
+            # --- Session management: one OpenCode session per LLM session_id ---
+            opencode_session_id = OpenCodeExecutor._session_map.get(self.session_id)
             if not opencode_session_id:
                 try:
                     resp = await client.post(
                         f"{base_url}/session",
                         json={"title": f"llm-{self.session_id[:8]}"},
+                        timeout=httpx.Timeout(connect=10.0, read=timeout, write=10.0, pool=5.0),
                     )
                     resp.raise_for_status()
                     opencode_session_id = resp.json()["id"]
@@ -303,7 +541,9 @@ class OpenCodeExecutor(BasePythonExecutor):
                     print(f"[OPENCODE-HTTP] Created session: {opencode_session_id}")
                 except Exception as e:
                     return {
-                        "success": False, "output": "", "session_id": None,
+                        "success": False,
+                        "output": "",
+                        "session_id": None,
                         "error": f"Failed to create OpenCode session: {e}",
                     }
             else:
@@ -321,14 +561,17 @@ class OpenCodeExecutor(BasePythonExecutor):
                         },
                         "parts": [{"type": "text", "text": instruction}],
                     },
+                    timeout=httpx.Timeout(connect=10.0, read=timeout, write=10.0, pool=5.0),
                 )
                 resp.raise_for_status()
                 result = resp.json()
 
-                raw_dump = _json.dumps(result, indent=2, ensure_ascii=False, default=str)
-                self._log_stage(f"RAW HTTP RESPONSE ({len(raw_dump)} chars)")
-                for line in raw_dump.split('\n')[:200]:
-                    log_to_prompts_file(f"  {line}")
+                if self._debug_log_enabled():
+                    self._log_stage(f"RAW HTTP RESPONSE keys={list(result.keys())}")
+                    info = result.get("info", {})
+                    log_to_prompts_file(f"  info.finish={info.get('finish')}")
+                    log_to_prompts_file(f"  info.providerID={info.get('providerID')}")
+                    log_to_prompts_file(f"  info.modelID={info.get('modelID')}")
 
                 # Check for OpenCode-level errors (HTTP 200 but execution failed)
                 info = result.get("info", {})
@@ -336,7 +579,6 @@ class OpenCodeExecutor(BasePythonExecutor):
                 if isinstance(oc_error, dict) and oc_error.get("data", {}).get("message"):
                     error_msg = oc_error["data"]["message"].strip('"')
                     self._log_stage(f"OpenCode error: {error_msg}")
-                    # Discard the broken session so the next call starts fresh
                     OpenCodeExecutor._session_map.pop(self.session_id, None)
                     return {
                         "success": False,
@@ -346,9 +588,13 @@ class OpenCodeExecutor(BasePythonExecutor):
                     }
 
                 text = self._extract_opencode_text(result)
-                self._log_stage(f"Extracted text ({len(text)} chars)")
-                for line in text.split('\n'):
-                    log_to_prompts_file(f"  {line}")
+                if len(text) > 3000:
+                    text = text[:3000] + "\n...[truncated]"
+                if self._summary_log_enabled():
+                    self._log_stage(f"Extracted text ({len(text)} chars)")
+                    if self._debug_log_enabled():
+                        for line in text.split('\n')[:40]:
+                            log_to_prompts_file(f"  {line}")
 
                 return {
                     "success": True,
@@ -359,13 +605,15 @@ class OpenCodeExecutor(BasePythonExecutor):
 
             except httpx.TimeoutException:
                 return {
-                    "success": False, "output": "",
+                    "success": False,
+                    "output": "",
                     "session_id": opencode_session_id,
                     "error": f"OpenCode HTTP timeout after {timeout}s",
                 }
             except Exception as e:
                 return {
-                    "success": False, "output": "",
+                    "success": False,
+                    "output": "",
                     "session_id": opencode_session_id,
                     "error": f"OpenCode HTTP error: {e}",
                 }
@@ -373,45 +621,41 @@ class OpenCodeExecutor(BasePythonExecutor):
     @staticmethod
     def _extract_opencode_text(result: Dict[str, Any]) -> str:
         """
-        Extract all meaningful text from an OpenCode HTTP response.
-
-        Walks the response recursively to find text in any of these structures:
-          - result["parts"][*]["text"]          (flat parts)
-          - result["messages"][*]["content"]    (chat-style)
-          - result["result"] or result["text"]  (simple wrappers)
-          - nested "parts" inside messages
+        Extract the final assistant text from OpenCode HTTP response.
+        This intentionally ignores reasoning parts to keep tool payload compact.
         """
-        texts: List[str] = []
-
-        def _collect_parts(parts: list) -> None:
-            for p in parts:
-                if not isinstance(p, dict):
-                    continue
-                if "text" in p and isinstance(p["text"], str):
-                    texts.append(p["text"])
-                if "content" in p and isinstance(p["content"], str):
-                    texts.append(p["content"])
-                if "parts" in p and isinstance(p["parts"], list):
-                    _collect_parts(p["parts"])
-
         if isinstance(result.get("parts"), list):
-            _collect_parts(result["parts"])
+            for part in reversed(result["parts"]):
+                if not isinstance(part, dict):
+                    continue
+                if part.get("type") == "text" and isinstance(part.get("text"), str):
+                    text = part["text"].strip()
+                    if text:
+                        return text
 
         if isinstance(result.get("messages"), list):
-            for msg in result["messages"]:
-                if not isinstance(msg, dict):
+            for message in reversed(result["messages"]):
+                if not isinstance(message, dict):
                     continue
-                if isinstance(msg.get("content"), str) and msg["content"]:
-                    texts.append(msg["content"])
-                if isinstance(msg.get("parts"), list):
-                    _collect_parts(msg["parts"])
+                if message.get("role") != "assistant":
+                    continue
+                content = message.get("content")
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+                parts = message.get("parts")
+                if isinstance(parts, list):
+                    for part in reversed(parts):
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text = part.get("text", "")
+                            if isinstance(text, str) and text.strip():
+                                return text.strip()
 
-        for key in ("result", "text", "output", "content"):
-            val = result.get(key)
-            if isinstance(val, str) and val:
-                texts.append(val)
+        for key in ("text", "output", "content", "result"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
 
-        return "\n".join(texts).strip()
+        return ""
 
     def _run_python_file(self, python_file: Path, timeout: int) -> Dict[str, Any]:
         """
@@ -425,7 +669,7 @@ class OpenCodeExecutor(BasePythonExecutor):
 
         try:
             result = subprocess.run(
-                ["python", python_file.name],
+                [sys.executable, python_file.name],
                 capture_output=True,
                 text=True,
                 timeout=timeout,

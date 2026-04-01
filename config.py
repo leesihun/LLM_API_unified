@@ -45,8 +45,20 @@ LLAMACPP_SLOTS = 4
 # ============================================================================
 # Agent Settings
 # ============================================================================
-AGENT_MAX_ITERATIONS = 200
+AGENT_MAX_ITERATIONS = 60
+AGENT_TOOL_LOOP_MAX_TOKENS = 4096
 AGENT_SYSTEM_PROMPT = "system.txt"
+AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
+AGENT_MEMO_MAX_CHARS = 2000
+AGENT_FILE_PREVIEW_MAX_CHARS = 120
+AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 80
+AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
+# False = write each block synchronously with flush (visible immediately in .log files).
+AGENT_LOG_ASYNC = False
+# Dedicated file for agent iterations, tool calls, and tool results (easy to tail).
+AGENT_LOG_PATH = Path("data/logs/agent.log")
+# Also append the same agent lines to prompts.log (LLM + tools in one file).
+AGENT_LOG_MIRROR_TO_PROMPTS = True
 
 # ============================================================================
 # Database Settings
@@ -193,6 +205,7 @@ OPENCODE_PATH: str = "opencode"
 OPENCODE_SERVER_PORT: int = 37254
 OPENCODE_SERVER_HOST: str = "127.0.0.1"
 OPENCODE_TIMEOUT: int = 864000
+OPENCODE_LOG_VERBOSITY: Literal["summary", "debug"] = "summary"
 
 PYTHON_CODER_SMART_EDIT = True
 

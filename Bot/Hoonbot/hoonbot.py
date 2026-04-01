@@ -112,6 +112,16 @@ async def _register_bot() -> None:
         logger.info("[Messenger] Bot registered and key saved")
 
 
+async def _fetch_bot_identity() -> None:
+    """Fetch and cache the bot's user ID for session context injection."""
+    bot_info = await messenger.get_bot_info()
+    if bot_info:
+        config.BOT_USER_ID = bot_info["id"]
+        logger.info(f"[Hoonbot] Bot user ID: {config.BOT_USER_ID}")
+    else:
+        logger.warning("[Hoonbot] Could not fetch bot identity — bot_user_id will be 0 in context")
+
+
 async def _subscribe_webhooks() -> None:
     """Register webhook subscriptions, re-registering the bot if the key is stale."""
     webhook_host = "aihoonbot.com" if config.USE_CLOUDFLARE else "localhost"
@@ -231,6 +241,7 @@ async def lifespan(app: FastAPI):
 
     await _autofind_llm_api()
     await _register_bot()
+    await _fetch_bot_identity()
     await _subscribe_webhooks()
     await _resolve_home_room()
 

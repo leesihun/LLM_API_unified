@@ -112,5 +112,8 @@ SESSION_MAX_AGE_DAYS = int(_get("HOONBOT_SESSION_MAX_AGE_DAYS", "7"))
 MEMORY_FLUSH_THRESHOLD = int(_get("HOONBOT_MEMORY_FLUSH_THRESHOLD", "30"))
 STREAMING_ENABLED = _get("HOONBOT_STREAMING", "true").lower() == "true"
 
+# --- Bot identity (populated at startup) ---
+BOT_USER_ID: int = 0
+
 # --- Incoming webhooks ---
 WEBHOOK_INCOMING_SECRET = _get("HOONBOT_WEBHOOK_SECRET", "")

@@ -1,132 +1,71 @@
-# Download Attachment from Chat
+# Skill: Download Attachment
 
-Download a file or image from a previous message in Messenger and save it to disk.
+Download a file or image from room messages and save it locally.
 
-**Trigger phrases:** download attachment, save that file, grab the image, download file from chat, save attachment, get that picture
+## Trigger
 
----
+download attachment, save that file, download image, get file from chat
+
+## Required Inputs
+
+- target room (default: current room from message header)
+- one selector:
+  - exact `message_id`, or
+  - exact `filename`, or
+  - keyword `last file` / `last image`, or
+  - **reply context** — if the user's message is a reply (a `> Sender: "..."` line appears in the header), the quoted message is the target
+
+## Message Header Format
+
+Every message begins with:
+```
+[Room: <name> (id:<id>, <DM|group>) | From: <sender>]
+```
+Optionally followed by a reply line:
+```
+> <original_sender>: "<original_message_content>"
+```
+If a reply line is present, the quoted message is the attachment the user is referring to — resolve `message_id` from `replyToId` in that context.
 
 ## API
 
-- **Port:** `config.MESSENGER_URL` (10006)
-- **Auth:** `x-api-key: config.MESSENGER_API_KEY` (from `data/.apikey`)
-- `GET {MESSENGER_URL}/api/messages/{roomId}?limit={N}&before={messageId}` — fetch messages (paginated)
-- `GET {MESSENGER_URL}{fileUrl}` — download file by its relative URL
-- `GET {MESSENGER_URL}/api/rooms?userId=<bot_id>` — room lookup
+- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
+- `GET {messenger_url}/api/messages/{roomId}?limit=50`
+- `GET {messenger_url}{fileUrl}` (download the file binary)
 
----
+## Hard Rules
 
-## Workflow
+- If the selector matches multiple attachments, stop and ask the user to choose.
+- Do not guess between multiple candidates.
+- Save only after a successful download response.
+- If the target path already exists, append a numeric suffix: `(1)`, `(2)`, etc.
 
-Execute in order. Stop and report on first failure.
+## Procedure
 
-### 1. Read config
+1. Get `messenger_url`, `messenger_api_key`, and `bot_user_id` from session variables.
+2. Resolve the target room:
+   - **Current room**: extract `id` from the message header.
+   - **Named room**: call `GET {messenger_url}/api/rooms?userId={bot_user_id}` and match case-insensitively; stop if no match.
+3. Fetch recent messages from the target room.
+4. Keep only messages with `type` in `{"file", "image"}` and a non-empty `fileUrl`.
+5. Resolve a single attachment using the selector:
+   - **Reply context**: use the `replyToId` from the triggering message to find the exact attachment.
+   - `message_id`: exact ID match.
+   - filename: exact case-insensitive filename match.
+   - `last file` / `last image`: newest matching type.
+6. Download with `GET {messenger_url}{fileUrl}` using the API key.
+7. Save to the requested directory, or the current working directory if none was given.
 
-```python
-import config
-base_url = config.MESSENGER_URL
-api_key = config.MESSENGER_API_KEY
-```
+## Response Format
 
-### 2. Identify the target
+Success:
+`Downloaded <filename> from message <id> by <sender>. saved_to=<absolute_path>.`
 
-Determine what the user wants to download. Possibilities:
-1. **Specific message ID** — user says "download the file from message #42"
-2. **Most recent file/image** — user says "download that image" or "save the last file"
-3. **By description** — user says "download the PDF from earlier"
+No match:
+`No matching attachment found in recent messages.`
 
-If ambiguous, default to searching the current room's recent messages for file/image types.
+Ambiguous match:
+`Multiple attachments matched: <list with message_id and filename>. Specify one message_id.`
 
-### 3. Fetch messages from the room
-
-```
-GET {MESSENGER_URL}/api/messages/{roomId}?limit=50
-x-api-key: {api_key}
-```
-
-Response is a JSON array of messages. Filter for file/image messages:
-
-```python
-attachments = [
-    msg for msg in messages
-    if msg.get("type") in ("file", "image") and msg.get("fileUrl")
-]
-```
-
-Each file/image message has:
-```json
-{
-  "id": 42,
-  "type": "file",
-  "content": "report.pdf",
-  "fileUrl": "/uploads/abc123/report.pdf",
-  "fileName": "report.pdf",
-  "fileSize": 102400,
-  "senderName": "Alice",
-  "createdAt": "2026-03-10T14:30:00.000Z"
-}
-```
-
-### 4. Select the right attachment
-
-- If user specified a message ID → find exact match
-- If user described a filename → match by `fileName` or `content`
-- If "the last file/image" → take the most recent matching message
-- If multiple matches → list them and ask the user to pick — stop
-
-### 5. Download the file
-
-```python
-import httpx, os
-
-file_url = f"{base_url}{msg['fileUrl']}"
-resp = httpx.get(file_url, headers={"x-api-key": api_key})
-resp.raise_for_status()
-
-filename = msg.get("fileName") or msg["fileUrl"].rsplit("/", 1)[-1]
-```
-
-### 6. Save to disk
-
-Default save location: current working directory, or a user-specified path.
-
-```python
-save_path = os.path.join(save_dir, filename)
-with open(save_path, "wb") as f:
-    f.write(resp.content)
-```
-
-If the file already exists at the save path, append a number: `report (1).pdf`.
-
----
-
-## Response format
-
-**Success:**
-```
-Downloaded "{filename}" ({file_size_human}) from message #{id} by {senderName}.
-Saved to: {absolute_save_path}
-```
-
-**Multiple matches found:**
-```
-Found {count} attachments in recent messages:
-1. {fileName} ({fileSize}) — {senderName}, {date} (message #{id})
-2. ...
-
-Which one should I download? Specify by number or message ID.
-```
-
-**No attachments found:**
-```
-No file or image attachments found in the last 50 messages of this room.
-```
-
----
-
-## Notes
-
-- File sizes should be human-readable (KB, MB)
-- The `fileUrl` is a relative path — always prepend `MESSENGER_URL`
-- For images, the `type` field is `"image"`; for documents, it's `"file"`
-- Pagination: use `before=<messageId>` to go further back if needed
+Failure:
+`Download failed. status=<code>. error=<message>.`

@@ -15,6 +15,9 @@ _api_key: str = ""
 # Persistent HTTP client — shared across all requests
 _client: Optional[httpx.AsyncClient] = None
 
+# Room info cache: room_id -> {"name": str, "isGroup": bool}
+_room_cache: dict[int, dict] = {}
+
 
 def _get_client() -> httpx.AsyncClient:
     """Get or create the shared httpx client."""
@@ -118,30 +121,6 @@ def _split_message(text: str, limit: int) -> list:
         chunks.append(text[:cut].rstrip())
         text = text[cut:].lstrip()
     return chunks
-
-
-def _insert_line_breaks(text: str, line_limit: int = 60) -> str:
-    """Wrap overly long lines for better readability in chat bubbles."""
-    if line_limit <= 0:
-        raise ValueError("line_limit must be greater than 0")
-
-    wrapped_lines: list[str] = []
-    for raw_line in text.replace("\r\n", "\n").split("\n"):
-        line = raw_line
-        if not line:
-            wrapped_lines.append("")
-            continue
-
-        while len(line) > line_limit:
-            cut = line.rfind(" ", 0, line_limit + 1)
-            if cut <= 0:
-                cut = line_limit
-            wrapped_lines.append(line[:cut].rstrip())
-            line = line[cut:].lstrip()
-
-        wrapped_lines.append(line)
-
-    return "\n".join(wrapped_lines)
 
 
 async def send_message(room_id: int, content: str, reply_to_id: int | None = None) -> None:
@@ -266,6 +245,28 @@ async def get_bot_info() -> Optional[dict]:
     except Exception:
         pass
     return None
+
+
+async def get_room_info(room_id: int) -> dict:
+    """Return room metadata (name, isGroup) for a given room ID.
+
+    Fetches all bot rooms on first cache miss and caches the results.
+    Falls back to {"name": str(room_id), "isGroup": False} if the room
+    cannot be resolved.
+    """
+    if room_id in _room_cache:
+        return _room_cache[room_id]
+
+    bot_info = await get_bot_info()
+    if bot_info:
+        rooms = await get_rooms(bot_info["id"])
+        for room in rooms:
+            _room_cache[room["id"]] = {
+                "name": room.get("name") or str(room["id"]),
+                "isGroup": bool(room.get("isGroup", False)),
+            }
+
+    return _room_cache.get(room_id, {"name": str(room_id), "isGroup": False})
 
 
 async def get_rooms(bot_user_id: int) -> list:

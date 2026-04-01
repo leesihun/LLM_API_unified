@@ -32,11 +32,9 @@ TOOL_SCHEMAS: dict = {
     "python_coder": {
         "name": "python_coder",
         "description": (
-            "Execute a coding task by providing natural language instructions — describe WHAT "
-            "you want done, not HOW. An AI coding agent generates the Python code and executes it. "
-            "Files persist across calls within the same session. "
-            "Prefer shell_exec for running existing scripts; use python_coder for writing and "
-            "generating new code from scratch."
+            "Execute a coding task with one self-contained call: generate Python code, run it, and "
+            "return structured execution results. Describe WHAT you want done, not HOW. "
+            "Use python_coder for new coding tasks; use shell_exec only for existing scripts or direct shell work."
         ),
         "parameters": {
             "type": "object",
@@ -50,7 +48,7 @@ TOOL_SCHEMAS: dict = {
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Maximum seconds to wait for execution (default: 864000).",
+                    "description": "Maximum seconds for code generation + execution (default: 864000).",
                 },
             },
             "required": ["instruction"],
@@ -90,6 +88,7 @@ TOOL_SCHEMAS: dict = {
         "description": (
             "Read the contents of a text file. Supports absolute paths (anywhere on the system) "
             "as well as paths relative to the scratch workspace or user uploads. "
+            "If the path is known, call file_reader directly instead of exploring first. "
             "Use this instead of python_coder when you just need to see file contents. "
             "Large files can be read in chunks using offset and limit."
         ),
@@ -152,7 +151,7 @@ TOOL_SCHEMAS: dict = {
         "description": (
             "List directory contents or search for files using glob patterns. "
             "Supports absolute paths (anywhere on the system) as well as the scratch workspace. "
-            "Use this to discover what files are available before reading them."
+            "Use this only when paths are unknown; avoid repeated retries with equivalent path variants."
         ),
         "parameters": {
             "type": "object",

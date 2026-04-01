@@ -1,98 +1,44 @@
-# User Directory
+# Skill: User Directory
 
-Look up users registered in Messenger — list all users or find a specific person.
+List users or find users by name in Messenger.
 
-**Trigger phrases:** list users, who's on messenger, find user, user list, show users, who is, look up user
+## Trigger
 
----
+list users, who is on messenger, find user, show bots, show humans
+
+## Required Inputs
+
+- optional `query` for name match
+- optional filter: `all|humans|bots` (default `all`)
 
 ## API
 
-- **Port:** `config.MESSENGER_URL` (10006)
-- **Auth:** `x-api-key: config.MESSENGER_API_KEY` (from `data/.apikey`)
-- `GET {MESSENGER_URL}/api/users` — list all users (bots and humans)
-- `GET {MESSENGER_URL}/auth/users` — alternative endpoint (same data)
+- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
+- `GET {messenger_url}/api/users`
 
----
+## Hard Rules
 
-## Workflow
+- Use `/api/users` only.
+- Name search is case-insensitive substring match.
+- Treat missing `isBot` as `false`.
 
-### 1. Read config
+## Procedure
 
-```python
-import config
-base_url = config.MESSENGER_URL
-api_key = config.MESSENGER_API_KEY
-```
+1. Get `messenger_url` and `messenger_api_key` from session variables.
+2. Fetch users with `GET {messenger_url}/api/users`.
+3. Apply filter and optional name query.
+4. Return sorted by name.
 
-### 2. Fetch user list
+## Response Format
 
-```
-GET {MESSENGER_URL}/api/users
-x-api-key: {api_key}
-```
+List:
+`Users (<count>): <name>(id=<id>, type=<human|bot>), ...`
 
-Response is a JSON array:
-```json
-[
-  {
-    "id": 1,
-    "name": "Alice",
-    "isBot": false,
-    "createdAt": "2026-01-15T10:00:00.000Z",
-    "updatedAt": "2026-03-10T14:00:00.000Z"
-  },
-  {
-    "id": 5,
-    "name": "Bot",
-    "isBot": true,
-    "createdAt": "2026-02-01T08:00:00.000Z"
-  }
-]
-```
+Search:
+`Matches for "<query>" (<count>): <name>(id=<id>, type=<human|bot>), ...`
 
-### 3. Filter/search if needed
+No results:
+`No users found for "<query>".`
 
-- **List all** — show everyone
-- **Search by name** — case-insensitive partial match on `name`
-- **Filter humans only** — exclude `isBot: true`
-- **Filter bots only** — include only `isBot: true`
-
-### 4. Format response
-
----
-
-## Response format
-
-**Full list:**
-```
-Messenger Users ({total} total):
-
-Humans:
-  1. {name} (ID: {id}) — joined {date}
-  2. ...
-
-Bots:
-  1. {name} (ID: {id}) — registered {date}
-  2. ...
-```
-
-**Search result:**
-```
-Found {count} user(s) matching "{query}":
-  1. {name} (ID: {id}, {human/bot}) — joined {date}
-```
-
-**No results:**
-```
-No users found matching "{query}".
-```
-
----
-
-## Notes
-
-- Always separate humans and bots in the full listing for clarity
-- Format dates as human-readable (e.g. "Jan 15, 2026")
-- The `isBot` field may not exist on all user objects — treat missing as `false` (human)
-- User IDs are useful for @mentions and room creation — include them
+Failure:
+`User lookup failed. status=<code>. error=<message>.`

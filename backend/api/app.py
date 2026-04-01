@@ -126,9 +126,8 @@ def _cleanup_old_scratch():
         print(f"[Startup] Cleaned up {removed} orphaned/old scratch dir(s)")
 
 
-def _cleanup_old_prompts_log():
-    """Rotate prompts.log if it was created more than LOG_ROTATION_DAYS ago."""
-    log_path = config.PROMPTS_LOG_PATH
+def _rotate_log_if_stale(log_path: Path, label: str):
+    """Rotate a .log file if its ctime is older than LOG_ROTATION_DAYS."""
     if not log_path.exists():
         return
     cutoff = datetime.now() - timedelta(days=config.LOG_ROTATION_DAYS)
@@ -141,9 +140,16 @@ def _cleanup_old_prompts_log():
             bak.unlink()
         log_path.rename(bak)
         log_path.touch()
-        print(f"[Startup] Rotated prompts.log (was {(datetime.now() - created).days} days old)")
+        print(f"[Startup] Rotated {label} (was {(datetime.now() - created).days} days old)")
     except Exception:
         pass
+
+
+def _cleanup_old_logs():
+    _rotate_log_if_stale(config.PROMPTS_LOG_PATH, "prompts.log")
+    agent_path = getattr(config, "AGENT_LOG_PATH", None)
+    if agent_path:
+        _rotate_log_if_stale(Path(agent_path), "agent.log")
 
 
 @app.on_event("startup")
@@ -155,7 +161,15 @@ async def startup_event():
     _cleanup_old_jobs()
     _cleanup_old_tool_results()
     _cleanup_old_scratch()
-    _cleanup_old_prompts_log()
+    _cleanup_old_logs()
+
+    try:
+        agent_p = Path(getattr(config, "AGENT_LOG_PATH", config.PROMPTS_LOG_PATH)).resolve()
+        prompts_p = config.PROMPTS_LOG_PATH.resolve()
+        print(f"[Startup] Agent log file: {agent_p}")
+        print(f"[Startup] LLM + combined log: {prompts_p}")
+    except Exception:
+        pass
 
     from backend.core.llm_backend import llm_backend
     available = await llm_backend.is_available()

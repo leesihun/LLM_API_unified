@@ -1,140 +1,52 @@
-# Manage Webhooks
+# Skill: Manage Webhooks
 
-List, update, or delete the bot's webhook subscriptions in Messenger.
+List, create, update, or delete Messenger webhook subscriptions.
 
-**Trigger phrases:** list webhooks, show webhooks, delete webhook, remove webhook, update webhook, manage webhooks, webhook subscriptions
+## Trigger
 
----
+list webhooks, create webhook, update webhook, delete webhook
+
+## Required Inputs
+
+- operation: `list|create|update|delete`
+- for create: `url`, `events`
+- for update: `webhook_id` plus `url` and/or `events`
+- for delete: `webhook_id`
 
 ## API
 
-- **Port:** `config.MESSENGER_URL` (10006)
-- **Auth:** `x-api-key: config.MESSENGER_API_KEY` (from `data/.apikey`)
-- `GET {MESSENGER_URL}/api/webhooks` — list all webhook subscriptions
-- `PATCH {MESSENGER_URL}/api/webhooks/{id}` — update a webhook
-- `DELETE {MESSENGER_URL}/api/webhooks/{id}` — delete a webhook
-- `POST {MESSENGER_URL}/api/webhooks` — create a new webhook
+- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
+- `GET {messenger_url}/api/webhooks`
+- `POST {messenger_url}/api/webhooks`
+- `PATCH {messenger_url}/api/webhooks/{id}`
+- `DELETE {messenger_url}/api/webhooks/{id}`
 
----
+## Hard Rules
 
-## Workflow
+- If required fields are missing, stop and ask.
+- For delete, require explicit confirmation in the same turn.
+- Events allowed: `new_message`, `message_edited`, `message_deleted`, `message_read`.
 
-### 1. Read config
+## Procedure
 
-```python
-import config
-base_url = config.MESSENGER_URL
-api_key = config.MESSENGER_API_KEY
-```
+1. Get `messenger_url` and `messenger_api_key` from session variables.
+2. Validate operation and required fields.
+3. Call the corresponding webhook endpoint.
+4. Return compact result with webhook ID.
 
-### 2. Determine operation
+## Response Format
 
-From the user's request:
-- **list** — show all current subscriptions
-- **delete** — remove a specific webhook by ID
-- **update** — change URL or events for a webhook
-- **create** — add a new subscription
+List:
+`Webhooks (<count>): id=<id> url=<url> events=<events>; ...`
 
-Default to **list** if the user just says "webhooks" or "show webhooks".
+Create:
+`Webhook created. id=<id> url=<url> events=<events>.`
 
-### 3. Execute operation
+Update:
+`Webhook updated. id=<id> url=<url> events=<events>.`
 
-**List webhooks:**
-```
-GET {MESSENGER_URL}/api/webhooks
-x-api-key: {api_key}
-```
+Delete:
+`Webhook deleted. id=<id>.`
 
-Response:
-```json
-[
-  {
-    "id": 1,
-    "url": "http://localhost:3939/webhook",
-    "events": ["new_message", "message_edited", "message_deleted"],
-    "createdAt": "2026-03-01T00:00:00.000Z"
-  }
-]
-```
-
-**Delete webhook:**
-```
-DELETE {MESSENGER_URL}/api/webhooks/{webhook_id}
-x-api-key: {api_key}
-```
-
-**Update webhook:**
-```
-PATCH {MESSENGER_URL}/api/webhooks/{webhook_id}
-x-api-key: {api_key}
-Content-Type: application/json
-
-{
-  "url": "http://new-url:3939/webhook",
-  "events": ["new_message"]
-}
-```
-
-**Create webhook:**
-```
-POST {MESSENGER_URL}/api/webhooks
-x-api-key: {api_key}
-Content-Type: application/json
-
-{
-  "url": "http://localhost:3939/webhook",
-  "events": ["new_message", "message_edited"],
-  "secret": "optional-hmac-secret"
-}
-```
-
-Available events: `new_message`, `message_edited`, `message_deleted`, `message_read`
-
----
-
-## Response format
-
-**List:**
-```
-Webhook Subscriptions ({count}):
-
-1. ID: {id}
-   URL: {url}
-   Events: {events joined by ", "}
-   Created: {date}
-
-2. ...
-```
-
-**Delete:**
-```
-Webhook #{id} deleted.
-```
-
-**Update:**
-```
-Webhook #{id} updated.
-- URL: {new_url}
-- Events: {new_events}
-```
-
-**Create:**
-```
-Webhook created (ID: {id}).
-- URL: {url}
-- Events: {events}
-```
-
-**No webhooks:**
-```
-No webhook subscriptions found.
-```
-
----
-
-## Notes
-
-- Be careful deleting webhooks — removing the bot's main webhook (`/webhook`) will stop it from receiving messages
-- Warn the user before deleting the primary webhook: "This appears to be the bot's main webhook. Deleting it will stop message processing. Proceed?"
-- The `secret` field enables HMAC-SHA256 signature verification on incoming payloads
-- Webhook registration is idempotent — creating a duplicate URL won't cause issues (Messenger checks for existing URLs)
+Failure:
+`Webhook operation failed. op=<operation>. status=<code>. error=<message>.`

@@ -108,6 +108,7 @@ class LLMInterceptor:
             formatted = self._format_human_readable(log_data)
             with open(self.log_path, 'a', encoding='utf-8') as f:
                 f.write(formatted)
+                f.flush()
         except Exception as e:
             print(f"Warning: Failed to log LLM interaction: {e}")
 

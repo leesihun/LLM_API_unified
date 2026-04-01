@@ -14,16 +14,12 @@ from datetime import datetime
 import config
 from tools.python_coder.base import BasePythonExecutor
 
-# ---------- Buffered logger (opened once, not per-line) ----------
 import logging as _logging
 
+from backend.utils.flush_logging import attach_flush_file_handler
+
 _tool_logger = _logging.getLogger("python_coder.native")
-if not _tool_logger.handlers:
-    _handler = _logging.FileHandler(config.PROMPTS_LOG_PATH, encoding='utf-8')
-    _handler.setFormatter(_logging.Formatter('%(message)s'))
-    _tool_logger.addHandler(_handler)
-    _tool_logger.setLevel(_logging.INFO)
-    _tool_logger.propagate = False
+attach_flush_file_handler(_tool_logger, config.PROMPTS_LOG_PATH)
 
 
 def log_to_prompts_file(message: str):
@@ -194,6 +190,9 @@ class NativePythonExecutor(BasePythonExecutor):
 
             return {
                 "success": success,
+                "execution_mode": "native",
+                "script_path": str((self.workspace / script_name).resolve()),
+                "executed": True,
                 "stdout": stdout,
                 "stderr": stderr,
                 "returncode": result.returncode,
@@ -209,10 +208,17 @@ class NativePythonExecutor(BasePythonExecutor):
             print(f"[PYTHON] ERROR: {error_msg}")
             self._log_execution_error("TIMEOUT", error_msg, execution_time)
             return {
-                "success": False, "stdout": "", "stderr": error_msg,
-                "returncode": -1, "execution_time": execution_time,
+                "success": False,
+                "execution_mode": "native",
+                "script_path": str((self.workspace / script_name).resolve()),
+                "executed": False,
+                "stdout": "",
+                "stderr": error_msg,
+                "returncode": -1,
+                "execution_time": execution_time,
                 "files": self._get_workspace_files(),
-                "workspace": str(self.workspace), "error": error_msg,
+                "workspace": str(self.workspace),
+                "error": error_msg,
             }
 
         except Exception as e:
@@ -221,10 +227,17 @@ class NativePythonExecutor(BasePythonExecutor):
             print(f"[PYTHON] ERROR: {error_msg}")
             self._log_execution_error("ERROR", error_msg, execution_time)
             return {
-                "success": False, "stdout": "", "stderr": error_msg,
-                "returncode": -1, "execution_time": execution_time,
+                "success": False,
+                "execution_mode": "native",
+                "script_path": str((self.workspace / script_name).resolve()),
+                "executed": False,
+                "stdout": "",
+                "stderr": error_msg,
+                "returncode": -1,
+                "execution_time": execution_time,
                 "files": self._get_workspace_files(),
-                "workspace": str(self.workspace), "error": error_msg,
+                "workspace": str(self.workspace),
+                "error": error_msg,
             }
 
     # ------------------------------------------------------------------

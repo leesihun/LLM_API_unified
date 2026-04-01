@@ -1,123 +1,54 @@
-# Search Messages
+# Skill: Search Messages
 
-Search past messages across all rooms or within a specific room in Messenger.
+Search Messenger messages globally or in one room.
 
-**Trigger phrases:** search messages, find message, look up what was said, search for, find conversation about, when did we talk about
+## Trigger
 
----
+search messages, find message, when did we discuss, find conversation
+
+## Required Inputs
+
+- `query` (required)
+- optional `room_id` or exact `room_name`
+- optional `limit` (default `20`, max `100`)
+
+## Message Header Format
+
+Every message begins with:
+```
+[Room: <name> (id:<id>, <DM|group>) | From: <sender>]
+```
+When the user says "search this room" or similar, extract `id` and `name` directly from this line — no API call needed.
 
 ## API
 
-- **Port:** `config.MESSENGER_URL` (10006)
-- **Auth:** `x-api-key: config.MESSENGER_API_KEY` (from `data/.apikey`)
-- `GET {MESSENGER_URL}/api/search?q=<query>&roomId=<optional>&limit=<optional>` — global search
-- `GET {MESSENGER_URL}/rooms/{room_id}/search?q=<query>&limit=<optional>` — room-specific search
-- `GET {MESSENGER_URL}/api/rooms?userId=<bot_id>` — room name → ID lookup
+- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
+- `GET {messenger_url}/api/search?q=<query>&limit=<limit>`
+- `GET {messenger_url}/api/search?q=<query>&roomId=<room_id>&limit=<limit>`
 
----
+## Hard Rules
 
-## Workflow
+- If query is missing, stop and ask.
+- If a room name is given and does not resolve to exactly one room, stop.
+- Use `/api/search` endpoint only for consistency.
 
-Execute in order. Stop and report on first failure.
+## Procedure
 
-### 1. Read config
+1. Get `messenger_url`, `messenger_api_key`, and `bot_user_id` from session variables.
+2. Parse query, room scope, and limit.
+3. Resolve the room when a scope is specified:
+   - **Current room** ("this room", "here", or no scope): extract `id` from the message header.
+   - **Named room**: call `GET {messenger_url}/api/rooms?userId={bot_user_id}` and match case-insensitively; stop if no match.
+4. Execute the search request with the API key.
+5. Return a compact result list: message ID, room, sender, timestamp, and content preview.
 
-```python
-import config
-base_url = config.MESSENGER_URL   # abort if empty
-api_key = config.MESSENGER_API_KEY
-```
+## Response Format
 
-### 2. Parse the search request
+Found:
+`Found <count> message(s) for "<query>": 1) [<room>] <sender> <time> "<preview>" (id=<id>) ...`
 
-Extract from the user's message:
-- **query** (required) — the search term or phrase
-- **room** (optional) — a room name or ID to limit the search
-- **limit** (optional) — max results, default 20, max 100
+No results:
+`No messages found for "<query>".`
 
-If no query can be determined, ask the user what to search for — stop.
-
-### 3. Resolve room (if specified)
-
-If the user names a room:
-1. Call `messenger.get_bot_info()` → get bot `id`
-2. `GET /api/rooms?userId=<bot_id>` → find case-insensitive name match
-3. No match → `"Room '<name>' not found"` — stop
-
-### 4. Execute search
-
-**Global search** (no room specified):
-
-```
-GET {MESSENGER_URL}/api/search?q={query}&limit={limit}
-x-api-key: {api_key}
-```
-
-**Room-scoped search:**
-
-```
-GET {MESSENGER_URL}/api/search?q={query}&roomId={room_id}&limit={limit}
-x-api-key: {api_key}
-```
-
-Alternative room-scoped endpoint:
-
-```
-GET {MESSENGER_URL}/rooms/{room_id}/search?q={query}&limit={limit}
-```
-
-### 5. Parse response
-
-Response is a JSON array of message objects:
-
-```json
-[
-  {
-    "id": 42,
-    "content": "the matching message text",
-    "senderId": 1,
-    "senderName": "Alice",
-    "roomId": 3,
-    "roomName": "General",
-    "createdAt": "2026-03-10T14:30:00.000Z",
-    "type": "text"
-  }
-]
-```
-
-Fields may vary — handle missing `senderName` or `roomName` gracefully.
-
----
-
-## Response format
-
-**Results found:**
-```
-Found {count} message(s) matching "{query}":
-
-1. [{roomName}] {senderName} ({date}):
-   "{content preview — first 120 chars}"
-   (message #{id})
-
-2. ...
-```
-
-**No results:**
-```
-No messages found matching "{query}".
-```
-
-**Room-scoped:**
-```
-Found {count} message(s) matching "{query}" in {roomName}:
-...
-```
-
----
-
-## Notes
-
-- Truncate long message content to ~120 characters in the summary
-- Show the room name for global searches so the user knows where each result is from
-- Format dates as human-readable (e.g. "Mar 10, 2:30 PM")
-- If more results may exist beyond the limit, note: "Showing first {limit} results. Ask for more if needed."
+Failure:
+`Search failed. status=<code>. error=<message>.`

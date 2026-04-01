@@ -118,12 +118,12 @@ async def handle_webhook(request: Request):
 
     # --- Handle message edits ---
     if event == "message_edited":
-        logger.info(f"[Webhook] Message edited in room {room_id}: id={data.get('id')}")
+        logger.info(f"[Webhook] Message edited in room {room_id}: id={data.get('messageId')}")
         return {"ok": True}
 
     # --- Handle message deletes ---
     if event == "message_deleted":
-        logger.info(f"[Webhook] Message deleted in room {room_id}: id={data.get('id')}")
+        logger.info(f"[Webhook] Message deleted in room {room_id}: id={data.get('messageId')}")
         return {"ok": True}
 
     if event != "new_message":
@@ -180,7 +180,8 @@ async def handle_webhook(request: Request):
     if msg_id:
         asyncio.create_task(messenger.mark_read(room_id, [msg_id]))
 
-    _schedule_debounced(room_id, clean_content, sender_name, msg_id, file_info)
+    reply_to_data = data.get("replyTo")
+    _schedule_debounced(room_id, clean_content, sender_name, msg_id, file_info, reply_to_data)
     return {"ok": True}
 
 
@@ -188,7 +189,7 @@ async def handle_webhook(request: Request):
 # Debounce — combines rapid-fire messages into one
 # ---------------------------------------------------------------------------
 
-def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: int | None = None, file_info: dict | None = None) -> None:
+def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: int | None = None, file_info: dict | None = None, reply_to_data: dict | None = None) -> None:
     entry = _room_debounce.get(room_id)
     if entry and entry["task"] and not entry["task"].done():
         entry["task"].cancel()
@@ -207,13 +208,17 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: in
         await asyncio.sleep(config.DEBOUNCE_SECONDS)
         final = _room_debounce.pop(room_id, None)
         if final:
-            await process_message(room_id, final["content"], final["sender"], final.get("msg_id"), file_infos=final.get("files"))
+            await process_message(
+                room_id, final["content"], final["sender"], final.get("msg_id"),
+                file_infos=final.get("files"), reply_to_data=final.get("reply_to_data"),
+            )
 
     _room_debounce[room_id] = {
         "content": combined,
         "sender": sender_name,
         "msg_id": msg_id,
         "files": combined_files,
+        "reply_to_data": reply_to_data,
         "task": asyncio.create_task(_debounce()),
     }
 
@@ -222,7 +227,18 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: in
 # Message processing — streaming or synchronous
 # ---------------------------------------------------------------------------
 
-async def process_message(room_id: int, content: str, sender_name: str, reply_to_id: int | None = None, _is_retry: bool = False, file_infos: list | None = None) -> None:
+def _build_message_header(room_name: str, room_id: int, is_group: bool, sender_name: str, reply_to_data: dict | None) -> str:
+    """Build the bracketed context header prepended to every LLM message."""
+    room_type = "group" if is_group else "DM"
+    header = f"[Room: {room_name} (id:{room_id}, {room_type}) | From: {sender_name}]"
+    if reply_to_data and not reply_to_data.get("isDeleted") and reply_to_data.get("content"):
+        reply_sender = reply_to_data.get("senderName", "unknown")
+        reply_content = reply_to_data["content"][:200]
+        header += f"\n> {reply_sender}: \"{reply_content}\""
+    return header
+
+
+async def process_message(room_id: int, content: str, sender_name: str, reply_to_id: int | None = None, _is_retry: bool = False, file_infos: list | None = None, reply_to_data: dict | None = None) -> None:
     """Core message processing pipeline with structured logging and timing."""
     start = time.monotonic()
     log_prefix = f"[Room {room_id}] [{sender_name}]"
@@ -251,12 +267,17 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
                 else:
                     logger.warning(f"{log_prefix} Failed to download: {fi['name']}")
 
+        room_info = await messenger.get_room_info(room_id)
+        msg_header = _build_message_header(
+            room_info["name"], room_id, room_info["isGroup"], sender_name, reply_to_data
+        )
+
         if existing_session_id:
             # Track message count and nudge memory flush when session is getting long
             count = _room_msg_count.get(room_id, 0) + 1
             _room_msg_count[room_id] = count
 
-            user_content = f"[Room: {room_id} | From: {sender_name}]\n{content}"
+            user_content = f"{msg_header}\n{content}"
             if count == config.MEMORY_FLUSH_THRESHOLD:
                 user_content += (
                     "\n\n[System: This session is getting long. "
@@ -276,7 +297,7 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             _room_msg_count[room_id] = 0  # Reset counter for new session
             context = build_llm_context()
             messages = [
-                {"role": "user", "content": f"{context}\n\n---\n\n[Room: {room_id} | From: {sender_name}]\n{content}"},
+                {"role": "user", "content": f"{context}\n\n---\n\n{msg_header}\n{content}"},
             ]
             llm_data = {
                 "model": config.LLM_MODEL,
@@ -351,7 +372,13 @@ async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_se
 
     await _save_session_from_response(room_id, result, existing_session_id, log_prefix)
     reply = result["choices"][0]["message"]["content"]
-    await messenger.send_message(room_id, reply, reply_to_id=reply_to_id)
+    if reply.strip():
+        await messenger.send_message(room_id, reply, reply_to_id=reply_to_id)
+    else:
+        fallback = "완료."
+        await messenger.send_message(room_id, fallback, reply_to_id=reply_to_id)
+        logger.warning(f"{log_prefix} LLM produced no text output — sent fallback acknowledgment")
+        reply = fallback
     return reply
 
 
@@ -365,7 +392,7 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
     files_payload = [("files", (name, data, "application/octet-stream")) for name, data in (downloaded_files or [])]
 
     full_text = ""
-    tool_status_msgs: list[int] = []  # message IDs for tool status messages we sent
+    tool_status_msgs: dict[str, int] = {}  # tool_name -> message_id
     session_id_from_header = None
 
     try:
@@ -411,13 +438,15 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                                 room_id, f"*{tool_name} ...*"
                             )
                             if msg_id:
-                                tool_status_msgs.append(msg_id)
-                        elif status == "completed" and tool_status_msgs:
-                            duration = ts.get("duration", 0)
-                            await messenger.edit_message(
-                                tool_status_msgs[-1],
-                                f"*{tool_name} completed ({duration:.1f}s)*"
-                            )
+                                tool_status_msgs[tool_name] = msg_id
+                        elif status == "completed":
+                            existing_msg_id = tool_status_msgs.get(tool_name)
+                            if existing_msg_id:
+                                duration = ts.get("duration", 0)
+                                await messenger.edit_message(
+                                    existing_msg_id,
+                                    f"*{tool_name} completed ({duration:.1f}s)*"
+                                )
                         continue
 
                     # Handle session_id in event payload
@@ -444,12 +473,18 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
         await _save_session_from_response(room_id, result_like, existing_session_id, log_prefix)
 
     # Clean up tool status messages
-    for mid in tool_status_msgs:
+    for mid in tool_status_msgs.values():
         await messenger.delete_message(mid)
 
     # Send the final reply
     if full_text.strip():
         await messenger.send_message(room_id, full_text.strip(), reply_to_id=reply_to_id)
+    else:
+        # LLM finished with tool calls only (no text output) — send a fallback acknowledgment
+        fallback = "완료."
+        await messenger.send_message(room_id, fallback, reply_to_id=reply_to_id)
+        logger.warning(f"{log_prefix} LLM produced no text output — sent fallback acknowledgment")
+        full_text = fallback
 
     return full_text
 
