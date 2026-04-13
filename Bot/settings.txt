@@ -66,6 +66,6 @@ HOONBOT_CATCHUP_LIMIT=20
 # Max message length before auto-splitting
 HOONBOT_MAX_MESSAGE_LENGTH=2000
 # Session max age in days. Sessions older than this start fresh. 0 = never expire.
-HOONBOT_SESSION_MAX_AGE_DAYS=0
+HOONBOT_SESSION_MAX_AGE_DAYS=1
 # Enable streaming responses (shows tool status updates in real time)
 HOONBOT_STREAMING=false
