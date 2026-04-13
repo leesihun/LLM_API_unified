@@ -268,7 +268,7 @@ JOBS_CLEANUP_DAYS = 30
 # Session Settings
 # ============================================================================
 MAX_CONVERSATION_HISTORY = 50
-SESSION_CLEANUP_DAYS = 14
+SESSION_CLEANUP_DAYS = 0
 
 # ============================================================================
 # Cleanup Settings (data retention — 2-week rolling window)

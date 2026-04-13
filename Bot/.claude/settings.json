@@ -24,7 +24,8 @@
       "Bash(xargs grep -l \"webhook\\\\|Webhook\")",
       "Read(//dev/**)",
       "Bash(grep -E \"\\\\.py$|\\\\.md$\")",
-      "Bash(grep -E \"\\\\.\\(md|py\\)$\")"
+      "Bash(grep -E \"\\\\.\\(md|py\\)$\")",
+      "Bash(grep -E \"\\\\.\\(py|md|txt|json\\)$\")"
     ]
   }
 }
