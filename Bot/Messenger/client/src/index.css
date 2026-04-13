@@ -45,6 +45,44 @@ body {
   color: white;
 }
 
+/* Message content: code blocks */
+.msg-content .msg-codeblock {
+  background-color: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 6px 0;
+  overflow-x: auto;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.msg-content .msg-codeblock code {
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+}
+
+.msg-content .msg-inline-code {
+  background-color: rgba(0, 0, 0, 0.08);
+  color: #c7254e;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 0.85em;
+}
+
+/* Inline code in own (blue) messages */
+.bg-blue-600 .msg-inline-code {
+  background-color: rgba(255, 255, 255, 0.15);
+  color: #fde68a;
+}
+
+/* KaTeX display math spacing */
+.msg-content .katex-display {
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
 /* Drag & drop animation */
 @keyframes pulse-border {
   0%, 100% { border-color: rgba(59, 130, 246, 0.4); }

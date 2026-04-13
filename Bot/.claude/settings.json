@@ -25,7 +25,11 @@
       "Read(//dev/**)",
       "Bash(grep -E \"\\\\.py$|\\\\.md$\")",
       "Bash(grep -E \"\\\\.\\(md|py\\)$\")",
-      "Bash(grep -E \"\\\\.\\(py|md|txt|json\\)$\")"
+      "Bash(grep -E \"\\\\.\\(py|md|txt|json\\)$\")",
+      "Bash(find /c/Users/Lee/Desktop/Huni/LLM_API_fast/Bot/Messenger/client/src -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))",
+      "Bash(find /c/Users/Lee/Desktop/Huni/LLM_API_fast/Bot/Messenger -maxdepth 3 -type f -name package.json -exec cat {})",
+      "Bash(2)",
+      "Bash(find /c/Users/Lee/Desktop/Huni/LLM_API_fast/Bot/Messenger/server -type f -name *.ts)"
     ]
   }
 }

@@ -1,7 +1,75 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { MessageWithSender, User, MessageReaction } from '../../../shared/types';
 
+declare global {
+  interface Window {
+    renderMathInElement?: (el: HTMLElement, opts: Record<string, unknown>) => void;
+  }
+}
+
 const QUICK_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🎉'];
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function formatMarkdown(text: string): string {
+  if (!text) return '';
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n');
+
+  // Extract code blocks and LaTeX blocks first to protect them
+  const blocks: string[] = [];
+  let processed = normalized.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
+    const idx = blocks.length;
+    blocks.push(
+      `<pre class="msg-codeblock"><code class="language-${escapeHtml(lang || 'text')}">${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`
+    );
+    return `\x00BLOCK${idx}\x00`;
+  });
+
+  // Protect LaTeX blocks ($$...$$) from markdown processing
+  processed = processed.replace(/\$\$[\s\S]*?\$\$/g, (match) => {
+    const idx = blocks.length;
+    blocks.push(match);
+    return `\x00BLOCK${idx}\x00`;
+  });
+
+  // Protect inline LaTeX ($...$) from markdown processing
+  processed = processed.replace(/\$[^$\n]+\$/g, (match) => {
+    const idx = blocks.length;
+    blocks.push(match);
+    return `\x00BLOCK${idx}\x00`;
+  });
+
+  // Process line by line for remaining markdown
+  const lines = processed.split('\n');
+  const result = lines.map((line) => {
+    // Inline code
+    line = line.replace(/`([^`]+)`/g, '<code class="msg-inline-code">$1</code>');
+    // Bold
+    line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    // Italic
+    line = line.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // @mentions (keep existing behavior)
+    line = line.replace(/(@\S+)/g, '<span class="mention-highlight">$1</span>');
+    return line;
+  }).join('\n');
+
+  // Restore protected blocks
+  let final = result;
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    final = final.replace(`\x00BLOCK${i}\x00`, blocks[i]);
+  }
+
+  return final;
+}
 
 interface MessageBubbleProps {
   message: MessageWithSender;
@@ -44,35 +112,27 @@ export default function MessageBubble({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const isEditing = editingMessageId === message.id;
+  const contentRef = useRef<HTMLParagraphElement>(null);
 
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr + 'Z');
     return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   };
 
-  // Render content with @mention highlights
-  const renderContent = (content: string) => {
-    if (!content) return null;
-    const normalized = content
-      .replace(/\r\n/g, '\n')
-      .replace(/\\r\\n/g, '\n')
-      .replace(/\\n/g, '\n');
-    const parts = normalized.split(/(@\S+)/g);
-    return parts.map((part, i) => {
-      if (part.startsWith('@')) {
-        const name = part.slice(1);
-        const isMentioned = roomMembers.some((m) => m.name === name);
-        if (isMentioned) {
-          return (
-            <span key={i} className="mention-highlight">
-              {part}
-            </span>
-          );
-        }
-      }
-      return <span key={i}>{part}</span>;
-    });
-  };
+  // Run KaTeX auto-render on the message content after mount/update
+  useEffect(() => {
+    if (contentRef.current && window.renderMathInElement) {
+      window.renderMathInElement(contentRef.current, {
+        delimiters: [
+          { left: '$$', right: '$$', display: true },
+          { left: '$', right: '$', display: false },
+          { left: '\\(', right: '\\)', display: false },
+          { left: '\\[', right: '\\]', display: true },
+        ],
+        throwOnError: false,
+      });
+    }
+  }, [message.content]);
 
   // Read count
   const readCount = (message.readBy || []).filter((id) => id !== message.senderId).length;
@@ -214,7 +274,11 @@ export default function MessageBubble({
             ) : (
               <>
                 {message.type === 'text' && (
-                  <p className="whitespace-pre-wrap break-words">{renderContent(message.content)}</p>
+                  <p
+                    ref={contentRef}
+                    className="whitespace-pre-wrap break-words msg-content"
+                    dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content) }}
+                  />
                 )}
                 {message.type === 'image' && message.fileUrl && (
                   <div>
@@ -234,7 +298,10 @@ export default function MessageBubble({
                       </div>
                     </div>
                     {message.content && (
-                      <p className="mt-1 whitespace-pre-wrap break-words">{renderContent(message.content)}</p>
+                      <p
+                      className="mt-1 whitespace-pre-wrap break-words msg-content"
+                      dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content) }}
+                    />
                     )}
                   </div>
                 )}
