@@ -1,9 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import type { MessageWithSender, User, MessageReaction } from '../../../shared/types';
 
 declare global {
   interface Window {
-    renderMathInElement?: (el: HTMLElement, opts: Record<string, unknown>) => void;
+    katex?: {
+      renderToString: (tex: string, opts: { displayMode: boolean; throwOnError: boolean }) => string;
+    };
   }
 }
 
@@ -17,6 +19,17 @@ function escapeHtml(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
+function renderMath(tex: string, display: boolean): string {
+  if (window.katex) {
+    try {
+      return window.katex.renderToString(tex, { displayMode: display, throwOnError: false });
+    } catch {
+      return escapeHtml(display ? `$$${tex}$$` : `$${tex}$`);
+    }
+  }
+  return escapeHtml(display ? `$$${tex}$$` : `$${tex}$`);
+}
+
 function formatMarkdown(text: string): string {
   if (!text) return '';
   const normalized = text
@@ -24,51 +37,44 @@ function formatMarkdown(text: string): string {
     .replace(/\\r\\n/g, '\n')
     .replace(/\\n/g, '\n');
 
-  // Extract code blocks and LaTeX blocks first to protect them
+  // Collect protected blocks (rendered to final HTML)
   const blocks: string[] = [];
+  const placeholder = (idx: number) => `\x02BLOCK${idx}\x03`;
+
+  // Code blocks first
   let processed = normalized.replace(/```(\w*)\n?([\s\S]*?)```/g, (_match, lang, code) => {
     const idx = blocks.length;
     blocks.push(
       `<pre class="msg-codeblock"><code class="language-${escapeHtml(lang || 'text')}">${escapeHtml(code.replace(/\n$/, ''))}</code></pre>`
     );
-    return `\x00BLOCK${idx}\x00`;
+    return placeholder(idx);
   });
 
-  // Protect LaTeX blocks ($$...$$) from markdown processing
-  processed = processed.replace(/\$\$[\s\S]*?\$\$/g, (match) => {
+  // Display math $$...$$
+  processed = processed.replace(/\$\$([\s\S]*?)\$\$/g, (_match, math) => {
     const idx = blocks.length;
-    blocks.push(match);
-    return `\x00BLOCK${idx}\x00`;
+    blocks.push(renderMath(math, true));
+    return placeholder(idx);
   });
 
-  // Protect inline LaTeX ($...$) from markdown processing
-  processed = processed.replace(/\$[^$\n]+\$/g, (match) => {
+  // Inline math $...$
+  processed = processed.replace(/\$([^$\n]+)\$/g, (_match, math) => {
     const idx = blocks.length;
-    blocks.push(match);
-    return `\x00BLOCK${idx}\x00`;
+    blocks.push(renderMath(math, false));
+    return placeholder(idx);
   });
 
-  // Process line by line for remaining markdown
-  const lines = processed.split('\n');
-  const result = lines.map((line) => {
-    // Inline code
+  // Inline markdown per line
+  const result = processed.split('\n').map((line) => {
     line = line.replace(/`([^`]+)`/g, '<code class="msg-inline-code">$1</code>');
-    // Bold
     line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    // Italic
     line = line.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    // @mentions (keep existing behavior)
     line = line.replace(/(@\S+)/g, '<span class="mention-highlight">$1</span>');
     return line;
   }).join('\n');
 
   // Restore protected blocks
-  let final = result;
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    final = final.replace(`\x00BLOCK${i}\x00`, blocks[i]);
-  }
-
-  return final;
+  return result.replace(/\x02BLOCK(\d+)\x03/g, (_, i) => blocks[parseInt(i)]);
 }
 
 interface MessageBubbleProps {
@@ -112,27 +118,11 @@ export default function MessageBubble({
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const isEditing = editingMessageId === message.id;
-  const contentRef = useRef<HTMLParagraphElement>(null);
 
   const formatTime = (dateStr: string) => {
     const date = new Date(dateStr + 'Z');
     return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
   };
-
-  // Run KaTeX auto-render on the message content after mount/update
-  useEffect(() => {
-    if (contentRef.current && window.renderMathInElement) {
-      window.renderMathInElement(contentRef.current, {
-        delimiters: [
-          { left: '$$', right: '$$', display: true },
-          { left: '$', right: '$', display: false },
-          { left: '\\(', right: '\\)', display: false },
-          { left: '\\[', right: '\\]', display: true },
-        ],
-        throwOnError: false,
-      });
-    }
-  }, [message.content]);
 
   // Read count
   const readCount = (message.readBy || []).filter((id) => id !== message.senderId).length;
@@ -275,7 +265,6 @@ export default function MessageBubble({
               <>
                 {message.type === 'text' && (
                   <p
-                    ref={contentRef}
                     className="whitespace-pre-wrap break-words msg-content"
                     dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content) }}
                   />
