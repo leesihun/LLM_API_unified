@@ -50,4 +50,32 @@ def generate_opencode_config() -> Path:
 
 
 def ensure_opencode_config() -> Path:
+    """Write config only if content has changed (avoids unnecessary disk writes on every startup)."""
+    config_path = get_opencode_config_path()
+    if config_path.exists():
+        try:
+            existing = config_path.read_text(encoding="utf-8")
+            # Build what we would write
+            import io
+            buf = io.StringIO()
+            import json as _json
+            provider_id = config.OPENCODE_MODEL.split("/", 1)[0]
+            candidate: dict = {"$schema": "https://opencode.ai/config.json", "model": config.OPENCODE_MODEL}
+            if provider_id == "llama.cpp":
+                llamacpp_base = config.LLAMACPP_HOST.rstrip("/")
+                if not llamacpp_base.endswith("/v1"):
+                    llamacpp_base = f"{llamacpp_base}/v1"
+                model_id = config.OPENCODE_MODEL.split("/", 1)[1]
+                candidate["provider"] = {
+                    "llama.cpp": {
+                        "npm": "@ai-sdk/openai-compatible",
+                        "name": "llama.cpp",
+                        "options": {"baseURL": llamacpp_base},
+                        "models": {model_id: {"name": model_id}},
+                    }
+                }
+            if existing.strip() == _json.dumps(candidate, indent=2).strip():
+                return config_path  # nothing changed
+        except Exception:
+            pass
     return generate_opencode_config()

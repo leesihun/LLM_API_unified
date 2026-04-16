@@ -4,15 +4,15 @@ Accepts natural language instructions, generates code via LLM, executes via subp
 """
 import sys
 import time
-import subprocess
 import re
 import asyncio
-import httpx
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 
 import config
+from backend.core.llm_backend import llm_backend
 from backend.utils.prompts_log_append import log_to_prompts_file
+from backend.utils.subprocess_stream import run_streaming
 from tools.python_coder.base import BasePythonExecutor
 
 
@@ -58,7 +58,7 @@ class NativePythonExecutor(BasePythonExecutor):
         script_path.write_text(code, encoding='utf-8')
         print(f"[PYTHON] Script written: {script_path}")
 
-        return self._run_script(script_name, exec_timeout, start_time)
+        return await self._run_script(script_name, exec_timeout, start_time)
 
     # ------------------------------------------------------------------
     # Code generation from instruction
@@ -108,30 +108,25 @@ class NativePythonExecutor(BasePythonExecutor):
         return "".join(parts)
 
     # ------------------------------------------------------------------
-    # Async LLM call (non-blocking)
+    # Async LLM call — streams through the shared llm_backend for free
+    # connection pooling, interceptor logging, and KV cache reuse.
     # ------------------------------------------------------------------
 
     async def _llm_call_async(self, prompt: str) -> str:
-        """Call llama.cpp asynchronously to generate code."""
-        url = f"{config.LLAMACPP_HOST.rstrip('/')}/v1/chat/completions"
         temperature = config.TOOL_PARAMETERS.get(
             'python_coder', {}
         ).get('temperature', config.DEFAULT_TEMPERATURE)
 
         print(f"[PYTHON] LLM call: model={config.LLAMACPP_MODEL}, temperature={temperature}")
 
-        payload = {
-            "model": config.LLAMACPP_MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": temperature,
-        }
-
-        async with httpx.AsyncClient(timeout=config.PYTHON_CODER_TIMEOUT) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-
-        content = resp.json()["choices"][0]["message"]["content"]
-        return self._extract_python_code(content)
+        response = await llm_backend.chat(
+            messages=[{"role": "user", "content": prompt}],
+            model=config.LLAMACPP_MODEL,
+            temperature=temperature,
+            session_id=self.session_id,
+            agent_type="tool:python_coder",
+        )
+        return self._extract_python_code(response.content or "")
 
     def _extract_python_code(self, response: str) -> str:
         """Extract Python code from LLM response markdown."""
@@ -146,88 +141,80 @@ class NativePythonExecutor(BasePythonExecutor):
         return response.strip()
 
     # ------------------------------------------------------------------
-    # Script execution
+    # Script execution (streams subprocess output incrementally)
     # ------------------------------------------------------------------
 
-    def _run_script(self, script_name: str, exec_timeout: int, start_time: float) -> Dict[str, Any]:
-        """Execute a Python script and return structured results."""
+    async def _run_script(self, script_name: str, exec_timeout: int, start_time: float) -> Dict[str, Any]:
+        """Execute a Python script with streaming output capture."""
         print(f"\n[PYTHON] Executing {script_name}...")
         print(f"  Python: {sys.executable}")
         print(f"  Working dir: {self.workspace}")
 
         try:
-            result = subprocess.run(
-                [sys.executable, script_name],
+            result = await run_streaming(
+                program=sys.executable,
+                args=[script_name],
                 cwd=str(self.workspace),
-                capture_output=True,
-                text=True,
                 timeout=exec_timeout,
+                max_output_size=self.max_output_size,
             )
-
-            stdout = result.stdout
-            stderr = result.stderr
-            if len(stdout) > self.max_output_size:
-                stdout = stdout[:self.max_output_size] + "\n... (output truncated)"
-            if len(stderr) > self.max_output_size:
-                stderr = stderr[:self.max_output_size] + "\n... (output truncated)"
-
-            execution_time = time.time() - start_time
-            files = self._get_workspace_files()
-            success = result.returncode == 0
-
-            self._log_execution_result(success, result.returncode, execution_time, stdout, stderr, files)
-
-            return {
-                "success": success,
-                "execution_mode": "native",
-                "script_path": str((self.workspace / script_name).resolve()),
-                "executed": True,
-                "stdout": stdout,
-                "stderr": stderr,
-                "returncode": result.returncode,
-                "execution_time": execution_time,
-                "files": files,
-                "workspace": str(self.workspace),
-                "error": None if success else stderr,
-            }
-
-        except subprocess.TimeoutExpired:
-            execution_time = time.time() - start_time
-            error_msg = f"Execution timeout after {exec_timeout} seconds"
-            print(f"[PYTHON] ERROR: {error_msg}")
-            self._log_execution_error("TIMEOUT", error_msg, execution_time)
-            return {
-                "success": False,
-                "execution_mode": "native",
-                "script_path": str((self.workspace / script_name).resolve()),
-                "executed": False,
-                "stdout": "",
-                "stderr": error_msg,
-                "returncode": -1,
-                "execution_time": execution_time,
-                "files": self._get_workspace_files(),
-                "workspace": str(self.workspace),
-                "error": error_msg,
-            }
-
         except Exception as e:
             execution_time = time.time() - start_time
             error_msg = str(e)
             print(f"[PYTHON] ERROR: {error_msg}")
             self._log_execution_error("ERROR", error_msg, execution_time)
-            return {
-                "success": False,
-                "execution_mode": "native",
-                "script_path": str((self.workspace / script_name).resolve()),
-                "executed": False,
-                "stdout": "",
-                "stderr": error_msg,
-                "returncode": -1,
-                "execution_time": execution_time,
-                "files": self._get_workspace_files(),
-                "workspace": str(self.workspace),
-                "error": error_msg,
-            }
+            return self._result_dict(
+                success=False, script_name=script_name, executed=False,
+                stdout="", stderr=error_msg, returncode=-1,
+                execution_time=execution_time, error=error_msg,
+            )
+
+        execution_time = time.time() - start_time
+        files = self._get_workspace_files()
+
+        if result.timed_out:
+            error_msg = f"Execution timeout after {exec_timeout} seconds"
+            print(f"[PYTHON] ERROR: {error_msg}")
+            self._log_execution_error("TIMEOUT", error_msg, execution_time)
+            return self._result_dict(
+                success=False, script_name=script_name, executed=False,
+                stdout=result.stdout, stderr=error_msg, returncode=-1,
+                execution_time=execution_time, error=error_msg,
+            )
+
+        success = result.returncode == 0
+        self._log_execution_result(success, result.returncode, execution_time, result.stdout, result.stderr, files)
+        return self._result_dict(
+            success=success, script_name=script_name, executed=True,
+            stdout=result.stdout, stderr=result.stderr, returncode=result.returncode,
+            execution_time=execution_time,
+            error=None if success else result.stderr,
+        )
+
+    def _result_dict(
+        self,
+        success: bool,
+        script_name: str,
+        executed: bool,
+        stdout: str,
+        stderr: str,
+        returncode: int,
+        execution_time: float,
+        error: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "success": success,
+            "execution_mode": "native",
+            "script_path": str((self.workspace / script_name).resolve()),
+            "executed": executed,
+            "stdout": stdout,
+            "stderr": stderr,
+            "returncode": returncode,
+            "execution_time": execution_time,
+            "files": self._get_workspace_files(),
+            "workspace": str(self.workspace),
+            "error": error,
+        }
 
     # ------------------------------------------------------------------
     # Script naming

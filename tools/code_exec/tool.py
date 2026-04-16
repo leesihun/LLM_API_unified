@@ -5,16 +5,15 @@ The agent LLM writes the code directly in the tool-call arguments.
 This tool just writes it to a file and runs it, skipping the
 code-generation LLM round-trip that python_coder requires.
 """
-import asyncio
 import re
 import sys
 import time
-import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 import config
+from backend.utils.subprocess_stream import run_streaming
 
 
 class CodeExecTool:
@@ -41,7 +40,7 @@ class CodeExecTool:
         timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Write *code* to a script file and run it.
+        Write *code* to a script file and run it with streaming output capture.
 
         Args:
             code:    Complete Python source to execute.
@@ -57,8 +56,41 @@ class CodeExecTool:
         print(f"\n[CODE_EXEC] Script: {script_path}")
         print(f"[CODE_EXEC] Timeout: {exec_timeout}s")
 
-        return await asyncio.to_thread(
-            self._run_script, script_name, exec_timeout, start_time
+        try:
+            result = await run_streaming(
+                program=sys.executable,
+                args=[script_name],
+                cwd=str(self.workspace),
+                timeout=exec_timeout,
+                max_output_size=self.max_output_size,
+            )
+        except Exception as e:
+            execution_time = time.time() - start_time
+            msg = str(e)
+            print(f"[CODE_EXEC] ERROR: {msg}")
+            return self._result_dict(
+                success=False, script_name=script_name, executed=False,
+                stdout="", stderr=msg, returncode=-1,
+                execution_time=execution_time, error=msg,
+            )
+
+        execution_time = time.time() - start_time
+        if result.timed_out:
+            msg = f"Execution timeout after {exec_timeout}s"
+            print(f"[CODE_EXEC] TIMEOUT: {msg}")
+            return self._result_dict(
+                success=False, script_name=script_name, executed=False,
+                stdout=result.stdout, stderr=msg, returncode=-1,
+                execution_time=execution_time, error=msg,
+            )
+
+        success = result.returncode == 0
+        print(f"[CODE_EXEC] returncode={result.returncode}, time={execution_time:.2f}s")
+        return self._result_dict(
+            success=success, script_name=script_name, executed=True,
+            stdout=result.stdout, stderr=result.stderr, returncode=result.returncode,
+            execution_time=execution_time,
+            error=None if success else result.stderr,
         )
 
     # ------------------------------------------------------------------
@@ -76,78 +108,30 @@ class CodeExecTool:
             return f"{class_matches[0].lower()}_{ts}.py"
         return f"exec_{ts}.py"
 
-    def _run_script(self, script_name: str, exec_timeout: int, start_time: float) -> Dict[str, Any]:
-        """Synchronous subprocess execution (called via asyncio.to_thread)."""
-        try:
-            result = subprocess.run(
-                [sys.executable, script_name],
-                cwd=str(self.workspace),
-                capture_output=True,
-                text=True,
-                timeout=exec_timeout,
-            )
-
-            stdout = result.stdout
-            stderr = result.stderr
-            if len(stdout) > self.max_output_size:
-                stdout = stdout[: self.max_output_size] + "\n... (output truncated)"
-            if len(stderr) > self.max_output_size:
-                stderr = stderr[: self.max_output_size] + "\n... (output truncated)"
-
-            execution_time = time.time() - start_time
-            success = result.returncode == 0
-
-            print(f"[CODE_EXEC] returncode={result.returncode}, time={execution_time:.2f}s")
-
-            return {
-                "success": success,
-                "execution_mode": "code_exec",
-                "script_path": str((self.workspace / script_name).resolve()),
-                "executed": True,
-                "stdout": stdout,
-                "stderr": stderr,
-                "returncode": result.returncode,
-                "execution_time": execution_time,
-                "files": self._list_workspace_files(),
-                "workspace": str(self.workspace),
-                "error": None if success else stderr,
-            }
-
-        except subprocess.TimeoutExpired:
-            execution_time = time.time() - start_time
-            msg = f"Execution timeout after {exec_timeout}s"
-            print(f"[CODE_EXEC] TIMEOUT: {msg}")
-            return {
-                "success": False,
-                "execution_mode": "code_exec",
-                "script_path": str((self.workspace / script_name).resolve()),
-                "executed": False,
-                "stdout": "",
-                "stderr": msg,
-                "returncode": -1,
-                "execution_time": execution_time,
-                "files": self._list_workspace_files(),
-                "workspace": str(self.workspace),
-                "error": msg,
-            }
-
-        except Exception as e:
-            execution_time = time.time() - start_time
-            msg = str(e)
-            print(f"[CODE_EXEC] ERROR: {msg}")
-            return {
-                "success": False,
-                "execution_mode": "code_exec",
-                "script_path": str((self.workspace / script_name).resolve()),
-                "executed": False,
-                "stdout": "",
-                "stderr": msg,
-                "returncode": -1,
-                "execution_time": execution_time,
-                "files": self._list_workspace_files(),
-                "workspace": str(self.workspace),
-                "error": msg,
-            }
+    def _result_dict(
+        self,
+        success: bool,
+        script_name: str,
+        executed: bool,
+        stdout: str,
+        stderr: str,
+        returncode: int,
+        execution_time: float,
+        error: Optional[str],
+    ) -> Dict[str, Any]:
+        return {
+            "success": success,
+            "execution_mode": "code_exec",
+            "script_path": str((self.workspace / script_name).resolve()),
+            "executed": executed,
+            "stdout": stdout,
+            "stderr": stderr,
+            "returncode": returncode,
+            "execution_time": execution_time,
+            "files": self._list_workspace_files(),
+            "workspace": str(self.workspace),
+            "error": error,
+        }
 
     def _list_workspace_files(self) -> List[str]:
         try:

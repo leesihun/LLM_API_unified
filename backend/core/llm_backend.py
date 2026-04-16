@@ -112,7 +112,7 @@ class LlamaCppBackend:
         return [m["id"] for m in data.get("data", [])]
 
     # ------------------------------------------------------------------
-    # Non-streaming chat (with optional tool calling)
+    # Request payload
     # ------------------------------------------------------------------
 
     def _build_payload(
@@ -120,7 +120,6 @@ class LlamaCppBackend:
         messages: List[Dict[str, Any]],
         model: str,
         temperature: float,
-        stream: bool,
         tools: Optional[List[Dict[str, Any]]] = None,
         top_p: Optional[float] = None,
         top_k: Optional[int] = None,
@@ -129,12 +128,15 @@ class LlamaCppBackend:
         repeat_penalty: Optional[float] = None,
         id_slot: Optional[int] = None,
     ) -> dict[str, Any]:
-        """Assemble the request payload with all llama.cpp parameters."""
+        """Assemble the request payload with all llama.cpp parameters.
+
+        Always uses streaming — there is no non-streaming path in this backend.
+        """
         payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "stream": stream,
+            "stream": True,
         }
         if tools:
             payload["tools"] = tools
@@ -158,6 +160,11 @@ class LlamaCppBackend:
             payload["repeat_penalty"] = repeat_penalty
         return payload
 
+    # ------------------------------------------------------------------
+    # Non-streaming wrapper — consumes chat_stream() and accumulates.
+    # Kept for callers that want a single LLMResponse at the end.
+    # ------------------------------------------------------------------
+
     async def chat(
         self,
         messages: List[Dict[str, Any]],
@@ -171,47 +178,28 @@ class LlamaCppBackend:
         repeat_penalty: Optional[float] = None,
         id_slot: Optional[int] = None,
     ) -> LLMResponse:
-        payload = self._build_payload(
-            messages, model, temperature, stream=False,
+        content_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        finish_reason = "stop"
+
+        async for event in self.chat_stream(
+            messages, model, temperature,
             tools=tools, top_p=top_p, top_k=top_k, min_p=min_p,
             max_tokens=max_tokens, repeat_penalty=repeat_penalty,
             id_slot=id_slot,
+        ):
+            if isinstance(event, TextEvent):
+                content_parts.append(event.content)
+            elif isinstance(event, ToolCallDeltaEvent):
+                tool_calls.extend(event.tool_calls)
+                finish_reason = event.finish_reason
+
+        content = "".join(content_parts) if content_parts else None
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls or None,
+            finish_reason=finish_reason,
         )
-
-        resp = await self._client.post(
-            f"{self.host}/v1/chat/completions",
-            json=payload,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        return self._parse_response(data)
-
-    def _parse_response(self, data: dict) -> LLMResponse:
-        choice = data["choices"][0]
-        message = choice["message"]
-        finish = choice.get("finish_reason", "stop")
-
-        content = message.get("content")
-        raw_tool_calls = message.get("tool_calls")
-
-        tool_calls = None
-        if raw_tool_calls:
-            tool_calls = []
-            for i, tc in enumerate(raw_tool_calls):
-                func = tc.get("function", tc)
-                args_raw = func.get("arguments", "{}")
-                if isinstance(args_raw, str):
-                    args = json.loads(args_raw)
-                else:
-                    args = args_raw
-                call_id = tc.get("id", f"call_{i}")
-                tool_calls.append(ToolCall(
-                    id=call_id,
-                    function=ToolCallFunction(name=func["name"], arguments=args),
-                ))
-
-        return LLMResponse(content=content, tool_calls=tool_calls, finish_reason=finish)
 
     # ------------------------------------------------------------------
     # Streaming chat (with optional tool calling)
@@ -231,7 +219,7 @@ class LlamaCppBackend:
         id_slot: Optional[int] = None,
     ) -> AsyncIterator[StreamEvent]:
         payload = self._build_payload(
-            messages, model, temperature, stream=True,
+            messages, model, temperature,
             tools=tools, top_p=top_p, top_k=top_k, min_p=min_p,
             max_tokens=max_tokens, repeat_penalty=repeat_penalty,
             id_slot=id_slot,

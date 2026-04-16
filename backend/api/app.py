@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import config
-from backend.api.routes import auth, models, admin, chat, sessions, tools, jobs
+from backend.api.routes import auth, models, admin, chat, sessions, tools, jobs, rag_upload_async
 
 _START_TIME = time.time()
 
@@ -305,8 +305,9 @@ app.include_router(models.router)    # /v1/models
 app.include_router(admin.router)     # /api/admin/*
 app.include_router(chat.router)      # /v1/chat/completions
 app.include_router(sessions.router)  # /api/chat/sessions, /api/chat/history
-app.include_router(tools.router)     # /api/tools/*
-app.include_router(jobs.router)      # /api/jobs/*
+app.include_router(tools.router)           # /api/tools/*
+app.include_router(jobs.router)            # /api/jobs/*
+app.include_router(rag_upload_async.router)  # /api/rag/upload/stream (SSE progress)
 
 
 @app.exception_handler(Exception)

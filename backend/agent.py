@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import config
 from backend.core.llm_backend import (
-    LLMResponse, StreamEvent, TextEvent,
+    StreamEvent, TextEvent,
     ToolCallDeltaEvent, ToolCall, ToolStatusEvent, llm_backend,
 )
 from backend.utils.stop_signal import check_stop
@@ -71,6 +71,31 @@ _CACHED_TOOL_SCHEMAS: List[Dict[str, Any]] = _build_tool_schemas()
 # Module-level RAG collections cache: {username: {"collections": [...], "expires_at": float}}
 _rag_collections_cache: Dict[str, Dict[str, Any]] = {}
 _RAG_CACHE_TTL: float = 60.0
+
+# Module-level memo cache: {username: (mtime_float, content_str)}
+# Avoids a disk read on every agent request when the memo file hasn't changed.
+_memo_cache: Dict[str, tuple] = {}
+
+
+def _load_memo_cached(username: str) -> str:
+    """Return MemoTool.load_for_prompt() result, re-reading only when the file changes."""
+    from tools.memo.tool import MemoTool
+    memo_path = config.MEMO_DIR / f"{username}.json"
+    try:
+        mtime = memo_path.stat().st_mtime
+        cached = _memo_cache.get(username)
+        if cached and cached[0] == mtime:
+            return cached[1]
+        content = MemoTool.load_for_prompt(username)
+        _memo_cache[username] = (mtime, content)
+        return content
+    except FileNotFoundError:
+        _memo_cache[username] = (0.0, "")
+        return ""
+    except Exception:
+        # Fallback to uncached read on any unexpected error
+        from tools.memo.tool import MemoTool as _MemoTool
+        return _MemoTool.load_for_prompt(username)
 
 
 def reload_prompt_cache():
@@ -313,8 +338,7 @@ class AgentLoop:
         if rag_ctx:
             parts.append(rag_ctx)
         if self.username and "memo" in self.enabled_tools:
-            from tools.memo.tool import MemoTool
-            memo_ctx = MemoTool.load_for_prompt(self.username)
+            memo_ctx = _load_memo_cached(self.username)
             if memo_ctx:
                 memo_cap = getattr(config, "AGENT_MEMO_MAX_CHARS", 2000)
                 if len(memo_ctx) > memo_cap:
@@ -448,6 +472,8 @@ class AgentLoop:
                 "tool_call_id": tool_call_id,
                 "success": result.get("success", True), "duration": duration,
             })
+            if len(self.tool_calls_log) > 200:
+                self.tool_calls_log = self.tool_calls_log[-200:]
             self._log_tool_result(name, tool_call_id, result, duration)
             return result
         except Exception as e:
@@ -459,6 +485,8 @@ class AgentLoop:
                 "tool_call_id": tool_call_id,
                 "success": False, "error": str(e), "duration": duration,
             })
+            if len(self.tool_calls_log) > 200:
+                self.tool_calls_log = self.tool_calls_log[-200:]
             self._log_tool_result(name, tool_call_id, err_result, duration)
             return err_result
 
@@ -872,7 +900,10 @@ class AgentLoop:
             print(f"[AGENT] Compressed {masked} old message(s)")
 
     # ------------------------------------------------------------------
-    # Non-streaming run
+    # Non-streaming run — thin accumulator over run_stream().
+    # The entire loop is streaming under the hood; this method just
+    # collects text events into a final string for callers that don't
+    # need incremental output.
     # ------------------------------------------------------------------
 
     async def run(
@@ -880,71 +911,11 @@ class AgentLoop:
         messages: List[Dict[str, Any]],
         attached_files: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
-        self._refresh_available_rag_collections()
-        # Static system prompt first (byte-stable → KV cache hit)
-        system_prompt = self._build_system_prompt()
-        msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-        # Dynamic context in a separate message (changes per request, doesn't break prefix cache)
-        dynamic_ctx = self._build_dynamic_context(attached_files)
-        if dynamic_ctx:
-            msgs.append({"role": "system", "content": dynamic_ctx})
-        msgs.extend(messages)
-        self._enforce_history_limit(msgs)
-        tool_schemas = self._get_tool_schemas()
-
-        for iteration in range(self.max_iterations):
-            check_stop()
-            print(f"\n[AGENT] Iteration {iteration + 1}/{self.max_iterations}")
-            self._log_iteration_start(iteration)
-
-            # Track iteration boundaries for microcompaction
-            self._iteration_boundaries.append(len(msgs))
-
-            response: LLMResponse = await self.llm.chat(
-                msgs, self.model, self.temperature,
-                tools=tool_schemas,
-                session_id=self.session_id,
-                agent_type="agent",
-                **self._sampling_kwargs(final_response=False),
-            )
-
-            if not response.tool_calls:
-                self._log_agent_complete("LLM returned final text response", iteration + 1)
-                return response.content or ""
-
-            # Log what the LLM wants to call
-            self._log_tool_calls_requested(response.tool_calls, iteration)
-
-            # Append assistant message with tool_calls
-            msgs.append(self._build_assistant_tool_msg(response.tool_calls))
-
-            # Execute all tools in parallel (individual results logged in execute_tool)
-            log_start = len(self.tool_calls_log)
-            results = await self._execute_tools_parallel(response.tool_calls)
-            new_entries = self.tool_calls_log[log_start:]
-            duration_by_call_id = {
-                e.get("tool_call_id"): e.get("duration", 0)
-                for e in new_entries
-            }
-            durations = [duration_by_call_id.get(tc.id, 0) for tc in response.tool_calls]
-            self._log_execution_summary(response.tool_calls, results, durations, iteration)
-
-            for tc, result in zip(response.tool_calls, results):
-                msgs.append(self._build_tool_result_msg(tc, result))
-
-            # Compress old iteration tool results (hot tail: keep current full)
-            self._compress_old_iterations(msgs, iteration)
-
-        # Max iterations reached — final answer without tools
-        print(f"[AGENT] Max iterations ({self.max_iterations}) reached, requesting final answer")
-        self._log_agent_complete(f"Max iterations ({self.max_iterations}) reached", self.max_iterations)
-        final_response: LLMResponse = await self.llm.chat(
-            msgs, self.model, self.temperature,
-            session_id=self.session_id,
-            agent_type="agent:final",
-            **self._sampling_kwargs(final_response=True),
-        )
-        return final_response.content or ""
+        parts: list[str] = []
+        async for event in self.run_stream(messages, attached_files):
+            if isinstance(event, TextEvent):
+                parts.append(event.content)
+        return "".join(parts)
 
     # ------------------------------------------------------------------
     # Streaming run

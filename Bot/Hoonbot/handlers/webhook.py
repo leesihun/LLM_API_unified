@@ -475,9 +475,12 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
         result_like = {"x_session_id": session_id_from_header}
         await _save_session_from_response(room_id, result_like, existing_session_id, log_prefix)
 
-    # Clean up tool status messages
-    for mid in tool_status_msgs.values():
-        await messenger.delete_message(mid)
+    # Clean up tool status messages concurrently
+    if tool_status_msgs:
+        await asyncio.gather(
+            *[messenger.delete_message(mid) for mid in tool_status_msgs.values()],
+            return_exceptions=True,
+        )
 
     # Send the final reply
     if full_text.strip():

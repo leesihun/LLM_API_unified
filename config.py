@@ -3,6 +3,7 @@ LLM API Configuration
 All settings are configurable here.
 Single server, llama.cpp backend, native tool calling.
 """
+import os
 from pathlib import Path
 from typing import Literal
 
@@ -54,15 +55,15 @@ PROMPTS_LOG_MAX_LINES = 100_000
 # Agent Settings
 # ============================================================================
 AGENT_MAX_ITERATIONS = 60
-AGENT_TOOL_LOOP_MAX_TOKENS = 4096
+AGENT_TOOL_LOOP_MAX_TOKENS = 16384
 AGENT_SYSTEM_PROMPT = "system.txt"
 AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
-AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 40
+AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 80
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
-# False = write each block synchronously with flush (visible immediately).
-AGENT_LOG_ASYNC = False
+# True = offload log writes to thread pool (non-blocking, recommended for production).
+AGENT_LOG_ASYNC = True
 # Same file as LLM interceptor + tools: one combined prompts.log (set to another Path to split).
 AGENT_LOG_PATH = PROMPTS_LOG_PATH
 
@@ -74,7 +75,8 @@ DATABASE_PATH = "data/app.db"
 # ============================================================================
 # Authentication Settings
 # ============================================================================
-JWT_SECRET_KEY = "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"
+# Set JWT_SECRET_KEY environment variable in production. The fallback is only for local dev.
+JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "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")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24 * 7
 
@@ -259,6 +261,13 @@ PROCESS_MONITOR_MAX_BUFFER_LINES = 5000
 PROCESS_MONITOR_MAX_PER_SESSION = 20
 
 # ============================================================================
+# Shell Exec Tool Settings
+# ============================================================================
+# True = kill the process when shell_exec timeout is reached (prevents orphan processes).
+# False = legacy behaviour: return partial output, leave process running.
+SHELL_EXEC_KILL_ON_TIMEOUT = True
+
+# ============================================================================
 # Memo Tool Settings
 # ============================================================================
 MEMO_DIR = Path("data/memory")
@@ -275,7 +284,7 @@ JOBS_CLEANUP_DAYS = 30
 # Session Settings
 # ============================================================================
 MAX_CONVERSATION_HISTORY = 50
-SESSION_CLEANUP_DAYS = 0
+SESSION_CLEANUP_DAYS = 7
 
 # ============================================================================
 # Cleanup Settings (data retention — 2-week rolling window)

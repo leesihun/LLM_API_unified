@@ -30,7 +30,7 @@ class LLMInterceptor:
         lines = []
 
         response = log_data.get("response", "")
-        is_request = response in ("[WAITING FOR RESPONSE...]", "[STREAMING...]")
+        is_request = response == "[STREAMING...]"
 
         lines.append("")
         lines.append("=" * 80)
@@ -118,13 +118,16 @@ class LLMInterceptor:
             self._log_interaction_sync(log_data)
 
     def _estimate_tokens(self, messages: List[Dict]) -> int:
-        # Use char count / 4 as a token approximation — same accuracy as word-split
-        # but avoids building a throwaway list for every message
-        total = sum(len(str(m.get("content") or "")) for m in messages)
-        return total // 4
+        # Use UTF-8 byte count / 3 as a token approximation.
+        # More accurate than char-count/4 for Korean/CJK text where each character
+        # is 3 UTF-8 bytes and typically 1–2 tokens (vs ASCII 1 char ≈ 0.25 tokens).
+        total = sum(len((str(m.get("content") or "")).encode("utf-8")) for m in messages)
+        return total // 3
 
     # ------------------------------------------------------------------
-    # Non-streaming chat
+    # Non-streaming chat — thin accumulator over chat_stream().
+    # Everything is streaming under the hood; this method just collects
+    # the full response for callers that want a single LLMResponse.
     # ------------------------------------------------------------------
 
     async def chat(
@@ -142,82 +145,33 @@ class LLMInterceptor:
         repeat_penalty: float = None,
         id_slot: int = None,
     ):
-        """Returns LLMResponse from backend.chat()."""
-        from backend.core.llm_backend import LLMResponse
-        start_time = time.time()
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        log_id = str(uuid.uuid4())[:8]
-        backend_name = "LlamaCppBackend"
+        from backend.core.llm_backend import (
+            LLMResponse, TextEvent, ToolCallDeltaEvent, ToolCall,
+        )
 
-        print(f"\n[LLM] Calling model: {model}")
-        print(f"[LLM] Backend: {backend_name}")
-        print(f"[LLM] Temperature: {temperature}")
-        print(f"[LLM] Agent: {agent_type or 'N/A'}")
-        print(f"[LLM] Messages: {len(messages)}")
-        if tools:
-            print(f"[LLM] Tools: {len(tools)} schemas")
+        content_parts: list[str] = []
+        tool_calls: list[ToolCall] = []
+        finish_reason = "stop"
 
-        input_tokens = self._estimate_tokens(messages)
-        self._log_interaction({
-            "id": log_id, "timestamp": timestamp, "streaming": False,
-            "model": model, "temperature": temperature,
-            "messages": messages,  # kept for role-count summary only; not serialised to JSON body
-            "backend": backend_name, "session_id": session_id or "N/A",
-            "agent_type": agent_type or "N/A",
-            "tools_provided": len(tools) if tools else 0,
-            "response": "[WAITING FOR RESPONSE...]",
-            "estimated_tokens": {"input": input_tokens, "output": 0, "total": input_tokens},
-        })
+        async for event in self.chat_stream(
+            messages, model, temperature,
+            tools=tools, session_id=session_id, agent_type=agent_type,
+            top_p=top_p, top_k=top_k, min_p=min_p,
+            max_tokens=max_tokens, repeat_penalty=repeat_penalty,
+            id_slot=id_slot,
+        ):
+            if isinstance(event, TextEvent):
+                content_parts.append(event.content)
+            elif isinstance(event, ToolCallDeltaEvent):
+                tool_calls.extend(event.tool_calls)
+                finish_reason = event.finish_reason
 
-        response_log: Dict[str, Any] = {
-            "id": log_id, "timestamp": timestamp, "streaming": False,
-            "model": model, "temperature": temperature,
-            "messages": messages,  # kept for role-count summary only; not serialised to JSON body
-            "backend": backend_name, "session_id": session_id or "N/A",
-            "agent_type": agent_type or "N/A",
-        }
-
-        try:
-            result: LLMResponse = await self.backend.chat(
-                messages, model, temperature, tools=tools,
-                top_p=top_p, top_k=top_k, min_p=min_p,
-                max_tokens=max_tokens, repeat_penalty=repeat_penalty,
-                id_slot=id_slot,
-            )
-            duration = time.time() - start_time
-
-            response_text = result.content or ""
-            output_tokens = int(len(response_text.split()) * 1.3)
-
-            response_log["response"] = response_text
-            response_log["duration_seconds"] = duration
-            response_log["success"] = True
-            response_log["estimated_tokens"] = {
-                "input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens,
-            }
-            if result.tool_calls:
-                tc_summary = [{"name": tc.function.name, "args": tc.function.arguments} for tc in result.tool_calls]
-                response_log["response_tool_calls"] = json.dumps(tc_summary, ensure_ascii=False)[:3000]
-
-            print(f"[LLM] Response received in {duration:.2f}s")
-            if result.tool_calls:
-                print(f"[LLM] Tool calls: {[tc.function.name for tc in result.tool_calls]}")
-            else:
-                preview = response_text[:150] + "..." if len(response_text) > 150 else response_text
-                print(f"[LLM] Response preview: {preview}")
-
-            return result
-
-        except Exception as e:
-            print(f"[LLM] ERROR: {e}")
-            response_log["success"] = False
-            response_log["error"] = str(e)
-            response_log["duration_seconds"] = time.time() - start_time
-            response_log["response"] = ""
-            response_log["estimated_tokens"] = {"input": input_tokens, "output": 0, "total": input_tokens}
-            raise
-        finally:
-            self._log_interaction(response_log)
+        content = "".join(content_parts) if content_parts else None
+        return LLMResponse(
+            content=content,
+            tool_calls=tool_calls or None,
+            finish_reason=finish_reason,
+        )
 
     # ------------------------------------------------------------------
     # Streaming chat

@@ -33,6 +33,22 @@ router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 # Module-level dict of running asyncio tasks for cancellation
 _running_tasks: Dict[str, asyncio.Task] = {}
 
+# Per-job asyncio.Event for SSE stream wake-up — replaces 0.2s polling
+_job_signals: Dict[str, asyncio.Event] = {}
+
+
+def _get_job_signal(job_id: str) -> asyncio.Event:
+    if job_id not in _job_signals:
+        _job_signals[job_id] = asyncio.Event()
+    return _job_signals[job_id]
+
+
+def _signal_job(job_id: str):
+    """Wake up any SSE stream subscribers waiting on this job."""
+    event = _job_signals.get(job_id)
+    if event:
+        event.set()
+
 
 # ============================================================================
 # Background runner
@@ -51,6 +67,7 @@ async def _run_job(
     from backend.agent import AgentLoop
 
     job_store.update_status(job_id, "running")
+    _signal_job(job_id)
     try:
         agent = AgentLoop(
             model=model,
@@ -64,6 +81,7 @@ async def _run_job(
             if isinstance(event, TextEvent):
                 assistant_message += event.content
                 job_store.append_chunk(job_id, event.content)
+                _signal_job(job_id)
             elif isinstance(event, ToolStatusEvent):
                 job_store.append_tool_event(
                     job_id,
@@ -71,6 +89,7 @@ async def _run_job(
                     status=event.status,
                     duration=getattr(event, "duration", 0.0),
                 )
+                _signal_job(job_id)
 
         await asyncio.to_thread(
             conversation_store.append_messages,
@@ -80,13 +99,17 @@ async def _run_job(
         await asyncio.to_thread(db.increment_session_message_count, session_id, 1)
 
         job_store.update_status(job_id, "completed")
+        _signal_job(job_id)
 
     except asyncio.CancelledError:
         job_store.update_status(job_id, "cancelled")
+        _signal_job(job_id)
     except Exception as e:
         job_store.update_status(job_id, "failed", error=str(e))
+        _signal_job(job_id)
     finally:
         _running_tasks.pop(job_id, None)
+        _job_signals.pop(job_id, None)
 
 
 # ============================================================================
@@ -275,6 +298,7 @@ async def stream_job(job_id: str, current_user: Optional[dict] = Depends(get_opt
 
     async def generator():
         last_offset = 0
+        signal = _get_job_signal(job_id)
         while True:
             current = job_store.load(job_id)
             if current is None:
@@ -294,7 +318,12 @@ async def stream_job(job_id: str, current_user: Optional[dict] = Depends(get_opt
                 })}
                 break
 
-            await asyncio.sleep(0.2)
+            # Wait for a signal from _run_job (max 2s safety-net for race conditions)
+            signal.clear()
+            try:
+                await asyncio.wait_for(asyncio.shield(signal.wait()), timeout=2.0)
+            except asyncio.TimeoutError:
+                pass
 
     return EventSourceResponse(generator())
 

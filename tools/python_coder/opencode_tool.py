@@ -17,6 +17,7 @@ import httpx
 
 import config
 from backend.utils.prompts_log_append import log_to_prompts_file
+from backend.utils.subprocess_stream import run_streaming
 from tools.python_coder.base import BasePythonExecutor
 
 # Pre-compiled regexes — used on every line of streaming output and parse calls
@@ -139,7 +140,7 @@ class OpenCodeExecutor(BasePythonExecutor):
             return False, "Generated script contains markdown fences and is not directly runnable"
         return True, ""
 
-    def _attempt_recovery_execution(
+    async def _attempt_recovery_execution(
         self,
         workspace_py_after: set[Path],
         opencode_output: str,
@@ -159,32 +160,13 @@ class OpenCodeExecutor(BasePythonExecutor):
             }
 
         try:
-            result = subprocess.run(
-                [sys.executable, script_path.name],
-                capture_output=True,
-                text=True,
-                timeout=min(timeout, self.python_timeout),
+            result = await run_streaming(
+                program=sys.executable,
+                args=[script_path.name],
                 cwd=str(self.workspace),
-                encoding="utf-8",
-                errors="replace",
+                timeout=min(timeout, self.python_timeout),
+                max_output_size=self.max_output_size,
             )
-            return {
-                "executed": True,
-                "script_path": str(script_path.resolve()),
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode,
-                "error": None if result.returncode == 0 else (result.stderr or reason),
-            }
-        except subprocess.TimeoutExpired:
-            return {
-                "executed": False,
-                "script_path": str(script_path.resolve()),
-                "stdout": "",
-                "stderr": f"Recovery execution timeout after {timeout}s",
-                "returncode": -1,
-                "error": f"{reason}. Recovery execution timeout.",
-            }
         except Exception as exc:
             return {
                 "executed": False,
@@ -195,7 +177,26 @@ class OpenCodeExecutor(BasePythonExecutor):
                 "error": f"{reason}. Recovery execution failed: {exc}",
             }
 
-    def _recover_and_finish(
+        if result.timed_out:
+            return {
+                "executed": False,
+                "script_path": str(script_path.resolve()),
+                "stdout": result.stdout,
+                "stderr": f"Recovery execution timeout after {timeout}s",
+                "returncode": -1,
+                "error": f"{reason}. Recovery execution timeout.",
+            }
+
+        return {
+            "executed": True,
+            "script_path": str(script_path.resolve()),
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+            "error": None if result.returncode == 0 else (result.stderr or reason),
+        }
+
+    async def _recover_and_finish(
         self,
         workspace_py_after: set,
         opencode_output: str,
@@ -204,7 +205,7 @@ class OpenCodeExecutor(BasePythonExecutor):
         reason: str,
     ) -> Dict[str, Any]:
         """Attempt recovery execution, build final result, log, and return."""
-        recovery = self._attempt_recovery_execution(
+        recovery = await self._attempt_recovery_execution(
             workspace_py_after=workspace_py_after,
             opencode_output=opencode_output,
             timeout=exec_timeout,
@@ -287,7 +288,7 @@ class OpenCodeExecutor(BasePythonExecutor):
         opencode_output = opencode_result.get("output", "")
 
         if not opencode_result["success"]:
-            return self._recover_and_finish(
+            return await self._recover_and_finish(
                 workspace_py_after, opencode_output, exec_timeout, start_time,
                 f"OpenCode failed: {opencode_result.get('error', 'unknown error')}",
             )
@@ -300,19 +301,19 @@ class OpenCodeExecutor(BasePythonExecutor):
         )
 
         if candidate_script is None:
-            return self._recover_and_finish(
+            return await self._recover_and_finish(
                 workspace_py_after, opencode_output, exec_timeout, start_time,
                 "OpenCode did not generate a runnable Python script",
             )
 
         runnable, reason = self._is_runnable_python_file(candidate_script)
         if not runnable:
-            return self._recover_and_finish(
+            return await self._recover_and_finish(
                 workspace_py_after, opencode_output, exec_timeout, start_time,
                 reason,
             )
 
-        python_result = self._run_python_file(candidate_script, min(exec_timeout, self.python_timeout))
+        python_result = await self._run_python_file(candidate_script, min(exec_timeout, self.python_timeout))
         combined_stdout = self._combine_outputs(
             opencode_output=opencode_output,
             python_file=candidate_script,
@@ -612,9 +613,9 @@ class OpenCodeExecutor(BasePythonExecutor):
 
         return ""
 
-    def _run_python_file(self, python_file: Path, timeout: int) -> Dict[str, Any]:
+    async def _run_python_file(self, python_file: Path, timeout: int) -> Dict[str, Any]:
         """
-        Run a Python file and capture output
+        Run a Python file with streaming output capture.
 
         Returns:
             Dict with keys: stdout, stderr, returncode
@@ -623,40 +624,38 @@ class OpenCodeExecutor(BasePythonExecutor):
         log_to_prompts_file(f"  Executing: python {python_file.name}")
 
         try:
-            result = subprocess.run(
-                [sys.executable, python_file.name],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+            result = await run_streaming(
+                program=sys.executable,
+                args=[python_file.name],
                 cwd=str(self.workspace),
-                encoding='utf-8',
-                errors='replace'
+                timeout=timeout,
+                max_output_size=self.max_output_size,
             )
-
-            log_to_prompts_file(f"  Return code: {result.returncode}")
-            if result.stdout:
-                log_to_prompts_file(f"  Stdout: {result.stdout[:500]}")
-            if result.stderr:
-                log_to_prompts_file(f"  Stderr: {result.stderr[:500]}")
-
-            return {
-                "stdout": result.stdout,
-                "stderr": result.stderr,
-                "returncode": result.returncode
-            }
-
-        except subprocess.TimeoutExpired:
-            return {
-                "stdout": "",
-                "stderr": f"Python execution timeout after {timeout}s",
-                "returncode": -1
-            }
         except Exception as e:
             return {
                 "stdout": "",
                 "stderr": f"Python execution error: {str(e)}",
-                "returncode": -1
+                "returncode": -1,
             }
+
+        if result.timed_out:
+            return {
+                "stdout": result.stdout,
+                "stderr": f"Python execution timeout after {timeout}s",
+                "returncode": -1,
+            }
+
+        log_to_prompts_file(f"  Return code: {result.returncode}")
+        if result.stdout:
+            log_to_prompts_file(f"  Stdout: {result.stdout[:500]}")
+        if result.stderr:
+            log_to_prompts_file(f"  Stderr: {result.stderr[:500]}")
+
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+        }
 
     def _build_command(self, instruction: str) -> List[str]:
         """Build opencode run command"""
