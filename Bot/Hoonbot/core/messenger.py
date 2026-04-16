@@ -147,15 +147,26 @@ async def send_message(room_id: int, content: str, reply_to_id: int | None = Non
         await with_retry(_send, label="Messenger send", max_attempts=3)
 
 
-async def send_message_returning_id(room_id: int, content: str) -> int | None:
-    """Send a message and return its ID (for later editing/deletion)."""
+async def send_message_returning_id(
+    room_id: int,
+    content: str,
+    reply_to_id: int | None = None,
+) -> int | None:
+    """Send a single message and return its ID (for later editing/deletion).
+
+    No auto-splitting — callers that stream into this message should keep the
+    initial content short (typically the first token of the streamed reply).
+    """
     try:
         async def _send():
             client = _get_client()
+            body: dict = {"roomId": room_id, "content": content, "type": "text"}
+            if reply_to_id:
+                body["replyToId"] = reply_to_id
             resp = await client.post(
                 f"{config.MESSENGER_URL}/api/send-message",
                 headers=_headers(),
-                json={"roomId": room_id, "content": content, "type": "text"},
+                json=body,
             )
             resp.raise_for_status()
             data = resp.json()

@@ -387,14 +387,65 @@ async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_se
 # Streaming processing — shows tool status in real time
 # ---------------------------------------------------------------------------
 
+# Minimum delay between successive edits of the streamed reply message.
+# Keeps the Messenger DB/WebSocket fan-out from being hammered on every token
+# while still giving the UI a smooth, visibly-growing reply.
+_STREAM_EDIT_INTERVAL_SECONDS = 0.25
+
+
 async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existing_session_id: str | None, log_prefix: str, reply_to_id: int | None, downloaded_files: list[tuple[str, bytes]] | None = None) -> str | None:
-    """Stream SSE from LLM API, send tool status updates, then final reply."""
+    """Stream SSE from LLM API and mirror it live to Messenger.
+
+    Flow:
+      - Tool status events create transient bubbles that update on completion
+        and are deleted at the end of the turn.
+      - Text deltas accumulate into `full_text`. On the first delta we send a
+        placeholder Messenger message (threaded as the reply). Subsequent
+        deltas trigger throttled `edit-message` calls so clients watching the
+        room see the reply grow token-by-token.
+      - On stream end a final edit guarantees the latest text is rendered.
+    """
     llm_data["stream"] = "true"
     files_payload = [("files", (name, data, "application/octet-stream")) for name, data in (downloaded_files or [])]
 
     full_text = ""
     tool_status_msgs: dict[str, int] = {}  # tool_call_id -> message_id
-    session_id_from_header = None
+    session_id_from_header: str | None = None
+
+    # Live-streaming state for the reply message itself.
+    reply_msg_id: int | None = None
+    last_sent_text = ""
+    last_edit_time = 0.0
+
+    async def _flush_reply() -> None:
+        """Push the latest `full_text` into Messenger, creating the reply
+        placeholder on first call or editing it on later calls. Rate-limited
+        to `_STREAM_EDIT_INTERVAL_SECONDS` between edits; the loop-exit
+        finalizer below guarantees the last token is never dropped."""
+        nonlocal reply_msg_id, last_sent_text, last_edit_time
+
+        if full_text == last_sent_text:
+            return
+
+        now = time.monotonic()
+        if (now - last_edit_time) < _STREAM_EDIT_INTERVAL_SECONDS:
+            return
+
+        if reply_msg_id is None:
+            reply_msg_id = await messenger.send_message_returning_id(
+                room_id, full_text, reply_to_id=reply_to_id,
+            )
+            if reply_msg_id is None:
+                # Placeholder send failed; leave last_sent_text unchanged so we
+                # retry on the next delta (and fall back to send_message at end).
+                return
+            # Reply is visible now — the typing indicator is redundant.
+            await messenger.stop_typing(room_id)
+        else:
+            await messenger.edit_message(reply_msg_id, full_text)
+
+        last_sent_text = full_text
+        last_edit_time = now
 
     try:
         client = get_client()
@@ -414,7 +465,6 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
 
             response.raise_for_status()
 
-            # Check for session_id in response headers
             session_id_from_header = response.headers.get("x-session-id")
 
             async for line in response.aiter_lines():
@@ -429,7 +479,7 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                 except json.JSONDecodeError:
                     continue
 
-                # Handle tool status events
+                # --- Tool status bubbles ---
                 if "tool_status" in event:
                     ts = event["tool_status"]
                     tool_name = ts.get("tool_name", "")
@@ -452,18 +502,17 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                             )
                     continue
 
-                # Handle session_id in event payload
                 if "x_session_id" in event:
                     session_id_from_header = event["x_session_id"]
 
-                # Handle text content
+                # --- Text deltas: accumulate and push to Messenger ---
                 choices = event.get("choices", [])
                 if not choices:
                     continue
-                delta = choices[0].get("delta", {})
-                text = delta.get("content", "")
+                text = choices[0].get("delta", {}).get("content", "")
                 if text:
                     full_text += text
+                    await _flush_reply()
 
     except httpx.ReadTimeout:
         logger.warning(f"{log_prefix} Stream read timeout after collecting {len(full_text)} chars")
@@ -482,17 +531,30 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
             return_exceptions=True,
         )
 
-    # Send the final reply
-    if full_text.strip():
-        await messenger.send_message(room_id, full_text.strip(), reply_to_id=reply_to_id)
-    else:
-        # LLM finished with tool calls only (no text output) — send a fallback acknowledgment
-        fallback = "완료."
-        await messenger.send_message(room_id, fallback, reply_to_id=reply_to_id)
-        logger.warning(f"{log_prefix} LLM produced no text output — sent fallback acknowledgment")
-        full_text = fallback
+    # --- Finalize the reply ---
+    final_text = full_text.strip()
 
-    return full_text
+    if final_text:
+        if reply_msg_id is not None:
+            # Ensure the final text (possibly stripped) is what the user sees.
+            if final_text != last_sent_text:
+                await messenger.edit_message(reply_msg_id, final_text)
+        else:
+            # Placeholder never got created (e.g. initial send failed or no
+            # flush fired). Fall back to a normal send so the user still sees
+            # the reply.
+            await messenger.send_message(room_id, final_text, reply_to_id=reply_to_id)
+        return final_text
+
+    # No text at all: LLM finished with tool calls only. Surface a short
+    # acknowledgment so the user knows the turn ended.
+    fallback = "완료."
+    if reply_msg_id is not None:
+        await messenger.edit_message(reply_msg_id, fallback)
+    else:
+        await messenger.send_message(room_id, fallback, reply_to_id=reply_to_id)
+    logger.warning(f"{log_prefix} LLM produced no text output — sent fallback acknowledgment")
+    return fallback
 
 
 # ---------------------------------------------------------------------------
