@@ -12,6 +12,7 @@ from typing import List, Dict, Any, Optional, Callable
 import numpy as np
 
 import config
+from tools.rag.tool import _ensure_chunk_lookup, _set_chunk_lookup_for_doc
 
 
 class MemoryEfficientUploader:
@@ -168,16 +169,19 @@ class MemoryEfficientUploader:
                 "collection_name": collection_name,
                 "created_at": time.time(),
                 "documents": {},
-                "chunk_count": 0
+                "chunk_count": 0,
+                "chunk_lookup": {},
             }
+        _ensure_chunk_lookup(metadata)
         
         # Update metadata
+        chunk_indices = list(range(start_idx, index.ntotal))
         if use_disk_storage:
             # Store reference to chunks file instead of chunks themselves
             metadata["documents"][doc_id] = {
                 "name": doc_name,
                 "path": str(document_path),
-                "chunk_indices": list(range(start_idx, index.ntotal)),
+                "chunk_indices": chunk_indices,
                 "chunks_file": str(chunks_file),  # Reference to disk file
                 "chunk_count": num_chunks,
                 "uploaded_at": upload_time,
@@ -188,13 +192,14 @@ class MemoryEfficientUploader:
             metadata["documents"][doc_id] = {
                 "name": doc_name,
                 "path": str(document_path),
-                "chunk_indices": list(range(start_idx, index.ntotal)),
+                "chunk_indices": chunk_indices,
                 "chunks": chunks,
                 "uploaded_at": upload_time,
                 "memory_efficient": False
             }
         
         metadata["chunk_count"] = index.ntotal
+        _set_chunk_lookup_for_doc(metadata, doc_id, chunk_indices)
         
         # Save index
         self._save_index(index, user_index_dir, collection_name)

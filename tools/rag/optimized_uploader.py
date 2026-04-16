@@ -15,6 +15,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 
 import config
+from tools.rag.tool import _ensure_chunk_lookup, _set_chunk_lookup_for_doc
 
 
 def _process_pdf_page_batch(pdf_path: str, page_start: int, page_end: int) -> str:
@@ -263,20 +264,24 @@ class OptimizedRAGUploader:
                 "collection_name": collection_name,
                 "created_at": time.time(),
                 "documents": {},
-                "chunk_count": 0
+                "chunk_count": 0,
+                "chunk_lookup": {},
             }
+        _ensure_chunk_lookup(metadata)
         
         # Update metadata
+        chunk_indices = list(range(start_idx, index.ntotal))
         metadata["documents"][doc_id] = {
             "name": doc_name,
             "path": str(pdf_path),
-            "chunk_indices": list(range(start_idx, index.ntotal)),
+            "chunk_indices": chunk_indices,
             "chunks": chunks,  # Note: For very large docs, consider storing separately
             "uploaded_at": upload_time,
             "total_pages": total_pages,
             "optimized_upload": True
         }
         metadata["chunk_count"] = index.ntotal
+        _set_chunk_lookup_for_doc(metadata, doc_id, chunk_indices)
         
         # Save index and metadata
         self._save_index(index, user_index_dir, collection_name)

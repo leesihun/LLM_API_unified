@@ -1,10 +1,9 @@
 """
 Job store for background agent tasks.
-Jobs are persisted as JSON files in data/jobs/{job_id}.json.
-Uses FileLock for safe concurrent reads/writes (same pattern as ConversationStore).
+Metadata is persisted in data/jobs/{job_id}.json.
+Streamed output and tool events are append-only sidecar files.
 """
 import json
-import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -31,6 +30,12 @@ class JobStore:
     def _lock_file(self, job_id: str) -> Path:
         return self.jobs_dir / f"{job_id}.lock"
 
+    def _output_file(self, job_id: str) -> Path:
+        return self.jobs_dir / f"{job_id}.output.txt"
+
+    def _tool_events_file(self, job_id: str) -> Path:
+        return self.jobs_dir / f"{job_id}.events.jsonl"
+
     # ------------------------------------------------------------------
     # Core operations
     # ------------------------------------------------------------------
@@ -40,7 +45,6 @@ class JobStore:
         job_id: str,
         username: str,
         session_id: str,
-        messages: List[Dict[str, Any]],
         model: str,
         temperature: float,
     ) -> Dict[str, Any]:
@@ -55,10 +59,9 @@ class JobStore:
             "completed_at": None,
             "model": model,
             "temperature": temperature,
-            "messages": messages,
-            "output_chunks": [],
-            "tool_events": [],
             "error": None,
+            "output_length": 0,
+            "tool_event_count": 0,
         }
         self._write(job_id, job)
         return job
@@ -95,30 +98,94 @@ class JobStore:
             self._write_unlocked(job_id, job)
 
     def append_chunk(self, job_id: str, text: str):
-        """Append a text chunk to the job's output."""
+        """Append a text chunk to the job's output log."""
+        if not text:
+            return
         with FileLock(self._lock_file(job_id), timeout=10):
             job = self._read_unlocked(job_id)
             if job is None:
                 return
-            job["output_chunks"].append(text)
+            with open(self._output_file(job_id), "a", encoding="utf-8") as f:
+                f.write(text)
+            job["output_length"] = int(job.get("output_length", 0)) + len(text)
             self._write_unlocked(job_id, job)
 
     def append_tool_event(self, job_id: str, tool_name: str, status: str, duration: float = 0.0):
-        """Append a tool status event to the job record."""
+        """Append a tool status event to the job event log."""
         with FileLock(self._lock_file(job_id), timeout=10):
             job = self._read_unlocked(job_id)
             if job is None:
                 return
-            job["tool_events"].append({
+            event = {
                 "tool": tool_name,
                 "status": status,
                 "duration": duration,
                 "at": datetime.now().isoformat(),
-            })
+            }
+            with open(self._tool_events_file(job_id), "a", encoding="utf-8") as f:
+                f.write(json.dumps(event, ensure_ascii=False))
+                f.write("\n")
+            job["tool_event_count"] = int(job.get("tool_event_count", 0)) + 1
             self._write_unlocked(job_id, job)
 
+    def read_output(self, job_id: str) -> str:
+        """Read the full accumulated output for a job."""
+        with FileLock(self._lock_file(job_id), timeout=10):
+            job = self._read_unlocked(job_id)
+            if job is None:
+                return ""
+
+            output_file = self._output_file(job_id)
+            if output_file.exists():
+                return output_file.read_text(encoding="utf-8")
+
+            return "".join(job.get("output_chunks", []))
+
+    def read_output_since(self, job_id: str, offset: int = 0) -> Dict[str, Any]:
+        """Read output starting at a byte offset."""
+        with FileLock(self._lock_file(job_id), timeout=10):
+            job = self._read_unlocked(job_id)
+            if job is None:
+                return {"content": "", "next_offset": offset}
+
+            output_file = self._output_file(job_id)
+            if output_file.exists():
+                with open(output_file, "r", encoding="utf-8") as f:
+                    safe_offset = max(0, offset)
+                    f.seek(safe_offset)
+                    content = f.read()
+                    next_offset = f.tell()
+                return {"content": content, "next_offset": next_offset}
+
+            legacy_output = "".join(job.get("output_chunks", []))
+            safe_offset = max(0, min(offset, len(legacy_output)))
+            return {
+                "content": legacy_output[safe_offset:],
+                "next_offset": len(legacy_output),
+            }
+
+    def load_tool_events(self, job_id: str) -> List[Dict[str, Any]]:
+        """Load all tool events for a job."""
+        with FileLock(self._lock_file(job_id), timeout=10):
+            job = self._read_unlocked(job_id)
+            if job is None:
+                return []
+
+            events_file = self._tool_events_file(job_id)
+            if events_file.exists():
+                events: List[Dict[str, Any]] = []
+                with open(events_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        events.append(json.loads(line))
+                return events
+
+            return job.get("tool_events", [])
+
     def list_jobs(self, username: str) -> List[Dict[str, Any]]:
-        """List all jobs for a user (metadata only, no output_chunks)."""
+        """List all jobs for a user (metadata only)."""
         jobs = []
         for path in sorted(self.jobs_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
             try:
@@ -130,13 +197,15 @@ class JobStore:
         return jobs
 
     def delete(self, job_id: str) -> bool:
-        """Delete a job file from disk."""
-        path = self._job_file(job_id)
-        lock = self._lock_file(job_id)
-        if path.exists():
-            path.unlink()
-        if lock.exists():
-            lock.unlink()
+        """Delete all job artifacts from disk."""
+        for path in (
+            self._job_file(job_id),
+            self._lock_file(job_id),
+            self._output_file(job_id),
+            self._tool_events_file(job_id),
+        ):
+            if path.exists():
+                path.unlink()
         return True
 
     # ------------------------------------------------------------------
@@ -164,9 +233,15 @@ class JobStore:
 
     @staticmethod
     def _strip_output(job: Dict[str, Any]) -> Dict[str, Any]:
-        """Return job metadata without large output_chunks list."""
-        summary = {k: v for k, v in job.items() if k != "output_chunks"}
-        summary["output_length"] = sum(len(c) for c in job.get("output_chunks", []))
+        """Return job metadata without large legacy payloads."""
+        summary = {
+            k: v for k, v in job.items()
+            if k not in {"output_chunks", "tool_events", "messages"}
+        }
+        if "output_length" not in summary:
+            summary["output_length"] = sum(len(c) for c in job.get("output_chunks", []))
+        if "tool_event_count" not in summary:
+            summary["tool_event_count"] = len(job.get("tool_events", []))
         return summary
 
 

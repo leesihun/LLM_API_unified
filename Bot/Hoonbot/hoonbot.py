@@ -22,6 +22,7 @@ from fastapi import FastAPI
 import config
 from core import messenger
 from core.heartbeat import run_heartbeat_loop
+from core.llm_api import close_client as close_llm_client
 from core.retry import with_retry
 from handlers.health import router as health_router
 from handlers.webhook import router as webhook_router, process_message
@@ -34,6 +35,7 @@ logger = logging.getLogger("hoonbot")
 
 _KEY_FILE = os.path.join(os.path.dirname(__file__), "data", ".apikey")
 _WEBHOOK_EVENTS = ["new_message", "message_edited", "message_deleted"]
+_CATCHUP_MAX_CONCURRENCY = 3
 
 
 # ---------------------------------------------------------------------------
@@ -185,21 +187,12 @@ async def _resolve_home_room() -> None:
         )
 
 
-async def _catch_up() -> None:
-    """Process the last unanswered human message in each room (handles offline period)."""
-    bot_info = await messenger.get_bot_info()
-    if not bot_info:
-        logger.warning("[CatchUp] Could not get bot info, skipping")
-        return
-
-    rooms = await messenger.get_rooms(bot_info["id"])
-    logger.info(f"[CatchUp] Scanning {len(rooms)} room(s) for missed messages")
-
-    for room in rooms:
+async def _catch_up_room(room: dict, semaphore: asyncio.Semaphore) -> None:
+    async with semaphore:
         room_id = room["id"]
         messages = await messenger.get_room_messages(room_id, limit=config.CATCHUP_MESSAGE_LIMIT)
         if not messages:
-            continue
+            return
 
         # Find the last human text message
         last_human_idx = -1
@@ -213,7 +206,7 @@ async def _catch_up() -> None:
                 last_human_idx = i
 
         if last_human_idx == -1:
-            continue
+            return
 
         # Skip if Hoonbot already replied after that message
         already_replied = any(
@@ -221,7 +214,7 @@ async def _catch_up() -> None:
             for msg in messages[last_human_idx + 1:]
         )
         if already_replied:
-            continue
+            return
 
         missed = messages[last_human_idx]
         content = missed.get("content", "").strip()
@@ -230,6 +223,27 @@ async def _catch_up() -> None:
         logger.info(f"[CatchUp] Room {room_id}: missed msg from {sender!r}: {content[:50]!r}")
         await process_message(room_id, content, sender, msg_id)
 
+
+async def _catch_up() -> None:
+    """Process the last unanswered human message in each room (handles offline period)."""
+    bot_info = await messenger.get_bot_info()
+    if not bot_info:
+        logger.warning("[CatchUp] Could not get bot info, skipping")
+        return
+
+    rooms = await messenger.get_rooms(bot_info["id"])
+    logger.info(f"[CatchUp] Scanning {len(rooms)} room(s) for missed messages")
+    if not rooms:
+        return
+
+    semaphore = asyncio.Semaphore(_CATCHUP_MAX_CONCURRENCY)
+    results = await asyncio.gather(
+        *(_catch_up_room(room, semaphore) for room in rooms),
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, Exception):
+            logger.error(f"[CatchUp] Room catch-up failed: {result}", exc_info=result)
 
 # ---------------------------------------------------------------------------
 # Application lifespan
@@ -252,11 +266,24 @@ async def lifespan(app: FastAPI):
         f"Debounce={config.DEBOUNCE_SECONDS}s"
     )
 
-    asyncio.create_task(_catch_up())
-    asyncio.create_task(run_heartbeat_loop(messenger.send_message))
+    catchup_task = asyncio.create_task(_catch_up())
+    heartbeat_task = asyncio.create_task(run_heartbeat_loop(messenger.send_message))
+
+    def _on_task_done(task: asyncio.Task, name: str = "") -> None:
+        if task.cancelled():
+            logger.warning(f"[Hoonbot] Background task '{name}' was cancelled")
+        elif exc := task.exception():
+            logger.error(f"[Hoonbot] Background task '{name}' died: {exc}", exc_info=exc)
+
+    catchup_task.add_done_callback(lambda t: _on_task_done(t, "catch_up"))
+    heartbeat_task.add_done_callback(lambda t: _on_task_done(t, "heartbeat"))
 
     yield
 
+    catchup_task.cancel()
+    heartbeat_task.cancel()
+    await asyncio.gather(catchup_task, heartbeat_task, return_exceptions=True)
+    await close_llm_client()
     await messenger.close_client()
     logger.info("[Hoonbot] Shutdown complete")
 

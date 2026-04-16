@@ -75,26 +75,43 @@ class FileReaderTool:
                 "size": file_size,
             }
 
-        truncated = False
         try:
-            raw = resolved.read_bytes()
-            try:
-                text = raw.decode('utf-8')
-            except UnicodeDecodeError:
-                text = raw.decode('latin-1')
+            start_line = max(1, offset or 1)
+            requested_limit = None if limit is None else max(0, limit)
 
-            lines = text.splitlines(keepends=True)
-            total_lines = len(lines)
+            total_lines = 0
+            returned_lines = 0
+            collected_parts: list[str] = []
+            collected_bytes = 0
+            truncated = False
 
-            if offset is not None or limit is not None:
-                start = max(0, (offset or 1) - 1)
-                end = start + limit if limit else total_lines
-                lines = lines[start:end]
+            with open(resolved, 'r', encoding='utf-8', errors='replace') as f:
+                for line_number, line in enumerate(f, start=1):
+                    total_lines = line_number
 
-            content = ''.join(lines)
-            if len(content) > MAX_READ_BYTES:
-                content = content[:MAX_READ_BYTES]
-                truncated = True
+                    if line_number < start_line:
+                        continue
+                    if requested_limit is not None and returned_lines >= requested_limit:
+                        continue
+
+                    line_bytes = line.encode('utf-8', errors='ignore')
+                    remaining = MAX_READ_BYTES - collected_bytes
+
+                    if remaining <= 0:
+                        truncated = True
+                        continue
+
+                    if len(line_bytes) <= remaining:
+                        collected_parts.append(line)
+                        collected_bytes += len(line_bytes)
+                    else:
+                        collected_parts.append(line_bytes[:remaining].decode('utf-8', errors='ignore'))
+                        collected_bytes = MAX_READ_BYTES
+                        truncated = True
+
+                    returned_lines += 1
+
+            content = ''.join(collected_parts)
 
             return {
                 "success": True,
@@ -102,7 +119,7 @@ class FileReaderTool:
                 "path": str(resolved),
                 "size": file_size,
                 "total_lines": total_lines,
-                "lines_returned": len(lines),
+                "lines_returned": returned_lines,
                 "truncated": truncated,
             }
 

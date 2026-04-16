@@ -21,6 +21,7 @@ import httpx
 
 import config
 from core.context import build_llm_context
+from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -92,40 +93,40 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
     logger.info(f"[Heartbeat] Calling LLM (model={config.LLM_MODEL})")
     full_text = ""
     try:
-        async with httpx.AsyncClient(timeout=float(config.LLM_TIMEOUT_SECONDS)) as client:
-            async with client.stream(
-                "POST",
-                f"{config.LLM_API_URL}/v1/chat/completions",
-                data={
-                    "model": config.LLM_MODEL,
-                    "messages": json.dumps(messages),
-                    "stream": "true",
-                },
-                headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
-            ) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str.strip() == "[DONE]":
-                        break
-                    try:
-                        event = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
-                    if "tool_status" in event:
-                        ts = event["tool_status"]
-                        logger.debug(
-                            f"[Heartbeat] Tool {ts.get('tool_name')}: {ts.get('status')}"
-                        )
-                        continue
-                    choices = event.get("choices", [])
-                    if not choices:
-                        continue
-                    text = choices[0].get("delta", {}).get("content", "")
-                    if text:
-                        full_text += text
+        client = get_client()
+        async with client.stream(
+            "POST",
+            f"{config.LLM_API_URL}/v1/chat/completions",
+            data={
+                "model": config.LLM_MODEL,
+                "messages": json.dumps(messages),
+                "stream": "true",
+            },
+            headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
+        ) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str.strip() == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
+                if "tool_status" in event:
+                    ts = event["tool_status"]
+                    logger.debug(
+                        f"[Heartbeat] Tool {ts.get('tool_name')}: {ts.get('status')}"
+                    )
+                    continue
+                choices = event.get("choices", [])
+                if not choices:
+                    continue
+                text = choices[0].get("delta", {}).get("content", "")
+                if text:
+                    full_text += text
 
     except (httpx.ConnectError, httpx.TimeoutException) as exc:
         _llm_cooldown_until = asyncio.get_event_loop().time() + config.HEARTBEAT_LLM_COOLDOWN_SECONDS

@@ -1,7 +1,7 @@
 """
 Pydantic schemas for request/response validation
 """
-from typing import Optional, List, Dict, Any, Literal
+from typing import Optional, List, Dict, Any, Literal, Union
 from pydantic import BaseModel, Field
 
 
@@ -29,7 +29,7 @@ class TokenResponse(BaseModel):
 # ============================================================================
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
-    content: Optional[str] = None
+    content: Optional[Union[str, List[Dict[str, Any]]]] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_call_id: Optional[str] = None
     name: Optional[str] = None
@@ -78,15 +78,6 @@ class ChatCompletionChunk(BaseModel):
     model: str
     choices: List[ChatCompletionChunkChoice]
     x_session_id: Optional[str] = None
-
-
-class ToolStatusChunk(BaseModel):
-    """Streamed event for tool execution visibility."""
-    object: str = "tool.status"
-    tool_name: str
-    tool_call_id: str = ""
-    status: str  # "started" | "completed" | "failed"
-    duration: float = 0.0
 
 
 # ============================================================================

@@ -19,18 +19,18 @@ class ShellExecTool:
     """Execute shell commands via async subprocess."""
 
     def __init__(self, session_id: str):
-        self.session_id = session_id
-        self.workspace = config.SCRATCH_DIR / session_id
-        if session_id not in _created_dirs:
+        self.session_id = session_id or "default"
+        self.workspace = config.SCRATCH_DIR / self.session_id
+        if self.session_id not in _created_dirs:
             self.workspace.mkdir(parents=True, exist_ok=True)
-            _created_dirs.add(session_id)
+            _created_dirs.add(self.session_id)
 
     def _resolve_working_directory(self, working_directory: Optional[str]) -> Path:
         """
         Resolve working directory for command execution.
 
         Absolute paths are used directly.
-        Relative paths are resolved from current working directory.
+        Relative paths are resolved from the session scratch workspace.
         If unset, default to session workspace for compatibility.
         """
         if not working_directory:
@@ -39,7 +39,7 @@ class ShellExecTool:
         cwd = Path(working_directory).expanduser()
         if cwd.is_absolute():
             return cwd.resolve()
-        return (Path.cwd() / cwd).resolve()
+        return (self.workspace / cwd).resolve()
 
     async def execute(
         self,

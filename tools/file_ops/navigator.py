@@ -7,6 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional
 
+import config
+
 
 class FileNavigatorTool:
     """List and search files on local filesystem."""
@@ -14,19 +16,21 @@ class FileNavigatorTool:
     def __init__(self, username: str = None, session_id: str = None):
         self.username = username
         self.session_id = session_id
+        self.workspace = config.SCRATCH_DIR / session_id if session_id else Path.cwd()
+        self.workspace.mkdir(parents=True, exist_ok=True)
 
     def _resolve_base_path(self, path: Optional[str]) -> Path:
         """
         Resolve base path for list/find.
 
-        If path is omitted, use current working directory.
+        If path is omitted, use the session scratch workspace.
         """
         if not path:
-            return Path.cwd().resolve()
+            return self.workspace.resolve()
         target = Path(path).expanduser()
         if target.is_absolute():
             return target.resolve()
-        return (Path.cwd() / target).resolve()
+        return (self.workspace / target).resolve()
 
     def navigate(
         self,
@@ -39,7 +43,7 @@ class FileNavigatorTool:
 
         Args:
             operation: "list" to list directory, "search" to search with glob, "tree" to show directory tree
-            path: Directory path for list operation (relative or absolute)
+            path: Directory path for list operation (relative to scratch or absolute)
             pattern: Glob pattern for search operation (e.g. "*.csv", "**/*.py")
         """
         if operation == "list":

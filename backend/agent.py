@@ -114,6 +114,10 @@ class AgentLoop:
         self._iteration_boundaries: List[int] = []
         self._available_rag_collections: Optional[List[str]] = None
         self._tool_cache: Dict[str, Any] = {}
+        self._filtered_tool_schemas: Optional[List[Dict[str, Any]]] = None
+        self._compressed_up_to: int = 0  # tracks how far _compress_old_iterations has processed
+        # Cache log verbosity once (avoids getattr + .lower() on every log call)
+        self._log_level: str = str(getattr(config, "AGENT_LOG_VERBOSITY", "summary")).lower()
 
     # ------------------------------------------------------------------
     # Sampling parameters forwarded to llama.cpp
@@ -121,40 +125,30 @@ class AgentLoop:
 
     def _sampling_kwargs(self, final_response: bool = False) -> Dict[str, Any]:
         """Return sampling + slot-pinning params to forward to the LLM backend."""
-        kwargs: Dict[str, Any] = {}
-        if hasattr(config, 'DEFAULT_TOP_P'):
-            kwargs["top_p"] = config.DEFAULT_TOP_P
-        if hasattr(config, 'DEFAULT_TOP_K'):
-            kwargs["top_k"] = config.DEFAULT_TOP_K
-        if hasattr(config, 'DEFAULT_MIN_P'):
-            kwargs["min_p"] = config.DEFAULT_MIN_P
+        kwargs: Dict[str, Any] = {
+            "top_p": config.DEFAULT_TOP_P,
+            "top_k": config.DEFAULT_TOP_K,
+            "min_p": config.DEFAULT_MIN_P,
+            "repeat_penalty": config.DEFAULT_REPEAT_PENALTY,
+        }
         if final_response:
-            if hasattr(config, 'DEFAULT_MAX_TOKENS'):
-                kwargs["max_tokens"] = config.DEFAULT_MAX_TOKENS
-        elif hasattr(config, 'AGENT_TOOL_LOOP_MAX_TOKENS'):
-            kwargs["max_tokens"] = config.AGENT_TOOL_LOOP_MAX_TOKENS
-        elif hasattr(config, 'DEFAULT_MAX_TOKENS'):
             kwargs["max_tokens"] = config.DEFAULT_MAX_TOKENS
-        if hasattr(config, 'DEFAULT_REPEAT_PENALTY'):
-            kwargs["repeat_penalty"] = config.DEFAULT_REPEAT_PENALTY
+        else:
+            kwargs["max_tokens"] = config.AGENT_TOOL_LOOP_MAX_TOKENS
         # Pin session to a stable llama.cpp KV cache slot for consistent cache hits
-        num_slots = getattr(config, 'LLAMACPP_SLOTS', 0)
-        if num_slots > 0 and self.session_id:
-            kwargs["id_slot"] = hash(self.session_id) % num_slots
+        if config.LLAMACPP_SLOTS > 0 and self.session_id:
+            kwargs["id_slot"] = hash(self.session_id) % config.LLAMACPP_SLOTS
         return kwargs
 
     # ------------------------------------------------------------------
     # Prompts.log logging (agent-level events)
     # ------------------------------------------------------------------
 
-    def _log_verbosity(self) -> str:
-        return str(getattr(config, "AGENT_LOG_VERBOSITY", "summary")).lower()
-
     def _summary_logging_enabled(self) -> bool:
-        return self._log_verbosity() in {"summary", "debug"}
+        return self._log_level in {"summary", "debug"}
 
     def _debug_logging_enabled(self) -> bool:
-        return self._log_verbosity() == "debug"
+        return self._log_level == "debug"
 
     def _write_log_sync(self, message: str):
         path = Path(getattr(config, "AGENT_LOG_PATH", config.PROMPTS_LOG_PATH))
@@ -423,9 +417,13 @@ class AgentLoop:
     def _get_tool_schemas(self) -> Optional[List[Dict[str, Any]]]:
         if not self.enabled_tools:
             return None
-        schemas = [s for s in _CACHED_TOOL_SCHEMAS
-                   if s["function"]["name"] in self.enabled_tools]
-        return schemas if schemas else None
+        if self._filtered_tool_schemas is None:
+            enabled = set(self.enabled_tools)
+            self._filtered_tool_schemas = [
+                s for s in _CACHED_TOOL_SCHEMAS
+                if s["function"]["name"] in enabled
+            ]
+        return self._filtered_tool_schemas if self._filtered_tool_schemas else None
 
     # ------------------------------------------------------------------
     # In-process tool execution (with parallel support)
@@ -483,6 +481,15 @@ class AgentLoop:
                 cache["websearch"].search,
                 query=arguments["query"],
                 max_results=arguments.get("max_results"),
+            )
+
+        elif name == "code_exec":
+            if "code_exec" not in cache:
+                from tools.code_exec import CodeExecTool
+                cache["code_exec"] = CodeExecTool(session_id=self.session_id)
+            return await cache["code_exec"].execute(
+                code=arguments["code"],
+                timeout=arguments.get("timeout"),
             )
 
         elif name == "python_coder":
@@ -619,7 +626,11 @@ class AgentLoop:
         }
 
     def _build_tool_result_msg(self, tool_call: ToolCall, result: Dict[str, Any]) -> Dict[str, Any]:
-        content = json.dumps(result, ensure_ascii=False, default=str)
+        content = json.dumps(
+            self._build_tool_result_preview(result, tool_call.function.name),
+            ensure_ascii=False,
+            default=str,
+        )
         content = self._truncate_tool_result(tool_call.function.name, content)
         return {
             "role": "tool",
@@ -627,6 +638,56 @@ class AgentLoop:
             "content": content,
             "tool_call_id": tool_call.id,
         }
+
+    def _build_tool_result_preview(self, result: Any, tool_name: str) -> Any:
+        """Create a bounded preview before serialising large tool payloads."""
+        budget = config.TOOL_RESULT_BUDGET.get(tool_name, config.TOOL_RESULT_DEFAULT_BUDGET)
+        text_cap = max(120, min(1200, budget))
+        return self._summarize_tool_value(result, text_cap=text_cap, list_cap=6, depth=0)
+
+    def _summarize_tool_value(
+        self,
+        value: Any,
+        text_cap: int,
+        list_cap: int,
+        depth: int,
+    ) -> Any:
+        if isinstance(value, str):
+            if len(value) <= text_cap:
+                return value
+            return value[:text_cap] + f"... [{len(value)} chars total]"
+
+        if isinstance(value, list):
+            item_cap = list_cap if depth == 0 else max(2, list_cap - 2)
+            summarized = [
+                self._summarize_tool_value(
+                    item,
+                    text_cap=max(80, text_cap // 2),
+                    list_cap=max(2, list_cap - 1),
+                    depth=depth + 1,
+                )
+                for item in value[:item_cap]
+            ]
+            if len(value) > item_cap:
+                summarized.append(f"... [{len(value) - item_cap} more items]")
+            return summarized
+
+        if isinstance(value, dict):
+            item_cap = 24 if depth == 0 else 10
+            summarized = {
+                key: self._summarize_tool_value(
+                    item,
+                    text_cap=max(80, text_cap // 2),
+                    list_cap=max(2, list_cap - 1),
+                    depth=depth + 1,
+                )
+                for key, item in list(value.items())[:item_cap]
+            }
+            if len(value) > item_cap:
+                summarized["_truncated_keys"] = len(value) - item_cap
+            return summarized
+
+        return value
 
     # ------------------------------------------------------------------
     # Microcompaction
@@ -640,7 +701,7 @@ class AgentLoop:
 
         self._log(f"  [MICROCOMPACT] {tool_name} result truncated: {len(content)} -> {budget} chars")
 
-        # Save full result to disk for potential re-retrieval
+        # Save the oversized prompt representation to disk for potential re-retrieval
         if self.session_id:
             call_id = str(uuid4())[:8]
             self._save_tool_result_to_disk(call_id, content)
@@ -648,7 +709,7 @@ class AgentLoop:
         return content[:budget] + f"\n...[truncated, {len(content)} chars total]"
 
     def _save_tool_result_to_disk(self, call_id: str, content: str):
-        """Persist full tool result to disk."""
+        """Persist an oversized tool result representation to disk."""
         session_dir = config.TOOL_RESULTS_DIR / (self.session_id or "default")
         session_dir.mkdir(parents=True, exist_ok=True)
         path = session_dir / f"{call_id}.json"
@@ -660,32 +721,70 @@ class AgentLoop:
 
     def _compress_old_iterations(self, msgs: List[Dict[str, Any]], current_iteration: int):
         """
-        Compress tool results from previous iterations to one-line summaries.
-        Only the current iteration's tool results remain full-size (hot tail).
+        Compress tool results AND assistant tool-call messages from all previous
+        iterations to short summaries. Only the current iteration's messages stay
+        full-size (hot tail).
         """
-        if current_iteration == 0 or len(self._iteration_boundaries) < 2:
+        if current_iteration == 0 or not self._iteration_boundaries:
             return
 
-        # Messages before the current iteration's boundary are "old"
+        # Everything before where the current iteration started is "old"
         old_boundary = self._iteration_boundaries[-1]
+        summary_cap = config.AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS
+        # Don't compress if already very small
+        tool_result_min = 120
+        # Compress assistant tool-call messages above this size
+        assistant_min = 80
+
+        # Start from where we left off last time — skip already-compressed messages
+        start_idx = self._compressed_up_to
 
         compressed_count = 0
-        for i, msg in enumerate(msgs):
-            if i >= old_boundary:
-                break
-            if msg.get("role") != "tool":
-                continue
-            content = msg.get("content", "")
-            if len(content) <= 200:
-                continue
-            tool_name = msg.get("name", "tool")
-            # Extract a brief summary from the content
-            summary_cap = getattr(config, "AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS", 80)
-            summary = content[:summary_cap].replace('\n', ' ')
-            msg["content"] = f"[{tool_name} result — {summary}...]"
-            compressed_count += 1
+        for i in range(start_idx, old_boundary):
+            msg = msgs[i]
+            role = msg.get("role")
+
+            # Compress tool result messages
+            if role == "tool":
+                content = msg.get("content", "")
+                if len(content) > tool_result_min:
+                    tool_name = msg.get("name", "tool")
+                    summary = content[:summary_cap].replace('\n', ' ')
+                    msg["content"] = f"[{tool_name}: {summary}...]"
+                    compressed_count += 1
+
+            # Compress assistant tool-call request messages
+            elif role == "assistant" and msg.get("tool_calls"):
+                tc_list = msg["tool_calls"]
+                # Check total JSON size; only compress if substantial
+                raw_size = sum(
+                    len(tc.get("function", {}).get("arguments", ""))
+                    for tc in tc_list
+                )
+                if raw_size > assistant_min:
+                    names = ", ".join(
+                        tc.get("function", {}).get("name", "?") for tc in tc_list
+                    )
+                    msg["content"] = f"[called: {names}]"
+                    msg["tool_calls"] = [
+                        {
+                            "id": tc.get("id", f"call_{j}"),
+                            "type": "function",
+                            "function": {
+                                "name": tc.get("function", {}).get("name", ""),
+                                # Keep arguments minimal — just enough for the model to track context
+                                "arguments": "{}",
+                            },
+                        }
+                        for j, tc in enumerate(tc_list)
+                    ]
+                    compressed_count += 1
+
+        # Advance the pointer so next call skips these messages
+        self._compressed_up_to = old_boundary
+
         if compressed_count:
-            self._log(f"  [MICROCOMPACT] Compressed {compressed_count} old tool result(s) "
+            self._log(f"  [MICROCOMPACT] Compressed {compressed_count} old message(s) "
                       f"from iterations before {current_iteration + 1}")
 
     # ------------------------------------------------------------------
@@ -732,23 +831,45 @@ class AgentLoop:
             print(f"[AGENT] History compacted: dropped {len(dropped)} old messages "
                   f"({len(msgs)} remaining, limit {limit})")
 
-        # Additionally compress old tool results in the kept portion
+        # Additionally compress old messages in the kept portion
         # (compress everything except the last limit//2 messages)
         compress_boundary = len(msgs) - limit // 2
         masked = 0
         for i in range(system_end, compress_boundary):
             msg = msgs[i]
-            if msg.get("role") != "tool":
-                continue
-            content = msg.get("content", "")
-            if len(content) <= 120:
-                continue
-            tool_name = msg.get("name", "tool")
-            summary = content[:50].replace("\n", " ")
-            msg["content"] = f"[{tool_name}: {summary}...]"
-            masked += 1
+            role = msg.get("role")
+
+            if role == "tool":
+                content = msg.get("content", "")
+                if len(content) > 80:
+                    tool_name = msg.get("name", "tool")
+                    summary = content[:40].replace("\n", " ")
+                    msg["content"] = f"[{tool_name}: {summary}...]"
+                    masked += 1
+
+            elif role == "assistant" and msg.get("tool_calls"):
+                tc_list = msg["tool_calls"]
+                raw_size = sum(
+                    len(tc.get("function", {}).get("arguments", ""))
+                    for tc in tc_list
+                )
+                if raw_size > 60:
+                    names = ", ".join(
+                        tc.get("function", {}).get("name", "?") for tc in tc_list
+                    )
+                    msg["content"] = f"[called: {names}]"
+                    msg["tool_calls"] = [
+                        {
+                            "id": tc.get("id", f"call_{j}"),
+                            "type": "function",
+                            "function": {"name": tc.get("function", {}).get("name", ""), "arguments": "{}"},
+                        }
+                        for j, tc in enumerate(tc_list)
+                    ]
+                    masked += 1
+
         if masked:
-            print(f"[AGENT] Compressed {masked} old tool result(s)")
+            print(f"[AGENT] Compressed {masked} old message(s)")
 
     # ------------------------------------------------------------------
     # Non-streaming run
@@ -851,7 +972,12 @@ class AgentLoop:
 
             self._iteration_boundaries.append(len(msgs))
 
-            collected_tool_event: Optional[ToolCallDeltaEvent] = None
+            # Collect all tool calls and start executing them as soon as their
+            # args are complete (is_partial=True events arrive mid-stream).
+            all_tool_calls: list[ToolCall] = []
+            # (tc, asyncio.Task) pairs — tasks may already be running by stream end
+            pending_tasks: list[tuple[ToolCall, asyncio.Task]] = []
+            log_start = len(self.tool_calls_log)
 
             async for event in self.llm.chat_stream(
                 msgs, self.model, self.temperature,
@@ -863,43 +989,43 @@ class AgentLoop:
                 if isinstance(event, TextEvent):
                     yield event
                 elif isinstance(event, ToolCallDeltaEvent):
-                    collected_tool_event = event
+                    for tc in event.tool_calls:
+                        all_tool_calls.append(tc)
+                        # Start execution immediately — don't wait for the full stream
+                        task = asyncio.create_task(
+                            self.execute_tool(tc.function.name, tc.function.arguments, tc.id)
+                        )
+                        pending_tasks.append((tc, task))
+                        yield ToolStatusEvent(
+                            tool_name=tc.function.name,
+                            tool_call_id=tc.id,
+                            status="started",
+                        )
 
-            if not collected_tool_event:
+            if not all_tool_calls:
                 self._log_agent_complete("LLM returned final text response (stream)", iteration + 1)
                 return
 
-            # Log what the LLM wants to call
-            self._log_tool_calls_requested(collected_tool_event.tool_calls, iteration)
+            # Log what the LLM requested
+            self._log_tool_calls_requested(all_tool_calls, iteration)
 
-            # Tool calls detected — emit status events and execute in parallel
-            msgs.append(self._build_assistant_tool_msg(collected_tool_event.tool_calls))
+            # Append assistant message (must contain ALL tool calls before results)
+            msgs.append(self._build_assistant_tool_msg(all_tool_calls))
 
-            # Emit "started" events for all tools
-            for tc in collected_tool_event.tool_calls:
-                yield ToolStatusEvent(
-                    tool_name=tc.function.name,
-                    tool_call_id=tc.id,
-                    status="started",
-                )
+            # Gather results — many tasks may already be done since they started mid-stream
+            results = await asyncio.gather(*[t for _, t in pending_tasks])
 
-            # Execute all tools in parallel (individual results logged in execute_tool)
-            log_start = len(self.tool_calls_log)
-            start_time = time.time()
-            results = await self._execute_tools_parallel(collected_tool_event.tool_calls)
             new_entries = self.tool_calls_log[log_start:]
             duration_by_call_id = {
                 e.get("tool_call_id"): e.get("duration", 0)
                 for e in new_entries
             }
-            durations = [duration_by_call_id.get(tc.id, 0) for tc in collected_tool_event.tool_calls]
-            self._log_execution_summary(collected_tool_event.tool_calls, results, durations, iteration)
+            durations = [duration_by_call_id.get(tc.id, 0) for tc in all_tool_calls]
+            self._log_execution_summary(all_tool_calls, results, durations, iteration)
 
             # Emit "completed"/"failed" events and append results
-            for tc, result in zip(collected_tool_event.tool_calls, results):
-                duration = duration_by_call_id.get(tc.id)
-                if duration is None:
-                    duration = time.time() - start_time
+            for tc, result in zip(all_tool_calls, results):
+                duration = duration_by_call_id.get(tc.id, 0)
                 status = "completed" if result.get("success", True) else "failed"
                 yield ToolStatusEvent(
                     tool_name=tc.function.name,

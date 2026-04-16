@@ -16,8 +16,9 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Form, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
+from starlette.datastructures import UploadFile
 from sse_starlette.sse import EventSourceResponse
 
 from backend.core.database import db, conversation_store
@@ -71,11 +72,12 @@ async def _run_job(
                     duration=getattr(event, "duration", 0.0),
                 )
 
-        # Save final response to conversation history
-        history = conversation_store.load_conversation(session_id) or []
-        history.append({"role": "assistant", "content": assistant_message})
-        conversation_store.save_conversation(session_id, history)
-        db.update_session_message_count(session_id, len(history))
+        await asyncio.to_thread(
+            conversation_store.append_messages,
+            session_id,
+            [{"role": "assistant", "content": assistant_message}],
+        )
+        await asyncio.to_thread(db.increment_session_message_count, session_id, 1)
 
         job_store.update_status(job_id, "completed")
 
@@ -91,49 +93,109 @@ async def _run_job(
 # Endpoints
 # ============================================================================
 
+def _extract_text_from_content(content: Any) -> str:
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") == "text":
+                parts.append(item.get("text", ""))
+        return " ".join(parts)
+    return str(content) if content else ""
+
+
+def _build_storage_messages(messages_data: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    return [
+        {
+            "role": msg["role"],
+            "content": _extract_text_from_content(msg.get("content")),
+        }
+        for msg in messages_data
+    ]
+
+
+async def _parse_job_request(request: Request) -> dict:
+    """Parse job submission from either JSON or multipart form."""
+    content_type = request.headers.get("content-type", "")
+    if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
+        form = await request.form()
+        messages_raw = form.get("messages", "[]")
+        try:
+            messages_data = json.loads(messages_raw)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="Invalid messages JSON")
+        model = form.get("model") or None
+        temperature = form.get("temperature")
+        session_id = form.get("session_id") or None
+        files = [v for v in form.getlist("files") if isinstance(v, UploadFile) and v.filename]
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid JSON body")
+        messages_data = body.get("messages", [])
+        model = body.get("model") or None
+        temperature = body.get("temperature")
+        session_id = body.get("session_id") or None
+        files = []
+    return dict(
+        messages_data=messages_data,
+        model=model,
+        temperature=float(temperature) if temperature is not None else None,
+        session_id=session_id,
+        files=files,
+    )
+
+
 @router.post("")
 async def submit_job(
-    model: Optional[str] = Form(None),
-    messages: str = Form(...),
-    temperature: Optional[str] = Form(None),
-    session_id: Optional[str] = Form(None),
-    files: List[UploadFile] = File(default=[]),
+    request: Request,
     current_user: Optional[dict] = Depends(get_optional_user),
 ):
     """
     Submit a background agent job. Returns immediately with a job_id.
     The agent runs asynchronously; poll GET /api/jobs/{job_id} for status.
     """
-    try:
-        messages_data = json.loads(messages)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=400, detail="Invalid messages JSON")
-
+    parsed = await _parse_job_request(request)
+    messages_data = parsed["messages_data"]
     username = current_user["username"] if current_user else "guest"
-    model_name = model or config.LLAMACPP_MODEL
-    temp = float(temperature) if temperature else config.DEFAULT_TEMPERATURE
+    model_name = parsed["model"] or config.LLAMACPP_MODEL
+    temp = parsed["temperature"] if parsed["temperature"] is not None else config.DEFAULT_TEMPERATURE
+    session_id = parsed["session_id"]
+    files: List[UploadFile] = parsed["files"]
+    new_history_messages = _build_storage_messages(messages_data)
 
     # Session handling
     if session_id:
         session = db.get_session(session_id)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-        history = conversation_store.load_conversation(session_id) or []
-        for msg in messages_data:
-            history.append({"role": msg["role"], "content": msg.get("content", "")})
-        agent_messages = history
+        history = conversation_store.load_recent_conversation(session_id) or []
+        agent_messages = list(history)
+        agent_messages.extend(new_history_messages)
     else:
         session_id = str(uuid.uuid4())
         db.create_session(session_id, username)
         # Auto-title
         for msg in messages_data:
             if msg.get("role") == "user" and msg.get("content"):
-                text = str(msg["content"]).strip().replace("\n", " ")
+                text = _extract_text_from_content(msg["content"]).strip().replace("\n", " ")
                 db.update_session_title(session_id, text[:60] + ("…" if len(text) > 60 else ""))
                 break
-        agent_messages = [{"role": m["role"], "content": m.get("content", "")} for m in messages_data]
-        conversation_store.save_conversation(session_id, agent_messages)
-        db.update_session_message_count(session_id, len(agent_messages))
+        agent_messages = list(new_history_messages)
+
+    if new_history_messages:
+        await asyncio.to_thread(
+            conversation_store.append_messages,
+            session_id,
+            new_history_messages,
+        )
+        await asyncio.to_thread(
+            db.increment_session_message_count,
+            session_id,
+            len(new_history_messages),
+        )
 
     # File uploads
     file_metadata: List[Dict[str, Any]] = []
@@ -150,7 +212,7 @@ async def submit_job(
                 file_metadata.append({"name": path.name, "path": fp, "error": str(e)})
 
     job_id = str(uuid.uuid4())
-    job_store.create(job_id, username, session_id, agent_messages, model_name, temp)
+    job_store.create(job_id, username, session_id, model_name, temp)
 
     task = asyncio.create_task(
         _run_job(job_id, username, session_id, agent_messages, file_metadata, model_name, temp)
@@ -186,8 +248,7 @@ def get_job(job_id: str, current_user: Optional[dict] = Depends(get_optional_use
     if job["username"] != username:
         raise HTTPException(status_code=403, detail="Access denied")
 
-    # Return full output as concatenated string
-    output = "".join(job.get("output_chunks", []))
+    output = job_store.read_output(job_id)
     return {
         "job_id": job["job_id"],
         "session_id": job["session_id"],
@@ -196,7 +257,7 @@ def get_job(job_id: str, current_user: Optional[dict] = Depends(get_optional_use
         "started_at": job["started_at"],
         "completed_at": job["completed_at"],
         "output": output,
-        "tool_events": job.get("tool_events", []),
+        "tool_events": job_store.load_tool_events(job_id),
         "error": job.get("error"),
     }
 
@@ -213,17 +274,16 @@ async def stream_job(job_id: str, current_user: Optional[dict] = Depends(get_opt
         raise HTTPException(status_code=403, detail="Access denied")
 
     async def generator():
-        last_chunk = 0
+        last_offset = 0
         while True:
             current = job_store.load(job_id)
             if current is None:
                 break
 
-            chunks = current.get("output_chunks", [])
-            new_chunks = chunks[last_chunk:]
-            for chunk in new_chunks:
-                yield {"data": json.dumps({"content": chunk})}
-            last_chunk += len(new_chunks)
+            output_update = job_store.read_output_since(job_id, last_offset)
+            if output_update["content"]:
+                yield {"data": json.dumps({"content": output_update["content"]})}
+            last_offset = output_update["next_offset"]
 
             status = current.get("status", "")
             if status in ("completed", "failed", "cancelled"):

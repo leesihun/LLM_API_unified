@@ -23,6 +23,8 @@ _PROMPT_FILE = os.path.join(os.path.dirname(__file__), "..", "PROMPT.md")
 # ---------------------------------------------------------------------------
 
 _system_prompt_cache: str = ""
+_memory_cache: str = ""
+_memory_mtime: float | None = None
 
 
 def load_system_prompt() -> str:
@@ -39,11 +41,19 @@ def load_system_prompt() -> str:
 
 
 def read_memory() -> str:
-    """Read the current memory file, returning empty string if it doesn't exist."""
+    """Read the current memory file, using mtime caching to avoid repeated disk reads."""
+    global _memory_cache, _memory_mtime
     try:
+        mtime = os.path.getmtime(MEMORY_FILE)
+        if _memory_mtime == mtime:
+            return _memory_cache
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-            return f.read()
+            _memory_cache = f.read()
+        _memory_mtime = mtime
+        return _memory_cache
     except FileNotFoundError:
+        _memory_cache = ""
+        _memory_mtime = None
         return ""
 
 

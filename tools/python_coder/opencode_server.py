@@ -115,6 +115,24 @@ class OpenCodeServerManager:
             raise RuntimeError(error_detail)
 
         print(f"[OPENCODE SERVER] Running on {self._server_url}")
+        self._cleanup_stale_sessions()
+
+    def _cleanup_stale_sessions(self) -> None:
+        """Delete all llm-* sessions left from previous runs."""
+        try:
+            import httpx
+            r = httpx.get(f"{self._server_url}/session", timeout=5)
+            sessions = r.json() if r.status_code == 200 else []
+            stale = [s["id"] for s in sessions if str(s.get("title", "")).startswith("llm-")]
+            for sid in stale:
+                try:
+                    httpx.delete(f"{self._server_url}/session/{sid}", timeout=3)
+                except Exception:
+                    pass
+            if stale:
+                print(f"[OPENCODE SERVER] Cleaned up {len(stale)} stale session(s)")
+        except Exception as e:
+            print(f"[OPENCODE SERVER] Session cleanup skipped: {e}")
 
     def _is_port_in_use(self) -> bool:
         """Check if the opencode server port is already in use"""

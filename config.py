@@ -59,7 +59,7 @@ AGENT_SYSTEM_PROMPT = "system.txt"
 AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
-AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 80
+AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 40
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
 # False = write each block synchronously with flush (visible immediately).
 AGENT_LOG_ASYNC = False
@@ -87,6 +87,9 @@ DEFAULT_ADMIN_PASSWORD = "administrator"
 UPLOAD_DIR = Path("data/uploads")
 SCRATCH_DIR = Path("data/scratch")
 MAX_FILE_SIZE_MB = 100
+IMAGE_SUPPORTED_FORMATS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
+IMAGE_MAX_SIZE_MB = 20
+IMAGE_MAX_DIMENSION = 4096  # resize if either side exceeds this (saves context tokens)
 
 # ============================================================================
 # Prompts Settings
@@ -103,7 +106,8 @@ STOP_FILE = Path("data/STOP")
 # ============================================================================
 AVAILABLE_TOOLS = [
     "websearch",
-    "python_coder",
+    "code_exec",       # Direct code execution — no second LLM call (prefer over python_coder)
+    "python_coder",    # Instruction-driven — makes a second LLM call to generate code
     "rag",
     "file_reader",
     "file_writer",
@@ -117,6 +121,11 @@ TOOL_PARAMETERS = {
     "websearch": {
         "temperature": 0.7,
         "max_tokens": 30000,
+        "timeout": 864000,
+    },
+    "code_exec": {
+        "temperature": 0.7,
+        "max_tokens": 8000,
         "timeout": 864000,
     },
     "python_coder": {
@@ -168,6 +177,7 @@ DEFAULT_TOOL_TIMEOUT = 864000
 # ============================================================================
 TOOL_RESULT_BUDGET = {
     "websearch": 2000,
+    "code_exec": 5000,
     "python_coder": 5000,
     "rag": 3000,
     "file_reader": 4000,
@@ -226,7 +236,7 @@ RAG_SIMILARITY_METRIC = "cosine"
 RAG_CHUNK_SIZE = 512
 RAG_CHUNK_OVERLAP = 50
 RAG_CHUNKING_STRATEGY = "semantic"
-RAG_MAX_RESULTS = 100
+RAG_MAX_RESULTS = 10
 RAG_MIN_SCORE_THRESHOLD = 0.5
 RAG_CONTEXT_WINDOW = 1
 
@@ -235,12 +245,9 @@ RAG_HYBRID_ALPHA = 0.5
 
 RAG_USE_RERANKING = True
 RAG_RERANKER_MODEL = "/scratch0/LLM_models/offline_models/mmarco-mMiniLMv2-L12-H384-v1"
-RAG_RERANKING_TOP_K = 500
+RAG_RERANKING_TOP_K = 20
 
 RAG_QUERY_PREFIX = ""
-RAG_USE_MULTI_QUERY = True
-RAG_MULTI_QUERY_COUNT = 6
-RAG_QUERY_EXPANSION = False
 
 RAG_DEFAULT_COLLECTION = "default"
 RAG_SUPPORTED_FORMATS = [".txt", ".pdf", ".docx", ".xlsx", ".xls", ".md", ".json", ".csv"]

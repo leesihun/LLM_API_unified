@@ -19,8 +19,18 @@ import numpy as np
 
 import config
 from backend.utils.prompts_log_append import log_to_prompts_file
-from tools.rag.advanced_chunking import AdvancedChunker, get_optimal_chunk_size
+from tools.rag.advanced_chunking import AdvancedChunker
 from tools.rag.hybrid_retrieval import HybridRetriever, RerankerCrossEncoder
+from tools.rag.tool import _ensure_chunk_lookup, _set_chunk_lookup_for_doc, _rebuild_chunk_lookup
+
+# ---------------------------------------------------------------------------
+# Process-level singletons — loaded once, reused across all requests
+# ---------------------------------------------------------------------------
+_GLOBAL_EMBEDDING_MODEL = None   # SentenceTransformer (GPU-resident)
+_GLOBAL_CHUNKER = None           # AdvancedChunker (wraps embedding model)
+_GLOBAL_RERANKER = None          # RerankerCrossEncoder (GPU-resident)
+_GLOBAL_FAISS_CACHE: Dict[str, Any] = {}  # "path:mtime" → faiss.Index
+_GLOBAL_BM25_CACHE: Dict[str, Any] = {}  # "path:mtime" → BM25Okapi
 
 
 class EnhancedRAGTool:
@@ -68,30 +78,36 @@ class EnhancedRAGTool:
         print(f"  Chunking: {config.RAG_CHUNKING_STRATEGY}")
 
     def _load_embedding_model(self):
-        """Lazy load embedding model"""
-        if self.embedding_model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError:
-                raise ImportError(
-                    "sentence-transformers not installed. "
-                    "Install with: pip install sentence-transformers"
-                )
+        """Load embedding model — use process-level singleton to avoid reloading per request."""
+        global _GLOBAL_EMBEDDING_MODEL, _GLOBAL_CHUNKER
+        if _GLOBAL_EMBEDDING_MODEL is not None:
+            self.embedding_model = _GLOBAL_EMBEDDING_MODEL
+            self.embedding_dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
+            self.chunker = _GLOBAL_CHUNKER
+            return
 
-            print(f"[ENHANCED RAG] Loading embedding model: {config.RAG_EMBEDDING_MODEL}")
-            self.embedding_model = SentenceTransformer(
-                config.RAG_EMBEDDING_MODEL,
-                device=config.RAG_EMBEDDING_DEVICE
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers not installed. "
+                "Install with: pip install sentence-transformers"
             )
-            self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
-            print(f"[ENHANCED RAG] Model loaded - dimension: {self.embedding_dim}")
 
-            # Initialize chunker with embedding model for semantic chunking
-            self.chunker = AdvancedChunker(
-                embedding_model=self.embedding_model,
-                chunk_size=config.RAG_CHUNK_SIZE,
-                overlap=config.RAG_CHUNK_OVERLAP
-            )
+        print(f"[ENHANCED RAG] Loading embedding model: {config.RAG_EMBEDDING_MODEL}")
+        _GLOBAL_EMBEDDING_MODEL = SentenceTransformer(
+            config.RAG_EMBEDDING_MODEL,
+            device=config.RAG_EMBEDDING_DEVICE
+        )
+        _GLOBAL_CHUNKER = AdvancedChunker(
+            embedding_model=_GLOBAL_EMBEDDING_MODEL,
+            chunk_size=config.RAG_CHUNK_SIZE,
+            overlap=config.RAG_CHUNK_OVERLAP
+        )
+        self.embedding_model = _GLOBAL_EMBEDDING_MODEL
+        self.embedding_dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
+        self.chunker = _GLOBAL_CHUNKER
+        print(f"[ENHANCED RAG] Model loaded - dimension: {self.embedding_dim}")
 
     def _load_hybrid_retriever(self):
         """Lazy load hybrid retriever"""
@@ -100,10 +116,16 @@ class EnhancedRAGTool:
             print(f"[ENHANCED RAG] Hybrid retriever loaded (alpha={config.RAG_HYBRID_ALPHA})")
 
     def _load_reranker(self):
-        """Lazy load reranker"""
-        if self.reranker is None and config.RAG_USE_RERANKING:
-            self.reranker = RerankerCrossEncoder(model_name=config.RAG_RERANKER_MODEL)
-            print(f"[ENHANCED RAG] Reranker loaded: {config.RAG_RERANKER_MODEL}")
+        """Load reranker — use process-level singleton to avoid reloading per request."""
+        global _GLOBAL_RERANKER
+        if not config.RAG_USE_RERANKING:
+            return
+        if _GLOBAL_RERANKER is not None:
+            self.reranker = _GLOBAL_RERANKER
+            return
+        _GLOBAL_RERANKER = RerankerCrossEncoder(model_name=config.RAG_RERANKER_MODEL)
+        self.reranker = _GLOBAL_RERANKER
+        print(f"[ENHANCED RAG] Reranker loaded: {config.RAG_RERANKER_MODEL}")
 
     def create_collection(self, collection_name: str) -> Dict[str, Any]:
         """Create a new document collection"""
@@ -124,6 +146,7 @@ class EnhancedRAGTool:
             "created_at": time.time(),
             "documents": {},
             "chunk_count": 0,
+            "chunk_lookup": {},
             "settings": {
                 "chunking_strategy": config.RAG_CHUNKING_STRATEGY,
                 "embedding_model": config.RAG_EMBEDDING_MODEL,
@@ -222,6 +245,7 @@ class EnhancedRAGTool:
         # Load metadata
         with open(metadata_path, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
+        _ensure_chunk_lookup(metadata)
 
         # Add to index
         start_idx = index.ntotal
@@ -232,15 +256,17 @@ class EnhancedRAGTool:
         # Update metadata (include timestamp in hash to avoid collision on re-upload)
         upload_time = time.time()
         doc_id = hashlib.md5(f"{doc_name}:{upload_time}".encode()).hexdigest()
+        chunk_indices = list(range(start_idx, index.ntotal))
         metadata["documents"][doc_id] = {
             "name": doc_name,
             "path": str(document_path),
-            "chunk_indices": list(range(start_idx, index.ntotal)),
+            "chunk_indices": chunk_indices,
             "chunks": chunks,
             "uploaded_at": upload_time,
             "document_type": document_type or "general"
         }
         metadata["chunk_count"] = index.ntotal
+        _set_chunk_lookup_for_doc(metadata, doc_id, chunk_indices)
 
         # Save index and metadata
         self._save_index(index, collection_name)
@@ -290,13 +316,14 @@ class EnhancedRAGTool:
         Returns:
             Retrieved documents with scores
         """
-        log_to_prompts_file("\n" + "=" * 80)
-        log_to_prompts_file(f"ENHANCED RAG RETRIEVAL")
-        log_to_prompts_file("=" * 80)
-        log_to_prompts_file(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        log_to_prompts_file(f"User: {self.username}")
-        log_to_prompts_file(f"Collection: {collection_name}")
-        log_to_prompts_file(f"Query: {query}")
+        _log_lines = []  # batch log writes to reduce FileLock acquisitions
+        _log_lines.append("\n" + "=" * 80)
+        _log_lines.append("ENHANCED RAG RETRIEVAL")
+        _log_lines.append("=" * 80)
+        _log_lines.append(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        _log_lines.append(f"User: {self.username}")
+        _log_lines.append(f"Collection: {collection_name}")
+        _log_lines.append(f"Query: {query}")
 
         print("\n" + "=" * 80)
         print("[ENHANCED RAG] Retrieval Pipeline Starting")
@@ -329,6 +356,14 @@ class EnhancedRAGTool:
 
         with open(metadata_path, 'r', encoding='utf-8') as f:
             metadata = json.load(f)
+        chunk_lookup = metadata.get("chunk_lookup")
+        if not isinstance(chunk_lookup, dict) or len(chunk_lookup) != metadata.get("chunk_count", 0):
+            chunk_lookup = _rebuild_chunk_lookup(metadata)
+            try:
+                with open(metadata_path, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, indent=2)
+            except Exception:
+                pass
 
         if index.ntotal == 0:
             return {
@@ -367,22 +402,29 @@ class EnhancedRAGTool:
 
             bm25_path = self.user_index_dir / f"{collection_name}_bm25.json"
             if bm25_path.exists():
-                # Load pre-tokenized BM25 corpus from disk
-                with open(bm25_path, 'r', encoding='utf-8') as f:
-                    bm25_data = json.load(f)
-
-                tokenized_corpus = bm25_data.get("tokenized_corpus")
-                if tokenized_corpus:
-                    # Use cached tokenized corpus directly
-                    from rank_bm25 import BM25Okapi
-                    self.hybrid_retriever.bm25 = BM25Okapi(tokenized_corpus)
-                    self.hybrid_retriever.tokenized_corpus = tokenized_corpus
+                # Use process-level BM25 cache to avoid JSON deserialisation + BM25 rebuild each call
+                bm25_cache_key = f"{bm25_path}:{bm25_path.stat().st_mtime}"
+                if bm25_cache_key in _GLOBAL_BM25_CACHE:
+                    self.hybrid_retriever.bm25 = _GLOBAL_BM25_CACHE[bm25_cache_key]
                 else:
-                    # Legacy format: re-index from chunks
-                    all_chunks = []
-                    for doc_meta in metadata["documents"].values():
-                        all_chunks.extend(doc_meta["chunks"])
-                    self.hybrid_retriever.index_corpus(all_chunks)
+                    with open(bm25_path, 'r', encoding='utf-8') as f:
+                        bm25_data = json.load(f)
+                    tokenized_corpus = bm25_data.get("tokenized_corpus")
+                    if tokenized_corpus:
+                        from rank_bm25 import BM25Okapi
+                        bm25_instance = BM25Okapi(tokenized_corpus)
+                        stale = [k for k in _GLOBAL_BM25_CACHE if k.startswith(f"{bm25_path}:")]
+                        for k in stale:
+                            del _GLOBAL_BM25_CACHE[k]
+                        _GLOBAL_BM25_CACHE[bm25_cache_key] = bm25_instance
+                        self.hybrid_retriever.bm25 = bm25_instance
+                        self.hybrid_retriever.tokenized_corpus = tokenized_corpus
+                    else:
+                        # Legacy format: re-index from chunks
+                        all_chunks = []
+                        for doc_meta in metadata["documents"].values():
+                            all_chunks.extend(self._get_document_chunks(doc_meta))
+                        self.hybrid_retriever.index_corpus(all_chunks)
 
                 # RRF fusion: pass ranked dense indices directly
                 rrf_scores, top_indices = self.hybrid_retriever.search(
@@ -404,45 +446,48 @@ class EnhancedRAGTool:
 
         # Retrieve chunks with context window
         print(f"\n[ENHANCED RAG] Stage 3: Document Retrieval (context_window={config.RAG_CONTEXT_WINDOW})")
+
         results = []
         for i, (dist, idx) in enumerate(zip(distances[0], indices[0])):
             # Skip invalid FAISS indices (FAISS returns -1 for empty slots when k > ntotal)
             if idx < 0:
                 continue
 
-            for doc_id, doc_meta in metadata["documents"].items():
-                if idx in doc_meta["chunk_indices"]:
-                    chunk_local_idx = doc_meta["chunk_indices"].index(idx)
-                    if hybrid_used:
-                        # Already normalized RRF score (0-1)
-                        score = float(dist)
-                    elif config.RAG_SIMILARITY_METRIC == "cosine":
-                        # IndexFlatIP returns cosine similarity directly (higher = better)
-                        score = float(dist)
-                    else:
-                        # L2 distance: convert to similarity (lower distance = higher score)
-                        score = float(1 / (1 + dist))
-                    chunk_text = doc_meta["chunks"][chunk_local_idx]
+            ref = chunk_lookup.get(str(int(idx)))
+            if not ref:
+                continue
 
-                    # Build context window from neighboring chunks
-                    context_chunks = []
-                    total_chunks = len(doc_meta["chunks"])
-                    window = config.RAG_CONTEXT_WINDOW
-                    start_ctx = max(0, chunk_local_idx - window)
-                    end_ctx = min(total_chunks, chunk_local_idx + window + 1)
+            doc_meta = metadata["documents"].get(ref["doc_id"])
+            if not doc_meta:
+                continue
 
-                    for ctx_idx in range(start_ctx, end_ctx):
-                        context_chunks.append(doc_meta["chunks"][ctx_idx])
+            chunk_local_idx = int(ref["chunk_index"])
+            if hybrid_used:
+                # Already normalized RRF score (0-1)
+                score = float(dist)
+            elif config.RAG_SIMILARITY_METRIC == "cosine":
+                # IndexFlatIP returns cosine similarity directly (higher = better)
+                score = float(dist)
+            else:
+                # L2 distance: convert to similarity (lower distance = higher score)
+                score = float(1 / (1 + dist))
 
-                    chunk_with_context = "\n---\n".join(context_chunks)
+            # Build context window from neighboring chunks
+            doc_chunks = self._get_document_chunks(doc_meta)
+            if not doc_chunks or chunk_local_idx >= len(doc_chunks):
+                continue
+            total_chunks = len(doc_chunks)
+            window = config.RAG_CONTEXT_WINDOW
+            start_ctx = max(0, chunk_local_idx - window)
+            end_ctx = min(total_chunks, chunk_local_idx + window + 1)
+            chunk_with_context = "\n---\n".join(doc_chunks[start_ctx:end_ctx])
 
-                    results.append({
-                        "document": doc_meta["name"],
-                        "chunk": chunk_with_context,
-                        "score": score,
-                        "chunk_index": chunk_local_idx
-                    })
-                    break
+            results.append({
+                "document": doc_meta["name"],
+                "chunk": chunk_with_context,
+                "score": score,
+                "chunk_index": chunk_local_idx
+            })
 
         print(f"  Retrieved {len(results)} results")
 
@@ -476,10 +521,11 @@ class EnhancedRAGTool:
         print(f"  Final results: {len(results)}")
         print("=" * 80)
 
-        # Log results
-        log_to_prompts_file(f"\nRESULTS: {len(results)} documents")
-        log_to_prompts_file(f"Total time: {total_time:.2f}s")
-        log_to_prompts_file("=" * 80)
+        # Flush batched log in a single FileLock acquisition
+        _log_lines.append(f"\nRESULTS: {len(results)} documents")
+        _log_lines.append(f"Total time: {total_time:.2f}s")
+        _log_lines.append("=" * 80)
+        log_to_prompts_file("\n".join(_log_lines))
 
         return {
             "success": True,
@@ -504,7 +550,7 @@ class EnhancedRAGTool:
         # Get all chunks
         all_chunks = []
         for doc_meta in metadata["documents"].values():
-            all_chunks.extend(doc_meta["chunks"])
+            all_chunks.extend(self._get_document_chunks(doc_meta))
 
         if len(all_chunks) == 0:
             return
@@ -589,14 +635,24 @@ class EnhancedRAGTool:
             return index
 
     def _load_index(self, collection_name: str):
-        """Load index"""
+        """Load index — use process-level mtime cache to avoid disk reads per request."""
         import faiss
 
         index_path = self.user_index_dir / f"{collection_name}.index"
+        if not index_path.exists():
+            return None
 
-        if index_path.exists():
-            return faiss.read_index(str(index_path))
-        return None
+        cache_key = f"{index_path}:{index_path.stat().st_mtime}"
+        if cache_key in _GLOBAL_FAISS_CACHE:
+            return _GLOBAL_FAISS_CACHE[cache_key]
+
+        index = faiss.read_index(str(index_path))
+        # Evict stale entries for this path before inserting the fresh one
+        stale = [k for k in _GLOBAL_FAISS_CACHE if k.startswith(f"{index_path}:")]
+        for k in stale:
+            del _GLOBAL_FAISS_CACHE[k]
+        _GLOBAL_FAISS_CACHE[cache_key] = index
+        return index
 
     def _save_index(self, index, collection_name: str):
         """Save index"""
@@ -633,37 +689,27 @@ class EnhancedRAGTool:
         return None
 
     def cleanup(self):
-        """Release embedding model and reranker from GPU/CPU memory"""
-        try:
-            import torch
-            has_cuda = torch.cuda.is_available()
-        except ImportError:
-            has_cuda = False
-
-        if self.embedding_model is not None:
-            if has_cuda:
-                try:
-                    self.embedding_model.cpu()
-                except Exception:
-                    pass
-            del self.embedding_model
-            self.embedding_model = None
-        if self.chunker is not None:
-            self.chunker.embedding_model = None
-            self.chunker = None
-        if self.reranker is not None:
-            self.reranker.cleanup()
-            self.reranker = None
+        """Clear instance references. Global model singletons are kept alive intentionally
+        so the next request can reuse them without reloading from disk/GPU."""
+        # Only clear per-instance pointers — do NOT free the global singletons
+        self.embedding_model = None
+        self.chunker = None
+        self.reranker = None
         if self.hybrid_retriever is not None:
             self.hybrid_retriever.bm25 = None
             self.hybrid_retriever.tokenized_corpus = None
             self.hybrid_retriever = None
 
-        import gc
-        gc.collect()
-        if has_cuda:
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
+    def _get_document_chunks(self, doc_meta: Dict[str, Any]) -> List[str]:
+        if "chunks" in doc_meta:
+            return doc_meta["chunks"]
+
+        chunks_file = doc_meta.get("chunks_file")
+        if chunks_file:
+            from tools.rag.memory_efficient_uploader import load_chunks_from_disk
+            return load_chunks_from_disk(Path(chunks_file))
+
+        return []
 
     # Delegate other methods to keep compatibility
     def list_collections(self):

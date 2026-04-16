@@ -6,23 +6,27 @@ Lightweight alternative to python_coder for simple file creation.
 from pathlib import Path
 from typing import Dict, Any
 
+import config
+
 class FileWriterTool:
     """Write files to the local filesystem."""
 
     def __init__(self, session_id: str):
-        self.session_id = session_id
+        self.session_id = session_id or "default"
+        self.workspace = config.SCRATCH_DIR / self.session_id
+        self.workspace.mkdir(parents=True, exist_ok=True)
 
     def _resolve_target(self, path: str) -> Path:
         """
         Resolve file path for write operations.
 
         Absolute paths are used directly.
-        Relative paths are resolved from the current working directory.
+        Relative paths are resolved inside the session scratch workspace.
         """
         target_path = Path(path).expanduser()
         if target_path.is_absolute():
             return target_path.resolve()
-        return (Path.cwd() / target_path).resolve()
+        return (self.workspace / target_path).resolve()
 
     def write(
         self,
@@ -34,7 +38,7 @@ class FileWriterTool:
         Write or append content to a file.
 
         Args:
-            path: Absolute path or path relative to current working directory
+            path: Absolute path or path relative to the session scratch workspace
             content: Text content to write
             mode: "write" (overwrite) or "append"
         """

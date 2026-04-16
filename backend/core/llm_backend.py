@@ -41,9 +41,15 @@ class TextEvent(StreamEvent):
 
 @dataclass
 class ToolCallDeltaEvent(StreamEvent):
-    """Accumulated tool calls parsed from the stream."""
+    """Accumulated tool calls parsed from the stream.
+
+    is_partial=True  → one tool call whose args just completed mid-stream;
+                       more tool calls may follow in subsequent events.
+    is_partial=False → final batch (stream ended); all remaining tool calls.
+    """
     tool_calls: List[ToolCall] = field(default_factory=list)
     finish_reason: str = "tool"
+    is_partial: bool = False
 
 @dataclass
 class ToolStatusEvent(StreamEvent):
@@ -132,6 +138,7 @@ class LlamaCppBackend:
         }
         if tools:
             payload["tools"] = tools
+            payload["parallel_tool_calls"] = True
         # KV cache reuse — skip re-evaluating shared prompt prefix
         if getattr(config, 'LLAMACPP_CACHE_PROMPT', True):
             payload["cache_prompt"] = True
@@ -232,6 +239,8 @@ class LlamaCppBackend:
 
         # State for accumulating tool call deltas across SSE chunks
         pending_tool_calls: dict[int, dict] = {}  # index -> {id, name, arguments_str}
+        yielded_indices: set[int] = set()          # indices already dispatched mid-stream
+        max_seen_idx: int = -1
         finish_reason = "stop"
 
         async with self._client.stream(
@@ -260,7 +269,7 @@ class LlamaCppBackend:
                 if chunk_finish:
                     finish_reason = chunk_finish
 
-                # Text content
+                # Text content — yield immediately
                 if "content" in delta and delta["content"]:
                     yield TextEvent(content=delta["content"])
 
@@ -268,12 +277,35 @@ class LlamaCppBackend:
                 if "tool_calls" in delta:
                     for tc_delta in delta["tool_calls"]:
                         idx = tc_delta.get("index", 0)
+
+                        # A new index appearing means the PREVIOUS max index is complete.
+                        # Yield it immediately so the agent can start executing it now.
                         if idx not in pending_tool_calls:
+                            if max_seen_idx >= 0 and max_seen_idx not in yielded_indices:
+                                prev = pending_tool_calls[max_seen_idx]
+                                if prev["name"]:
+                                    try:
+                                        args = json.loads(prev["arguments_str"])
+                                        yield ToolCallDeltaEvent(
+                                            tool_calls=[ToolCall(
+                                                id=prev["id"],
+                                                function=ToolCallFunction(
+                                                    name=prev["name"], arguments=args
+                                                ),
+                                            )],
+                                            finish_reason="tool",
+                                            is_partial=True,
+                                        )
+                                        yielded_indices.add(max_seen_idx)
+                                    except json.JSONDecodeError:
+                                        pass  # incomplete JSON — will be caught at stream end
+
                             pending_tool_calls[idx] = {
                                 "id": tc_delta.get("id", f"call_{idx}"),
                                 "name": "",
                                 "arguments_str": "",
                             }
+
                         entry = pending_tool_calls[idx]
                         func_delta = tc_delta.get("function", {})
                         if "name" in func_delta:
@@ -281,20 +313,27 @@ class LlamaCppBackend:
                         if "arguments" in func_delta:
                             entry["arguments_str"] += func_delta["arguments"]
 
-        # After the stream finishes, if we accumulated tool calls, yield them
-        if pending_tool_calls:
-            tool_calls = []
-            for idx in sorted(pending_tool_calls.keys()):
-                entry = pending_tool_calls[idx]
-                try:
-                    args = json.loads(entry["arguments_str"])
-                except json.JSONDecodeError:
-                    args = {"_raw": entry["arguments_str"]}
-                tool_calls.append(ToolCall(
-                    id=entry["id"],
-                    function=ToolCallFunction(name=entry["name"], arguments=args),
-                ))
-            yield ToolCallDeltaEvent(tool_calls=tool_calls, finish_reason=finish_reason)
+                        if idx > max_seen_idx:
+                            max_seen_idx = idx
+
+        # After the stream finishes, yield any tool calls not yet dispatched
+        remaining: list[ToolCall] = []
+        for idx in sorted(pending_tool_calls.keys()):
+            if idx in yielded_indices:
+                continue
+            entry = pending_tool_calls[idx]
+            try:
+                args = json.loads(entry["arguments_str"])
+            except json.JSONDecodeError:
+                args = {"_raw": entry["arguments_str"]}
+            remaining.append(ToolCall(
+                id=entry["id"],
+                function=ToolCallFunction(name=entry["name"], arguments=args),
+            ))
+        if remaining:
+            yield ToolCallDeltaEvent(
+                tool_calls=remaining, finish_reason=finish_reason, is_partial=False
+            )
 
 
 # ============================================================================

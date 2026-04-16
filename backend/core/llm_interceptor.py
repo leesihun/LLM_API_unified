@@ -38,24 +38,18 @@ class LLMInterceptor:
         lines.append("=" * 80)
 
         if is_request:
+            # Log metadata only — skip serialising full message array (very expensive for long convos)
             messages = log_data.get("messages", [])
+            role_counts: Dict[str, int] = {}
+            for m in messages:
+                r = m.get("role", "unknown")
+                role_counts[r] = role_counts.get(r, 0) + 1
+            role_summary = ", ".join(f"{v} {k}" for k, v in role_counts.items())
             lines.append("")
-            for i, msg in enumerate(messages):
-                lines.append(f"Message {i+1}:")
-                lines.append(f"  role: {msg.get('role', 'unknown')}")
-                content = msg.get('content') or ''
-                if content:
-                    lines.append(f"  content:")
-                    for line in str(content).split('\n'):
-                        lines.append(f"    {line}" if line else "")
-                if msg.get("tool_calls"):
-                    lines.append(f"  tool_calls: {json.dumps(msg['tool_calls'], ensure_ascii=False)[:500]}")
-                if msg.get("tool_call_id"):
-                    lines.append(f"  tool_call_id: {msg['tool_call_id']}")
-                lines.append("")
+            lines.append(f"  Messages:    {len(messages)} ({role_summary})")
             if log_data.get("tools_provided"):
-                lines.append(f"  [tools: {log_data['tools_provided']} schema(s) provided]")
-                lines.append("")
+                lines.append(f"  Tools:       {log_data['tools_provided']} schema(s) provided")
+            lines.append("")
         else:
             response_text = log_data.get("response", log_data.get("partial_response", ""))
             lines.append("")
@@ -124,11 +118,10 @@ class LLMInterceptor:
             self._log_interaction_sync(log_data)
 
     def _estimate_tokens(self, messages: List[Dict]) -> int:
-        total = 0
-        for m in messages:
-            c = m.get("content") or ""
-            total += len(str(c).split())
-        return int(total * 1.3)
+        # Use char count / 4 as a token approximation — same accuracy as word-split
+        # but avoids building a throwaway list for every message
+        total = sum(len(str(m.get("content") or "")) for m in messages)
+        return total // 4
 
     # ------------------------------------------------------------------
     # Non-streaming chat
@@ -167,7 +160,8 @@ class LLMInterceptor:
         input_tokens = self._estimate_tokens(messages)
         self._log_interaction({
             "id": log_id, "timestamp": timestamp, "streaming": False,
-            "model": model, "temperature": temperature, "messages": messages,
+            "model": model, "temperature": temperature,
+            "messages": messages,  # kept for role-count summary only; not serialised to JSON body
             "backend": backend_name, "session_id": session_id or "N/A",
             "agent_type": agent_type or "N/A",
             "tools_provided": len(tools) if tools else 0,
@@ -177,7 +171,8 @@ class LLMInterceptor:
 
         response_log: Dict[str, Any] = {
             "id": log_id, "timestamp": timestamp, "streaming": False,
-            "model": model, "temperature": temperature, "messages": messages,
+            "model": model, "temperature": temperature,
+            "messages": messages,  # kept for role-count summary only; not serialised to JSON body
             "backend": backend_name, "session_id": session_id or "N/A",
             "agent_type": agent_type or "N/A",
         }
@@ -252,7 +247,8 @@ class LLMInterceptor:
 
         self._log_interaction({
             "id": log_id, "timestamp": timestamp, "streaming": True,
-            "model": model, "temperature": temperature, "messages": messages,
+            "model": model, "temperature": temperature,
+            "messages": messages,  # kept for role-count summary only
             "backend": backend_name, "session_id": session_id or "N/A",
             "agent_type": agent_type or "N/A",
             "tools_provided": len(tools) if tools else 0,
@@ -262,13 +258,17 @@ class LLMInterceptor:
 
         response_log: Dict[str, Any] = {
             "id": log_id, "timestamp": timestamp, "streaming": True,
-            "model": model, "temperature": temperature, "messages": messages,
+            "model": model, "temperature": temperature,
+            "messages": messages,  # kept for role-count summary only
             "backend": backend_name, "session_id": session_id or "N/A",
             "agent_type": agent_type or "N/A",
         }
 
         collected_text = ""
         collected_tool_calls = None
+
+        # Import event types once per call, not inside the loop
+        from backend.core.llm_backend import TextEvent, ToolCallDeltaEvent
 
         try:
             async for event in self.backend.chat_stream(
@@ -277,7 +277,6 @@ class LLMInterceptor:
                 max_tokens=max_tokens, repeat_penalty=repeat_penalty,
                 id_slot=id_slot,
             ):
-                from backend.core.llm_backend import TextEvent, ToolCallDeltaEvent
                 if isinstance(event, TextEvent):
                     collected_text += event.content
                 elif isinstance(event, ToolCallDeltaEvent):

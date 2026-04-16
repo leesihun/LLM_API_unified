@@ -13,6 +13,45 @@ import numpy as np
 import config
 from backend.utils.prompts_log_append import log_to_prompts_file
 
+# ---------------------------------------------------------------------------
+# Process-level singletons — loaded once, reused across all requests
+# ---------------------------------------------------------------------------
+_GLOBAL_EMBEDDING_MODEL = None   # SentenceTransformer (GPU-resident)
+_GLOBAL_FAISS_CACHE: Dict[str, Any] = {}  # "path:mtime" → faiss.Index
+
+
+def _ensure_chunk_lookup(metadata: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    lookup = metadata.get("chunk_lookup")
+    if isinstance(lookup, dict):
+        return lookup
+    metadata["chunk_lookup"] = {}
+    return metadata["chunk_lookup"]
+
+
+def _set_chunk_lookup_for_doc(
+    metadata: Dict[str, Any],
+    doc_id: str,
+    chunk_indices: List[int],
+):
+    lookup = _ensure_chunk_lookup(metadata)
+    for local_idx, global_idx in enumerate(chunk_indices):
+        lookup[str(global_idx)] = {
+            "doc_id": doc_id,
+            "chunk_index": local_idx,
+        }
+
+
+def _rebuild_chunk_lookup(metadata: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    lookup: Dict[str, Dict[str, Any]] = {}
+    for doc_id, doc_meta in metadata.get("documents", {}).items():
+        for local_idx, global_idx in enumerate(doc_meta.get("chunk_indices", [])):
+            lookup[str(global_idx)] = {
+                "doc_id": doc_id,
+                "chunk_index": local_idx,
+            }
+    metadata["chunk_lookup"] = lookup
+    return lookup
+
 
 class RAGTool:
     """
@@ -42,21 +81,29 @@ class RAGTool:
         self.embedding_dim = None
 
     def _load_embedding_model(self):
-        """Lazy load embedding model"""
-        if self.embedding_model is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError:
-                raise ImportError(
-                    "sentence-transformers not installed. "
-                    "Install with: pip install sentence-transformers"
-                )
+        """Load embedding model — use process-level singleton to avoid reloading per request."""
+        global _GLOBAL_EMBEDDING_MODEL
+        if _GLOBAL_EMBEDDING_MODEL is not None:
+            self.embedding_model = _GLOBAL_EMBEDDING_MODEL
+            self.embedding_dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
+            return
 
-            self.embedding_model = SentenceTransformer(
-                config.RAG_EMBEDDING_MODEL,
-                device=config.RAG_EMBEDDING_DEVICE
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError:
+            raise ImportError(
+                "sentence-transformers not installed. "
+                "Install with: pip install sentence-transformers"
             )
-            self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
+
+        print(f"[RAG] Loading embedding model: {config.RAG_EMBEDDING_MODEL}")
+        _GLOBAL_EMBEDDING_MODEL = SentenceTransformer(
+            config.RAG_EMBEDDING_MODEL,
+            device=config.RAG_EMBEDDING_DEVICE
+        )
+        self.embedding_model = _GLOBAL_EMBEDDING_MODEL
+        self.embedding_dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
+        print(f"[RAG] Model loaded - dimension: {self.embedding_dim}")
 
     def create_collection(self, collection_name: str) -> Dict[str, Any]:
         """
@@ -93,7 +140,8 @@ class RAGTool:
             "collection_name": collection_name,
             "created_at": time.time(),
             "documents": {},
-            "chunk_count": 0
+            "chunk_count": 0,
+            "chunk_lookup": {},
         }
 
         try:
@@ -174,7 +222,8 @@ class RAGTool:
                     "collection_name": collection_name,
                     "created_at": time.time(),
                     "documents": {},
-                    "chunk_count": 0
+                    "chunk_count": 0,
+                    "chunk_lookup": {},
                 }
         else:
             print(f"[RAG] Creating new metadata file")
@@ -182,8 +231,11 @@ class RAGTool:
                 "collection_name": collection_name,
                 "created_at": time.time(),
                 "documents": {},
-                "chunk_count": 0
+                "chunk_count": 0,
+                "chunk_lookup": {},
             }
+
+        _ensure_chunk_lookup(metadata)
 
         # Read document
         if document_content is None:
@@ -235,14 +287,16 @@ class RAGTool:
         # Update metadata (include timestamp in hash to avoid collision on re-upload)
         upload_time = time.time()
         doc_id = hashlib.md5(f"{doc_name}:{upload_time}".encode()).hexdigest()
+        chunk_indices = list(range(start_idx, index.ntotal))
         metadata["documents"][doc_id] = {
             "name": doc_name,
             "path": str(document_path),
-            "chunk_indices": list(range(start_idx, index.ntotal)),
+            "chunk_indices": chunk_indices,
             "chunks": chunks,
             "uploaded_at": upload_time
         }
         metadata["chunk_count"] = index.ntotal
+        _set_chunk_lookup_for_doc(metadata, doc_id, chunk_indices)
 
         # Save index and metadata
         print(f"[RAG] Saving index to disk...")
@@ -297,18 +351,14 @@ class RAGTool:
         Returns:
             Retrieved documents
         """
-        # Log to file
-        log_to_prompts_file("\n\n")
-        log_to_prompts_file("=" * 80)
-        log_to_prompts_file(f"TOOL EXECUTION: rag")
-        log_to_prompts_file("=" * 80)
-        log_to_prompts_file(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        log_to_prompts_file(f"")
-        log_to_prompts_file(f"INPUT:")
-        log_to_prompts_file(f"  Username: {self.username}")
-        log_to_prompts_file(f"  Collection: {collection_name}")
-        log_to_prompts_file(f"  Query: {query}")
-        log_to_prompts_file(f"  Max Results: {max_results or 'default'}")
+        # Batch log writes to reduce FileLock acquisitions
+        _log_lines = [
+            "\n\n", "=" * 80, "TOOL EXECUTION: rag", "=" * 80,
+            f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "",
+            "INPUT:", f"  Username: {self.username}",
+            f"  Collection: {collection_name}", f"  Query: {query}",
+            f"  Max Results: {max_results or 'default'}",
+        ]
 
         print("\n" + "=" * 80)
         print("[RAG TOOL] retrieve() called")
@@ -333,13 +383,9 @@ class RAGTool:
         if not metadata_path.exists():
             print(f"[RAG] [ERROR] Collection not found!")
 
-            # Log to file
-            log_to_prompts_file(f"")
-            log_to_prompts_file(f"OUTPUT:")
-            log_to_prompts_file(f"  Status: ERROR")
-            log_to_prompts_file(f"  Error: Collection '{collection_name}' does not exist")
-            log_to_prompts_file(f"")
-            log_to_prompts_file("=" * 80)
+            _log_lines.extend(["", "OUTPUT:", "  Status: ERROR",
+                f"  Error: Collection '{collection_name}' does not exist", "", "=" * 80])
+            log_to_prompts_file("\n".join(_log_lines))
 
             return {
                 "success": False,
@@ -354,13 +400,9 @@ class RAGTool:
         if index is None:
             print(f"[RAG] [ERROR] Index not found!")
 
-            # Log to file
-            log_to_prompts_file(f"")
-            log_to_prompts_file(f"OUTPUT:")
-            log_to_prompts_file(f"  Status: ERROR")
-            log_to_prompts_file(f"  Error: No index found for collection '{collection_name}'")
-            log_to_prompts_file(f"")
-            log_to_prompts_file("=" * 80)
+            _log_lines.extend(["", "OUTPUT:", "  Status: ERROR",
+                f"  Error: No index found for collection '{collection_name}'", "", "=" * 80])
+            log_to_prompts_file("\n".join(_log_lines))
 
             return {
                 "success": False,
@@ -375,6 +417,15 @@ class RAGTool:
         print(f"[RAG] [OK] Metadata loaded")
         print(f"  Documents: {len(metadata.get('documents', {}))}")
         print(f"  Chunks: {metadata.get('chunk_count', 0)}")
+
+        chunk_lookup = metadata.get("chunk_lookup")
+        if not isinstance(chunk_lookup, dict) or len(chunk_lookup) != metadata.get("chunk_count", 0):
+            chunk_lookup = _rebuild_chunk_lookup(metadata)
+            try:
+                with open(metadata_path, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, indent=2)
+            except Exception:
+                pass
 
         if index.ntotal == 0:
             print(f"[RAG] [WARNING] Collection is empty")
@@ -412,46 +463,48 @@ class RAGTool:
 
         # Retrieve chunks with context window
         print(f"\n[RAG] Retrieving document chunks (context_window={config.RAG_CONTEXT_WINDOW})...")
+
         results = []
         for i, (dist, idx) in enumerate(zip(distances[0], indices[0])):
             # Skip invalid FAISS indices (FAISS returns -1 for empty slots when k > ntotal)
             if idx < 0:
                 continue
 
-            # Find document containing this chunk
-            for doc_id, doc_meta in metadata["documents"].items():
-                if idx in doc_meta["chunk_indices"]:
-                    chunk_local_idx = doc_meta["chunk_indices"].index(idx)
-                    if config.RAG_SIMILARITY_METRIC == "cosine":
-                        # IndexFlatIP returns cosine similarity directly (higher = better)
-                        score = float(dist)
-                    else:
-                        # L2 distance: convert to similarity (lower distance = higher score)
-                        score = float(1 / (1 + dist))
-                    chunk_text = doc_meta["chunks"][chunk_local_idx]
+            ref = chunk_lookup.get(str(int(idx)))
+            if not ref:
+                continue
 
-                    # Build context window from neighboring chunks
-                    context_chunks = []
-                    total_chunks = len(doc_meta["chunks"])
-                    window = config.RAG_CONTEXT_WINDOW
-                    start_ctx = max(0, chunk_local_idx - window)
-                    end_ctx = min(total_chunks, chunk_local_idx + window + 1)
+            doc_meta = metadata["documents"].get(ref["doc_id"])
+            if not doc_meta:
+                continue
 
-                    for ctx_idx in range(start_ctx, end_ctx):
-                        context_chunks.append(doc_meta["chunks"][ctx_idx])
+            chunk_local_idx = int(ref["chunk_index"])
+            if config.RAG_SIMILARITY_METRIC == "cosine":
+                score = float(dist)
+            else:
+                score = float(1 / (1 + dist))
 
-                    chunk_with_context = "\n---\n".join(context_chunks)
+            doc_chunks = self._get_document_chunks(doc_meta)
+            if not doc_chunks or chunk_local_idx >= len(doc_chunks):
+                continue
+            chunk_text = doc_chunks[chunk_local_idx]
 
-                    results.append({
-                        "document": doc_meta["name"],
-                        "chunk": chunk_with_context,
-                        "score": score,
-                        "chunk_index": chunk_local_idx
-                    })
-                    
-                    print(f"  Result {i+1}: {doc_meta['name']} chunk {chunk_local_idx} (score: {score:.3f})")
-                    print(f"    Context: chunks {start_ctx}-{end_ctx-1}, Preview: {chunk_text[:100]}...")
-                    break
+            # Build context window from neighboring chunks
+            total_chunks = len(doc_chunks)
+            window = config.RAG_CONTEXT_WINDOW
+            start_ctx = max(0, chunk_local_idx - window)
+            end_ctx = min(total_chunks, chunk_local_idx + window + 1)
+            chunk_with_context = "\n---\n".join(doc_chunks[start_ctx:end_ctx])
+
+            results.append({
+                "document": doc_meta["name"],
+                "chunk": chunk_with_context,
+                "score": score,
+                "chunk_index": chunk_local_idx
+            })
+
+            print(f"  Result {i+1}: {doc_meta['name']} chunk {chunk_local_idx} (score: {score:.3f})")
+            print(f"    Context: chunks {start_ctx}-{end_ctx-1}, Preview: {chunk_text[:100]}...")
 
         # Filter out low-relevance results
         pre_filter_count = len(results)
@@ -464,24 +517,17 @@ class RAGTool:
         total_time = time.time() - start_time
         print(f"[RAG] Total time: {total_time:.2f}s")
 
-        # Log to file
-        log_to_prompts_file(f"")
-        log_to_prompts_file(f"OUTPUT:")
-        log_to_prompts_file(f"  Status: SUCCESS")
-        log_to_prompts_file(f"  Results Found: {len(results)}")
-        log_to_prompts_file(f"  Execution Time: {total_time:.2f}s")
-        log_to_prompts_file(f"")
-        log_to_prompts_file(f"RESULTS:")
+        # Flush batched log in a single FileLock acquisition
+        _log_lines.extend(["", "OUTPUT:", "  Status: SUCCESS",
+            f"  Results Found: {len(results)}", f"  Execution Time: {total_time:.2f}s",
+            "", "RESULTS:"])
         for i, result in enumerate(results, 1):
-            log_to_prompts_file(f"")
-            log_to_prompts_file(f"  Result {i}:")
-            log_to_prompts_file(f"    Document: {result['document']}")
-            log_to_prompts_file(f"    Chunk Index: {result['chunk_index']}")
-            log_to_prompts_file(f"    Score: {result['score']:.3f}")
             chunk_preview = result['chunk'][:200] if len(result['chunk']) > 200 else result['chunk']
-            log_to_prompts_file(f"    Content: {chunk_preview}...")
-        log_to_prompts_file(f"")
-        log_to_prompts_file("=" * 80)
+            _log_lines.extend(["", f"  Result {i}:", f"    Document: {result['document']}",
+                f"    Chunk Index: {result['chunk_index']}", f"    Score: {result['score']:.3f}",
+                f"    Content: {chunk_preview}..."])
+        _log_lines.extend(["", "=" * 80])
+        log_to_prompts_file("\n".join(_log_lines))
 
         return {
             "success": True,
@@ -577,11 +623,12 @@ class RAGTool:
 
             documents = []
             for doc_id, doc_meta in metadata.get("documents", {}).items():
+                chunk_count = len(self._get_document_chunks(doc_meta)) or len(doc_meta.get("chunk_indices", []))
                 documents.append({
                     "id": doc_id,
                     "name": doc_meta["name"],
                     "path": doc_meta["path"],
-                    "chunks": len(doc_meta["chunks"]),
+                    "chunks": chunk_count,
                     "uploaded_at": doc_meta["uploaded_at"]
                 })
 
@@ -633,10 +680,16 @@ class RAGTool:
             # Get document info before deletion
             deleted_doc = metadata["documents"][document_id]
             deleted_doc_name = deleted_doc["name"]
-            deleted_chunks_count = len(deleted_doc["chunks"])
+            deleted_doc_chunks = self._get_document_chunks(deleted_doc)
+            deleted_chunks_count = len(deleted_doc_chunks)
 
             # Remove document from metadata
             del metadata["documents"][document_id]
+            chunks_file = deleted_doc.get("chunks_file")
+            if chunks_file:
+                chunks_path = Path(chunks_file)
+                if chunks_path.exists():
+                    chunks_path.unlink()
 
             # Rebuild FAISS index without deleted document
             self._load_embedding_model()
@@ -644,7 +697,7 @@ class RAGTool:
             # Collect all remaining chunks and embeddings
             all_chunks = []
             for doc_id, doc_meta in metadata["documents"].items():
-                all_chunks.extend(doc_meta["chunks"])
+                all_chunks.extend(self._get_document_chunks(doc_meta))
 
             if len(all_chunks) > 0:
                 # Re-generate embeddings for all remaining documents
@@ -671,19 +724,21 @@ class RAGTool:
                 # Update chunk indices for remaining documents
                 current_idx = 0
                 for doc_id, doc_meta in metadata["documents"].items():
-                    chunk_count = len(doc_meta["chunks"])
+                    chunk_count = len(self._get_document_chunks(doc_meta))
                     doc_meta["chunk_indices"] = list(range(current_idx, current_idx + chunk_count))
                     current_idx += chunk_count
 
                 # Save updated index
                 self._save_index(index, collection_name)
                 metadata["chunk_count"] = index.ntotal
+                _rebuild_chunk_lookup(metadata)
             else:
                 # No documents left - create empty index
                 import faiss
                 index = faiss.IndexFlatL2(self.embedding_dim)
                 self._save_index(index, collection_name)
                 metadata["chunk_count"] = 0
+                metadata["chunk_lookup"] = {}
 
             # Save updated metadata
             with open(metadata_path, 'w', encoding='utf-8') as f:
@@ -732,27 +787,20 @@ class RAGTool:
         return None
 
     def cleanup(self):
-        """Release embedding model from GPU/CPU memory"""
-        try:
-            import torch
-            has_cuda = torch.cuda.is_available()
-        except ImportError:
-            has_cuda = False
+        """Clear instance references. Global model singletons are kept alive intentionally
+        so the next request can reuse them without reloading from disk/GPU."""
+        self.embedding_model = None
 
-        if self.embedding_model is not None:
-            if has_cuda:
-                try:
-                    self.embedding_model.cpu()
-                except Exception:
-                    pass
-            del self.embedding_model
-            self.embedding_model = None
+    def _get_document_chunks(self, doc_meta: Dict[str, Any]) -> List[str]:
+        if "chunks" in doc_meta:
+            return doc_meta["chunks"]
 
-        import gc
-        gc.collect()
-        if has_cuda:
-            torch.cuda.synchronize()
-            torch.cuda.empty_cache()
+        chunks_file = doc_meta.get("chunks_file")
+        if chunks_file:
+            from tools.rag.memory_efficient_uploader import load_chunks_from_disk
+            return load_chunks_from_disk(Path(chunks_file))
+
+        return []
 
     def _chunk_text(self, text: str) -> List[str]:
         """
@@ -865,14 +913,24 @@ class RAGTool:
             return index
 
     def _load_index(self, collection_name: str):
-        """Load index"""
+        """Load index — use process-level mtime cache to avoid disk reads per request."""
         import faiss
 
         index_path = self.user_index_dir / f"{collection_name}.index"
+        if not index_path.exists():
+            return None
 
-        if index_path.exists():
-            return faiss.read_index(str(index_path))
-        return None
+        cache_key = f"{index_path}:{index_path.stat().st_mtime}"
+        if cache_key in _GLOBAL_FAISS_CACHE:
+            return _GLOBAL_FAISS_CACHE[cache_key]
+
+        index = faiss.read_index(str(index_path))
+        # Evict stale entries for this path before inserting the fresh one
+        stale = [k for k in _GLOBAL_FAISS_CACHE if k.startswith(f"{index_path}:")]
+        for k in stale:
+            del _GLOBAL_FAISS_CACHE[k]
+        _GLOBAL_FAISS_CACHE[cache_key] = index
+        return index
 
     def _save_index(self, index, collection_name: str):
         """Save index"""

@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 import config
 from core import messenger
 from core.context import build_llm_context
+from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -352,23 +353,23 @@ async def _save_session_from_response(room_id: int, result: dict, existing_sessi
 async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_session_id: str | None, log_prefix: str, reply_to_id: int | None, downloaded_files: list[tuple[str, bytes]] | None = None) -> str | None:
     """Send request, wait for full response, send to Messenger."""
     files_payload = [("files", (name, data, "application/octet-stream")) for name, data in (downloaded_files or [])]
-    async with httpx.AsyncClient(timeout=float(config.LLM_TIMEOUT_SECONDS)) as client:
-        response = await client.post(
-            f"{config.LLM_API_URL}/v1/chat/completions",
-            data=llm_data,
-            files=files_payload or None,
-            headers=headers,
-        )
+    client = get_client()
+    response = await client.post(
+        f"{config.LLM_API_URL}/v1/chat/completions",
+        data=llm_data,
+        files=files_payload or None,
+        headers=headers,
+    )
 
-        if response.status_code in (404, 500) and existing_session_id:
-            logger.warning(f"{log_prefix} Session {existing_session_id} got {response.status_code}, starting fresh")
-            _room_sessions.pop(room_id, None)
-            _room_msg_count.pop(room_id, None)
-            _save_room_sessions()
-            return None
+    if response.status_code in (404, 500) and existing_session_id:
+        logger.warning(f"{log_prefix} Session {existing_session_id} got {response.status_code}, starting fresh")
+        _room_sessions.pop(room_id, None)
+        _room_msg_count.pop(room_id, None)
+        _save_room_sessions()
+        return None
 
-        response.raise_for_status()
-        result = response.json()
+    response.raise_for_status()
+    result = response.json()
 
     await _save_session_from_response(room_id, result, existing_session_id, log_prefix)
     reply = result["choices"][0]["message"]["content"]
@@ -392,75 +393,77 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
     files_payload = [("files", (name, data, "application/octet-stream")) for name, data in (downloaded_files or [])]
 
     full_text = ""
-    tool_status_msgs: dict[str, int] = {}  # tool_name -> message_id
+    tool_status_msgs: dict[str, int] = {}  # tool_call_id -> message_id
     session_id_from_header = None
 
     try:
-        async with httpx.AsyncClient(timeout=float(config.LLM_TIMEOUT_SECONDS)) as client:
-            async with client.stream(
-                "POST",
-                f"{config.LLM_API_URL}/v1/chat/completions",
-                data=llm_data,
-                files=files_payload or None,
-                headers=headers,
-            ) as response:
-                if response.status_code in (404, 500) and existing_session_id:
-                    logger.warning(f"{log_prefix} Session {existing_session_id} got {response.status_code}, starting fresh")
-                    _room_sessions.pop(room_id, None)
-                    _room_msg_count.pop(room_id, None)
-                    _save_room_sessions()
-                    return None
+        client = get_client()
+        async with client.stream(
+            "POST",
+            f"{config.LLM_API_URL}/v1/chat/completions",
+            data=llm_data,
+            files=files_payload or None,
+            headers=headers,
+        ) as response:
+            if response.status_code in (404, 500) and existing_session_id:
+                logger.warning(f"{log_prefix} Session {existing_session_id} got {response.status_code}, starting fresh")
+                _room_sessions.pop(room_id, None)
+                _room_msg_count.pop(room_id, None)
+                _save_room_sessions()
+                return None
 
-                response.raise_for_status()
+            response.raise_for_status()
 
-                # Check for session_id in response headers
-                session_id_from_header = response.headers.get("x-session-id")
+            # Check for session_id in response headers
+            session_id_from_header = response.headers.get("x-session-id")
 
-                async for line in response.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    data_str = line[6:]
-                    if data_str.strip() == "[DONE]":
-                        break
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str.strip() == "[DONE]":
+                    break
 
-                    try:
-                        event = json.loads(data_str)
-                    except json.JSONDecodeError:
-                        continue
+                try:
+                    event = json.loads(data_str)
+                except json.JSONDecodeError:
+                    continue
 
-                    # Handle tool status events
-                    if "tool_status" in event:
-                        ts = event["tool_status"]
-                        tool_name = ts.get("tool_name", "")
-                        status = ts.get("status", "")
-                        if status == "started":
-                            msg_id = await messenger.send_message_returning_id(
-                                room_id, f"*{tool_name} ...*"
+                # Handle tool status events
+                if "tool_status" in event:
+                    ts = event["tool_status"]
+                    tool_name = ts.get("tool_name", "")
+                    tool_key = ts.get("tool_call_id") or tool_name
+                    status = ts.get("status", "")
+                    if status == "started":
+                        msg_id = await messenger.send_message_returning_id(
+                            room_id, f"*{tool_name} ...*"
+                        )
+                        if msg_id:
+                            tool_status_msgs[tool_key] = msg_id
+                    elif status in {"completed", "failed"}:
+                        existing_msg_id = tool_status_msgs.get(tool_key)
+                        if existing_msg_id:
+                            duration = ts.get("duration", 0)
+                            suffix = "completed" if status == "completed" else "failed"
+                            await messenger.edit_message(
+                                existing_msg_id,
+                                f"*{tool_name} {suffix} ({duration:.1f}s)*"
                             )
-                            if msg_id:
-                                tool_status_msgs[tool_name] = msg_id
-                        elif status == "completed":
-                            existing_msg_id = tool_status_msgs.get(tool_name)
-                            if existing_msg_id:
-                                duration = ts.get("duration", 0)
-                                await messenger.edit_message(
-                                    existing_msg_id,
-                                    f"*{tool_name} completed ({duration:.1f}s)*"
-                                )
-                        continue
+                    continue
 
-                    # Handle session_id in event payload
-                    if "x_session_id" in event:
-                        session_id_from_header = event["x_session_id"]
+                # Handle session_id in event payload
+                if "x_session_id" in event:
+                    session_id_from_header = event["x_session_id"]
 
-                    # Handle text content
-                    choices = event.get("choices", [])
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta", {})
-                    text = delta.get("content", "")
-                    if text:
-                        full_text += text
+                # Handle text content
+                choices = event.get("choices", [])
+                if not choices:
+                    continue
+                delta = choices[0].get("delta", {})
+                text = delta.get("content", "")
+                if text:
+                    full_text += text
 
     except httpx.ReadTimeout:
         logger.warning(f"{log_prefix} Stream read timeout after collecting {len(full_text)} chars")

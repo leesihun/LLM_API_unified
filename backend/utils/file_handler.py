@@ -1,6 +1,7 @@
 """
 File handling utilities for uploads
 """
+import base64
 import shutil
 import json
 import csv
@@ -9,6 +10,62 @@ from typing import List, Dict, Any, Optional
 from fastapi import UploadFile
 
 import config
+
+
+def is_image_file(file_path: str) -> bool:
+    """Check if a file is a supported image format."""
+    return Path(file_path).suffix.lower() in config.IMAGE_SUPPORTED_FORMATS
+
+
+def encode_image_base64(file_path: str) -> Optional[Dict[str, Any]]:
+    """Read an image file and return a base64-encoded data URL dict.
+
+    Returns ``{"url": "data:image/<subtype>;base64,..."}`` or *None* on failure.
+    Resizes the image if either dimension exceeds ``IMAGE_MAX_DIMENSION``.
+    """
+    path = Path(file_path)
+    suffix = path.suffix.lower()
+    mime_map = {
+        ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+    }
+    mime = mime_map.get(suffix, "image/png")
+
+    try:
+        max_dim = getattr(config, "IMAGE_MAX_DIMENSION", 4096)
+        max_bytes = getattr(config, "IMAGE_MAX_SIZE_MB", 20) * 1024 * 1024
+
+        # Check file size
+        if path.stat().st_size > max_bytes:
+            print(f"[IMAGE] {path.name} exceeds {config.IMAGE_MAX_SIZE_MB}MB limit, skipping")
+            return None
+
+        # Try to resize with Pillow if available and image is large
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(path)
+            w, h = img.size
+            if w > max_dim or h > max_dim:
+                ratio = min(max_dim / w, max_dim / h)
+                new_size = (int(w * ratio), int(h * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+                print(f"[IMAGE] Resized {path.name}: {w}x{h} -> {new_size[0]}x{new_size[1]}")
+                buf = io.BytesIO()
+                fmt = "PNG" if suffix == ".png" else "JPEG" if suffix in (".jpg", ".jpeg") else "WEBP" if suffix == ".webp" else "PNG"
+                img.save(buf, format=fmt)
+                raw = buf.getvalue()
+            else:
+                raw = path.read_bytes()
+        except ImportError:
+            # Pillow not installed — send raw bytes
+            raw = path.read_bytes()
+
+        b64 = base64.b64encode(raw).decode("ascii")
+        return {"url": f"data:{mime};base64,{b64}"}
+    except Exception as e:
+        print(f"[IMAGE] Failed to encode {path.name}: {e}")
+        return None
 
 
 def save_uploaded_files(
@@ -27,99 +84,39 @@ def save_uploaded_files(
     Returns:
         List of file paths in scratch directory
     """
-    print("\n" + "=" * 80)
-    print("[FILE_HANDLER] save_uploaded_files() called")
-    print("=" * 80)
-    print(f"Username: {username}")
-    print(f"Session ID: {session_id}")
-    print(f"Number of files: {len(files) if files else 0}")
-
     scratch_paths = []
+    max_bytes = config.MAX_FILE_SIZE_MB * 1024 * 1024
 
     # Create directories
     user_upload_dir = config.UPLOAD_DIR / username
     session_scratch_dir = config.SCRATCH_DIR / session_id
 
-    print(f"\n[FILE_HANDLER] Creating directories:")
-    print(f"  User upload dir: {user_upload_dir.absolute()}")
-    print(f"  Session scratch dir: {session_scratch_dir.absolute()}")
-
     user_upload_dir.mkdir(parents=True, exist_ok=True)
     session_scratch_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"  ✓ Directories created")
-
     for i, file in enumerate(files):
-        print(f"\n[FILE_HANDLER] Processing file {i+1}/{len(files)}:")
-        print(f"  Filename: {file.filename}")
-        print(f"  Content type: {file.content_type}")
-
         if file.filename:
             try:
-                # Save to user's persistent upload directory
                 user_file_path = user_upload_dir / file.filename
-                print(f"  Saving to user dir: {user_file_path.absolute()}")
                 with open(user_file_path, 'wb') as f:
                     shutil.copyfileobj(file.file, f)
                 user_size = user_file_path.stat().st_size
-                print(f"  ✓ Saved to user dir ({user_size} bytes)")
+                if user_size > max_bytes:
+                    user_file_path.unlink()
+                    raise ValueError(
+                        f"File '{file.filename}' exceeds the {config.MAX_FILE_SIZE_MB}MB limit"
+                    )
 
-                # Also copy to session scratch directory
-                file.file.seek(0)  # Reset file pointer
                 scratch_file_path = session_scratch_dir / file.filename
-                print(f"  Saving to scratch dir: {scratch_file_path.absolute()}")
-                with open(scratch_file_path, 'wb') as f:
-                    shutil.copyfileobj(file.file, f)
-                scratch_size = scratch_file_path.stat().st_size
-                print(f"  ✓ Saved to scratch dir ({scratch_size} bytes)")
+                shutil.copy2(user_file_path, scratch_file_path)
 
                 scratch_paths.append(str(scratch_file_path))
             except Exception as e:
-                print(f"  ✗ ERROR saving file: {e}")
+                print(f"[FILE_HANDLER] ERROR saving {file.filename}: {e}")
                 import traceback
                 traceback.print_exc()
-        else:
-            print(f"  ✗ Skipped (no filename)")
-
-    print(f"\n[FILE_HANDLER] Completed: {len(scratch_paths)} files saved")
-    print(f"[FILE_HANDLER] Scratch paths:")
-    for path in scratch_paths:
-        print(f"  - {path}")
-    print("=" * 80)
 
     return scratch_paths
-
-
-def read_file_content(file_path: str) -> str:
-    """
-    Read file content as text (for adding to LLM context)
-
-    Args:
-        file_path: Path to the file
-
-    Returns:
-        File content as string
-    """
-    try:
-        path = Path(file_path)
-
-        # Handle text files
-        if path.suffix in ['.txt', '.md', '.json', '.csv', '.py', '.js', '.html', '.xml']:
-            with open(path, 'r', encoding='utf-8') as f:
-                return f.read()
-
-        # Handle Excel files
-        elif path.suffix in ['.xlsx', '.xls']:
-            import pandas as pd
-            df = pd.read_excel(path)
-            return df.to_string()
-
-        # Handle other file types
-        else:
-            return f"[Binary file: {path.name}]"
-
-    except Exception as e:
-        return f"[Error reading file {file_path}: {str(e)}]"
 
 
 def cleanup_session_files(session_id: str):
@@ -216,30 +213,36 @@ def _extract_json_metadata(path: Path) -> Dict[str, Any]:
 
 
 def _extract_csv_metadata(path: Path) -> Dict[str, Any]:
-    """Extract metadata from CSV files"""
+    """Extract metadata from CSV files — reads only headers + sample rows, not the whole file."""
     try:
         with open(path, 'r', encoding='utf-8', newline='') as f:
-            # Detect delimiter
+            # Detect delimiter from first 1 KB
             sample = f.read(1024)
             f.seek(0)
             sniffer = csv.Sniffer()
             delimiter = sniffer.sniff(sample).delimiter
 
             reader = csv.reader(f, delimiter=delimiter)
-            rows = list(reader)
+            # Read only the first 4 rows (header + 3 data rows); count rest cheaply
+            head_rows = []
+            for _ in range(4):
+                try:
+                    head_rows.append(next(reader))
+                except StopIteration:
+                    break
 
-        metadata = {
-            'rows': len(rows),
-            'delimiter': delimiter
+            # Count remaining rows without loading them
+            row_count = len(head_rows) + sum(1 for _ in reader)
+
+        metadata: Dict[str, Any] = {
+            'rows': row_count,
+            'delimiter': delimiter,
         }
-
-        if len(rows) > 0:
-            metadata['columns'] = len(rows[0])
-            metadata['headers'] = rows[0]
-
-            # Sample rows (first 3 data rows after header)
-            if len(rows) > 1:
-                metadata['sample_rows'] = rows[1:min(4, len(rows))]
+        if head_rows:
+            metadata['columns'] = len(head_rows[0])
+            metadata['headers'] = head_rows[0]
+            if len(head_rows) > 1:
+                metadata['sample_rows'] = head_rows[1:]
 
         return metadata
 
@@ -286,13 +289,24 @@ def _extract_excel_metadata(path: Path) -> Dict[str, Any]:
 def _extract_text_metadata(path: Path) -> Dict[str, Any]:
     """Extract metadata from text/code files"""
     try:
-        with open(path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
+        line_count = 0
+        char_count = 0
+        preview_lines: List[str] = []
+        scan_lines: List[str] = []
+
+        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            for line in f:
+                line_count += 1
+                char_count += len(line)
+                if line_count <= 10:
+                    preview_lines.append(line)
+                if line_count <= 100:
+                    scan_lines.append(line)
 
         metadata = {
-            'lines': len(lines),
-            'chars': sum(len(line) for line in lines),
-            'preview': ''.join(lines[:10])  # First 10 lines
+            'lines': line_count,
+            'chars': char_count,
+            'preview': ''.join(preview_lines),
         }
 
         # For code files, try to detect structure
@@ -302,7 +316,7 @@ def _extract_text_metadata(path: Path) -> Dict[str, Any]:
             imports = []
             definitions = []
 
-            for line in lines[:100]:  # Check first 100 lines
+            for line in scan_lines:
                 line_stripped = line.strip()
 
                 # Python

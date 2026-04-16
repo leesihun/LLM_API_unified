@@ -19,6 +19,19 @@ import config
 from backend.utils.prompts_log_append import log_to_prompts_file
 from tools.python_coder.base import BasePythonExecutor
 
+# Pre-compiled regexes — used on every line of streaming output and parse calls
+_ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[mGKHF]|\x1b\][^\x07]*\x07|\x1b[=><]')
+_CONTROL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+
+# Pre-compiled filename extraction patterns (used every execution in _find_python_file_to_run)
+_FILENAME_PATTERNS = [
+    re.compile(r'saved (?:to |as )?["\']?(\w+\.py)["\']?', re.IGNORECASE),
+    re.compile(r'created ["\']?(\w+\.py)["\']?', re.IGNORECASE),
+    re.compile(r'wrote ["\']?(\w+\.py)["\']?', re.IGNORECASE),
+    re.compile(r'file[:\s]+["\']?(\w+\.py)["\']?', re.IGNORECASE),
+    re.compile(r'(\w+\.py)', re.IGNORECASE),  # Last resort: any .py filename
+]
+
 
 class OpenCodeExecutor(BasePythonExecutor):
     """
@@ -30,9 +43,6 @@ class OpenCodeExecutor(BasePythonExecutor):
     This separation ensures clean code generation and reliable execution.
     """
 
-    # Class-level session mapping: {llm_session_id: opencode_session_id}
-    _session_map: Dict[str, str] = {}
-    _session_locks: Dict[str, asyncio.Lock] = {}
     _http_client: Optional[httpx.AsyncClient] = None
     # Class-level port-alive cache (avoids socket check on every call)
     _port_alive_until: float = 0
@@ -52,13 +62,6 @@ class OpenCodeExecutor(BasePythonExecutor):
         self.timeout = config.OPENCODE_TIMEOUT
         self.python_timeout = getattr(config, 'PYTHON_EXECUTOR_TIMEOUT', 60)
         self.max_output_size = config.PYTHON_EXECUTOR_MAX_OUTPUT_SIZE
-
-    def _get_session_lock(self) -> asyncio.Lock:
-        lock = OpenCodeExecutor._session_locks.get(self.session_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            OpenCodeExecutor._session_locks[self.session_id] = lock
-        return lock
 
     @staticmethod
     def _opencode_log_mode() -> str:
@@ -114,13 +117,14 @@ class OpenCodeExecutor(BasePythonExecutor):
         opencode_output: str,
     ) -> Optional[Path]:
         new_or_updated: set[Path] = set(after_files - before_files)
+        cutoff = time.time() - 120
         for path in (after_files & before_files):
             try:
-                if path.stat().st_mtime > time.time() - 120:
+                if path.stat().st_mtime > cutoff:
                     new_or_updated.add(path)
             except OSError:
                 continue
-        return self._find_python_file_to_run(new_or_updated, opencode_output)
+        return self._find_python_file_to_run(new_or_updated, opencode_output, all_py_files=after_files)
 
     def _is_runnable_python_file(self, script_path: Path) -> Tuple[bool, str]:
         if not script_path.exists():
@@ -143,7 +147,7 @@ class OpenCodeExecutor(BasePythonExecutor):
         reason: str,
     ) -> Dict[str, Any]:
         self._log_stage(f"RECOVERY EXECUTION: {reason}")
-        script_path = self._find_python_file_to_run(workspace_py_after, opencode_output)
+        script_path = self._find_python_file_to_run(workspace_py_after, opencode_output, all_py_files=workspace_py_after)
         if script_path is None:
             return {
                 "executed": False,
@@ -154,11 +158,9 @@ class OpenCodeExecutor(BasePythonExecutor):
                 "error": f"{reason}. Recovery failed: no python file available in workspace.",
             }
 
-        command = f'"{sys.executable}" "{script_path.name}"'
         try:
             result = subprocess.run(
-                command,
-                shell=True,
+                [sys.executable, script_path.name],
                 capture_output=True,
                 text=True,
                 timeout=min(timeout, self.python_timeout),
@@ -192,6 +194,40 @@ class OpenCodeExecutor(BasePythonExecutor):
                 "returncode": -1,
                 "error": f"{reason}. Recovery execution failed: {exc}",
             }
+
+    def _recover_and_finish(
+        self,
+        workspace_py_after: set,
+        opencode_output: str,
+        exec_timeout: int,
+        start_time: float,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """Attempt recovery execution, build final result, log, and return."""
+        recovery = self._attempt_recovery_execution(
+            workspace_py_after=workspace_py_after,
+            opencode_output=opencode_output,
+            timeout=exec_timeout,
+            reason=reason,
+        )
+        execution_time = time.time() - start_time
+        files = self._get_workspace_files()
+        result = self._build_execution_result(
+            success=recovery["returncode"] == 0,
+            script_path=recovery.get("script_path"),
+            executed=recovery.get("executed", False),
+            stdout=recovery.get("stdout", ""),
+            stderr=recovery.get("stderr", ""),
+            returncode=recovery.get("returncode", -1),
+            execution_time=execution_time,
+            files=files,
+            error=recovery.get("error"),
+        )
+        self._log_result(
+            result["success"], result["returncode"], result["execution_time"],
+            result["stdout"], result["stderr"], result["files"], result["error"],
+        )
+        return result
 
     async def execute(
         self,
@@ -230,10 +266,12 @@ class OpenCodeExecutor(BasePythonExecutor):
         # Log execution start
         self._log_start(instruction, exec_timeout)
 
-        # Track files before OpenCode runs (workspace + project root relocation path)
+        # Track files before OpenCode runs
         workspace_py_before = set(self._get_python_files())
+        # Only snapshot project root when HTTP server mode is possible (stray files only happen there)
+        http_possible = await self._is_server_available()
         project_root = Path(config.__file__).resolve().parent
-        root_py_before = set(project_root.glob("*.py"))
+        root_py_before = set(project_root.glob("*.py")) if http_possible else set()
 
         # Stage 1: OpenCode generates/updates a script
         print(f"\n[OPENCODE] Code generation stage...")
@@ -241,43 +279,18 @@ class OpenCodeExecutor(BasePythonExecutor):
 
         opencode_result = await self._run_opencode(instruction, exec_timeout)
 
-        # Relocate .py files that landed in the project root (HTTP server mode)
-        self._relocate_stray_files(root_py_before, project_root)
+        # Relocate .py files that landed in the project root (HTTP server mode only)
+        if http_possible:
+            self._relocate_stray_files(root_py_before, project_root)
 
         workspace_py_after = set(self._get_python_files())
-        files = self._get_workspace_files()
         opencode_output = opencode_result.get("output", "")
 
         if not opencode_result["success"]:
-            recovery = self._attempt_recovery_execution(
-                workspace_py_after=workspace_py_after,
-                opencode_output=opencode_output,
-                timeout=exec_timeout,
-                reason=f"OpenCode failed: {opencode_result.get('error', 'unknown error')}",
+            return self._recover_and_finish(
+                workspace_py_after, opencode_output, exec_timeout, start_time,
+                f"OpenCode failed: {opencode_result.get('error', 'unknown error')}",
             )
-            execution_time = time.time() - start_time
-            files = self._get_workspace_files()
-            result = self._build_execution_result(
-                success=recovery["returncode"] == 0,
-                script_path=recovery.get("script_path"),
-                executed=recovery.get("executed", False),
-                stdout=recovery.get("stdout", ""),
-                stderr=recovery.get("stderr", ""),
-                returncode=recovery.get("returncode", -1),
-                execution_time=execution_time,
-                files=files,
-                error=recovery.get("error", opencode_result.get("error")),
-            )
-            self._log_result(
-                result["success"],
-                result["returncode"],
-                result["execution_time"],
-                result["stdout"],
-                result["stderr"],
-                result["files"],
-                result["error"],
-            )
-            return result
 
         # Stage 2: deterministically choose and execute script
         candidate_script = self._select_candidate_script(
@@ -287,67 +300,17 @@ class OpenCodeExecutor(BasePythonExecutor):
         )
 
         if candidate_script is None:
-            recovery = self._attempt_recovery_execution(
-                workspace_py_after=workspace_py_after,
-                opencode_output=opencode_output,
-                timeout=exec_timeout,
-                reason="OpenCode did not generate a runnable Python script",
+            return self._recover_and_finish(
+                workspace_py_after, opencode_output, exec_timeout, start_time,
+                "OpenCode did not generate a runnable Python script",
             )
-            execution_time = time.time() - start_time
-            files = self._get_workspace_files()
-            result = self._build_execution_result(
-                success=recovery["returncode"] == 0,
-                script_path=recovery.get("script_path"),
-                executed=recovery.get("executed", False),
-                stdout=recovery.get("stdout", ""),
-                stderr=recovery.get("stderr", ""),
-                returncode=recovery.get("returncode", -1),
-                execution_time=execution_time,
-                files=files,
-                error=recovery.get("error"),
-            )
-            self._log_result(
-                result["success"],
-                result["returncode"],
-                result["execution_time"],
-                result["stdout"],
-                result["stderr"],
-                result["files"],
-                result["error"],
-            )
-            return result
 
         runnable, reason = self._is_runnable_python_file(candidate_script)
         if not runnable:
-            recovery = self._attempt_recovery_execution(
-                workspace_py_after=workspace_py_after,
-                opencode_output=opencode_output,
-                timeout=exec_timeout,
-                reason=reason,
+            return self._recover_and_finish(
+                workspace_py_after, opencode_output, exec_timeout, start_time,
+                reason,
             )
-            execution_time = time.time() - start_time
-            files = self._get_workspace_files()
-            result = self._build_execution_result(
-                success=recovery["returncode"] == 0,
-                script_path=recovery.get("script_path"),
-                executed=recovery.get("executed", False),
-                stdout=recovery.get("stdout", ""),
-                stderr=recovery.get("stderr", ""),
-                returncode=recovery.get("returncode", -1),
-                execution_time=execution_time,
-                files=files,
-                error=recovery.get("error"),
-            )
-            self._log_result(
-                result["success"],
-                result["returncode"],
-                result["execution_time"],
-                result["stdout"],
-                result["stderr"],
-                result["files"],
-                result["error"],
-            )
-            return result
 
         python_result = self._run_python_file(candidate_script, min(exec_timeout, self.python_timeout))
         combined_stdout = self._combine_outputs(
@@ -381,14 +344,21 @@ class OpenCodeExecutor(BasePythonExecutor):
         )
         return result
 
-    def _is_server_available(self) -> bool:
-        """Check if OpenCode server is up, with 30s TTL cache."""
+    def _is_server_available_sync(self) -> bool:
+        """Check if OpenCode server is up (sync), with 30s TTL cache."""
         if time.time() < OpenCodeExecutor._port_alive_until:
             return True
         from tools.python_coder.opencode_server import get_server
         alive = get_server()._is_port_in_use()
         if alive:
             OpenCodeExecutor._port_alive_until = time.time() + 30
+        return alive
+
+    async def _is_server_available(self) -> bool:
+        """Check if OpenCode server is up (async-safe), with 30s TTL cache."""
+        if time.time() < OpenCodeExecutor._port_alive_until:
+            return True
+        alive = await asyncio.to_thread(self._is_server_available_sync)
         return alive
 
     async def _run_opencode(self, instruction: str, timeout: int) -> Dict[str, Any]:
@@ -402,7 +372,7 @@ class OpenCodeExecutor(BasePythonExecutor):
             Dict with keys: success, output, session_id, error
         """
         # --- HTTP server mode (fast path, with cached port check) ---
-        if self._is_server_available():
+        if await self._is_server_available():
             print("[OPENCODE] Using HTTP server mode (no cold-start)")
             http_result = await self._run_opencode_http(instruction, timeout)
             if http_result["success"]:
@@ -468,10 +438,6 @@ class OpenCodeExecutor(BasePythonExecutor):
             full_stdout = ''.join(stdout_lines)
             output_text, session_id, error_msg = self._parse_output(full_stdout)
 
-            # Store session for continuation
-            if session_id:
-                OpenCodeExecutor._session_map[self.session_id] = session_id
-
             return {
                 "success": returncode == 0 and error_msg is None,
                 "output": output_text,
@@ -502,10 +468,10 @@ class OpenCodeExecutor(BasePythonExecutor):
         """
         Run OpenCode via the persistent HTTP server.
 
-        On the first call for a given LLM session_id a new OpenCode session is
-        created via POST /session.  Subsequent calls with the same session_id
-        reuse that session (POST /session/{id}/message), giving the model full
-        context of previous exchanges in this conversation.
+        Always creates a fresh session per call — no context accumulation.
+        Sessions are deleted after use (fire-and-forget) to prevent orphan buildup.
+        This keeps prompt size constant regardless of how many times python_coder
+        is called in a session, and allows parallel calls without serialization.
 
         Returns:
             Dict with keys: success, output, session_id, error
@@ -514,98 +480,98 @@ class OpenCodeExecutor(BasePythonExecutor):
 
         base_url = get_server().server_url
         client = self._get_http_client()
-        async with self._get_session_lock():
-            # --- Session management: one OpenCode session per LLM session_id ---
-            opencode_session_id = OpenCodeExecutor._session_map.get(self.session_id)
-            if not opencode_session_id:
-                try:
-                    resp = await client.post(
-                        f"{base_url}/session",
-                        json={"title": f"llm-{self.session_id[:8]}"},
-                        timeout=httpx.Timeout(connect=10.0, read=timeout, write=10.0, pool=5.0),
-                    )
-                    resp.raise_for_status()
-                    opencode_session_id = resp.json()["id"]
-                    OpenCodeExecutor._session_map[self.session_id] = opencode_session_id
-                    print(f"[OPENCODE-HTTP] Created session: {opencode_session_id}")
-                except Exception as e:
-                    return {
-                        "success": False,
-                        "output": "",
-                        "session_id": None,
-                        "error": f"Failed to create OpenCode session: {e}",
-                    }
-            else:
-                print(f"[OPENCODE-HTTP] Reusing session: {opencode_session_id}")
 
-            # --- Send prompt, wait for full response ---
-            try:
-                provider, model = config.OPENCODE_MODEL.split("/", 1)
-                resp = await client.post(
-                    f"{base_url}/session/{opencode_session_id}/message",
-                    json={
-                        "model": {
-                            "providerID": provider,
-                            "modelID": model,
-                        },
-                        "parts": [{"type": "text", "text": instruction}],
+        # --- Always create a fresh session — no reuse, no context accumulation ---
+        try:
+            resp = await client.post(
+                f"{base_url}/session",
+                json={"title": f"llm-{self.session_id[:8]}"},
+                timeout=httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0),
+            )
+            resp.raise_for_status()
+            opencode_session_id = resp.json()["id"]
+            print(f"[OPENCODE-HTTP] Created session: {opencode_session_id}")
+        except Exception as e:
+            return {
+                "success": False,
+                "output": "",
+                "session_id": None,
+                "error": f"Failed to create OpenCode session: {e}",
+            }
+
+        # --- Send prompt, wait for full response; always clean up session ---
+        try:
+            provider, model = config.OPENCODE_MODEL.split("/", 1)
+            resp = await client.post(
+                f"{base_url}/session/{opencode_session_id}/message",
+                json={
+                    "model": {
+                        "providerID": provider,
+                        "modelID": model,
                     },
-                    timeout=httpx.Timeout(connect=10.0, read=timeout, write=10.0, pool=5.0),
-                )
-                resp.raise_for_status()
-                result = resp.json()
+                    "parts": [{"type": "text", "text": instruction}],
+                },
+                timeout=httpx.Timeout(connect=10.0, read=timeout, write=10.0, pool=5.0),
+            )
+            resp.raise_for_status()
+            result = resp.json()
 
-                if self._debug_log_enabled():
-                    self._log_stage(f"RAW HTTP RESPONSE keys={list(result.keys())}")
-                    info = result.get("info", {})
-                    log_to_prompts_file(f"  info.finish={info.get('finish')}")
-                    log_to_prompts_file(f"  info.providerID={info.get('providerID')}")
-                    log_to_prompts_file(f"  info.modelID={info.get('modelID')}")
-
-                # Check for OpenCode-level errors (HTTP 200 but execution failed)
+            if self._debug_log_enabled():
+                self._log_stage(f"RAW HTTP RESPONSE keys={list(result.keys())}")
                 info = result.get("info", {})
-                oc_error = info.get("error")
-                if isinstance(oc_error, dict) and oc_error.get("data", {}).get("message"):
-                    error_msg = oc_error["data"]["message"].strip('"')
-                    self._log_stage(f"OpenCode error: {error_msg}")
-                    OpenCodeExecutor._session_map.pop(self.session_id, None)
-                    return {
-                        "success": False,
-                        "output": "",
-                        "session_id": opencode_session_id,
-                        "error": f"OpenCode error: {error_msg}",
-                    }
+                log_to_prompts_file(f"  info.finish={info.get('finish')}")
+                log_to_prompts_file(f"  info.providerID={info.get('providerID')}")
+                log_to_prompts_file(f"  info.modelID={info.get('modelID')}")
 
-                text = self._extract_opencode_text(result)
-                if len(text) > 3000:
-                    text = text[:3000] + "\n...[truncated]"
-                if self._summary_log_enabled():
-                    self._log_stage(f"Extracted text ({len(text)} chars)")
-                    if self._debug_log_enabled():
-                        for line in text.split('\n')[:40]:
-                            log_to_prompts_file(f"  {line}")
-
-                return {
-                    "success": True,
-                    "output": text,
-                    "session_id": opencode_session_id,
-                    "error": None,
-                }
-
-            except httpx.TimeoutException:
+            # Check for OpenCode-level errors (HTTP 200 but execution failed)
+            info = result.get("info", {})
+            oc_error = info.get("error")
+            if isinstance(oc_error, dict) and oc_error.get("data", {}).get("message"):
+                error_msg = oc_error["data"]["message"].strip('"')
+                self._log_stage(f"OpenCode error: {error_msg}")
                 return {
                     "success": False,
                     "output": "",
                     "session_id": opencode_session_id,
-                    "error": f"OpenCode HTTP timeout after {timeout}s",
+                    "error": f"OpenCode error: {error_msg}",
                 }
-            except Exception as e:
-                return {
-                    "success": False,
-                    "output": "",
-                    "session_id": opencode_session_id,
-                    "error": f"OpenCode HTTP error: {e}",
-                }
+
+            text = self._extract_opencode_text(result)
+            if len(text) > 3000:
+                text = text[:3000] + "\n...[truncated]"
+            if self._summary_log_enabled():
+                self._log_stage(f"Extracted text ({len(text)} chars)")
+                if self._debug_log_enabled():
+                    for line in text.split('\n')[:40]:
+                        log_to_prompts_file(f"  {line}")
+
+            return {
+                "success": True,
+                "output": text,
+                "session_id": opencode_session_id,
+                "error": None,
+            }
+
+        except httpx.TimeoutException:
+            return {
+                "success": False,
+                "output": "",
+                "session_id": opencode_session_id,
+                "error": f"OpenCode HTTP timeout after {timeout}s",
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "output": "",
+                "session_id": opencode_session_id,
+                "error": f"OpenCode HTTP error: {e}",
+            }
+        finally:
+            # Fire-and-forget cleanup — delete session to avoid orphan accumulation
+            asyncio.ensure_future(
+                client.delete(f"{base_url}/session/{opencode_session_id}",
+                              timeout=httpx.Timeout(5.0))
+            )
 
     @staticmethod
     def _extract_opencode_text(result: Dict[str, Any]) -> str:
@@ -694,7 +660,6 @@ class OpenCodeExecutor(BasePythonExecutor):
 
     def _build_command(self, instruction: str) -> List[str]:
         """Build opencode run command"""
-        import sys
         opencode_cmd = config.OPENCODE_PATH
         if sys.platform == "win32" and not opencode_cmd.endswith(".cmd"):
             opencode_cmd = f"{opencode_cmd}.cmd"
@@ -708,11 +673,6 @@ class OpenCodeExecutor(BasePythonExecutor):
             "--format", "default",
             "--model", config.OPENCODE_MODEL,
         ]
-
-        # Continue existing session if available
-        if self.session_id in OpenCodeExecutor._session_map:
-            opencode_session = OpenCodeExecutor._session_map[self.session_id]
-            cmd.extend(["--session", opencode_session])
 
         return cmd
 
@@ -728,14 +688,11 @@ class OpenCodeExecutor(BasePythonExecutor):
         Returns:
             Tuple of (text_output, opencode_session_id, error_message)
         """
-        import re
-
-        # Strip ANSI escape codes (colors, bold, etc.)
-        ansi_escape = re.compile(r'\x1b\[[0-9;]*[mGKHF]|\x1b\][^\x07]*\x07|\x1b[=><]')
-        clean = ansi_escape.sub('', stdout)
+        # Strip ANSI escape codes (colors, bold, etc.) — uses pre-compiled regex
+        clean = _ANSI_ESCAPE_RE.sub('', stdout)
 
         # Strip other control characters except newlines/tabs
-        clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', clean)
+        clean = _CONTROL_CHAR_RE.sub('', clean)
 
         # Detect error lines
         error_msg = None
@@ -778,7 +735,9 @@ class OpenCodeExecutor(BasePythonExecutor):
 
         return moved
 
-    def _find_python_file_to_run(self, new_files: set, opencode_output: str) -> Optional[Path]:
+    def _find_python_file_to_run(
+        self, new_files: set, opencode_output: str, all_py_files: Optional[set] = None,
+    ) -> Optional[Path]:
         """
         Find the Python file to run
 
@@ -786,6 +745,11 @@ class OpenCodeExecutor(BasePythonExecutor):
         1. Newly created .py file
         2. File mentioned in OpenCode output
         3. Most recently modified .py file
+
+        Args:
+            new_files: Set of newly created/modified Path objects
+            opencode_output: Raw OpenCode stdout text
+            all_py_files: Optional pre-collected set of all .py files (avoids re-glob)
         """
         # Priority 1: New file created during this run
         if new_files:
@@ -795,32 +759,23 @@ class OpenCodeExecutor(BasePythonExecutor):
                     print(f"[OPENCODE] Found new file mentioned in output: {f.name}")
                     return f
             # Otherwise return the first new file
-            file = list(new_files)[0]
+            file = next(iter(new_files))
             print(f"[OPENCODE] Found new file: {file.name}")
             return file
 
         # Priority 2: Extract filename from OpenCode output
         # Look for patterns like "saved to solution.py" or "created file.py"
-        patterns = [
-            r'saved (?:to |as )?["\']?(\w+\.py)["\']?',
-            r'created ["\']?(\w+\.py)["\']?',
-            r'wrote ["\']?(\w+\.py)["\']?',
-            r'file[:\s]+["\']?(\w+\.py)["\']?',
-            r'(\w+\.py)'  # Last resort: any .py filename
-        ]
-
-        for pattern in patterns:
-            matches = re.findall(pattern, opencode_output, re.IGNORECASE)
+        for pattern in _FILENAME_PATTERNS:
+            matches = pattern.findall(opencode_output)
             for match in matches:
                 file_path = self.workspace / match
                 if file_path.exists():
                     print(f"[OPENCODE] Found file from output pattern: {match}")
                     return file_path
 
-        # Priority 3: Most recently modified .py file
-        py_files = self._get_python_files()
+        # Priority 3: Most recently modified .py file (reuse already-collected set)
+        py_files = list(all_py_files) if all_py_files else self._get_python_files()
         if py_files:
-            # Sort by modification time, most recent first
             py_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
             print(f"[OPENCODE] Using most recent .py file: {py_files[0].name}")
             return py_files[0]
@@ -838,13 +793,10 @@ class OpenCodeExecutor(BasePythonExecutor):
         """Combine outputs from OpenCode and Python execution"""
         parts = []
 
-        # OpenCode generation summary (abbreviated)
+        # OpenCode generation summary (HTTP path pre-truncates to 3000; cap subprocess too)
         if opencode_output:
-            # Trim to avoid huge outputs
-            if len(opencode_output) > 500:
-                parts.append(f"[Code Generation]\n{opencode_output[:500]}...")
-            else:
-                parts.append(f"[Code Generation]\n{opencode_output}")
+            text = opencode_output if len(opencode_output) <= 3000 else opencode_output[:3000] + "\n...[truncated]"
+            parts.append(f"[Code Generation]\n{text}")
 
         # Python execution output
         parts.append(f"\n[Execution: {python_file.name}]")
@@ -868,9 +820,10 @@ class OpenCodeExecutor(BasePythonExecutor):
         try:
             for file_path in self.workspace.iterdir():
                 if file_path.is_file():
+                    st = file_path.stat()
                     files[file_path.name] = {
-                        "size": file_path.stat().st_size,
-                        "modified": file_path.stat().st_mtime,
+                        "size": st.st_size,
+                        "modified": st.st_mtime,
                         "path": str(file_path)
                     }
         except Exception as e:
@@ -937,10 +890,9 @@ class OpenCodeExecutor(BasePythonExecutor):
 
     def _log_stream_line(self, line: str) -> None:
         """Log a single line of plain-text streaming output"""
-        import re
-        # Strip ANSI codes before logging
-        clean = re.sub(r'\x1b\[[0-9;]*[mGKHF]|\x1b\][^\x07]*\x07|\x1b[=><]', '', line)
-        clean = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', clean)
+        # Uses pre-compiled regexes instead of recompiling per line
+        clean = _ANSI_ESCAPE_RE.sub('', line)
+        clean = _CONTROL_CHAR_RE.sub('', clean)
         if clean.strip():
             log_to_prompts_file(f"  {clean}")
 

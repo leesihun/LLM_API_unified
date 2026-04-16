@@ -1,6 +1,6 @@
 """
-Simple SQLite database for users and sessions
-Human-readable JSON storage for conversations
+Simple SQLite database for users and sessions.
+Append-only JSONL storage for conversation history.
 """
 import sqlite3
 import json
@@ -159,6 +159,17 @@ class Database:
                 (count, session_id)
             )
 
+    def increment_session_message_count(self, session_id: str, delta: int):
+        """Increment message count for a session."""
+        if delta == 0:
+            return
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE sessions SET message_count = COALESCE(message_count, 0) + ? WHERE id = ?",
+                (delta, session_id)
+            )
+
     def list_user_sessions(self, username: str) -> List[Dict[str, Any]]:
         """List all sessions for a user"""
         with self.get_connection() as conn:
@@ -191,56 +202,181 @@ class Database:
 
 class ConversationStore:
     """
-    Store conversations as human-readable JSON files
-    Format: data/sessions/{session_id}.json
+    Store conversations as append-only JSONL plus a small recent-message cache.
+
+    Files:
+      - data/sessions/{session_id}.jsonl
+      - data/sessions/{session_id}.recent.json
+      - data/sessions/{session_id}.lock
+
+    Legacy sessions stored as data/sessions/{session_id}.json are migrated on first access.
     """
 
     def __init__(self, sessions_dir: str = "data/sessions"):
         self.sessions_dir = Path(sessions_dir)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
-    def _get_session_file(self, session_id: str) -> Path:
-        """Get the file path for a session"""
+    def _get_session_log_file(self, session_id: str) -> Path:
+        return self.sessions_dir / f"{session_id}.jsonl"
+
+    def _get_recent_file(self, session_id: str) -> Path:
+        return self.sessions_dir / f"{session_id}.recent.json"
+
+    def _get_legacy_file(self, session_id: str) -> Path:
         return self.sessions_dir / f"{session_id}.json"
 
-    def save_conversation(self, session_id: str, messages: List[Dict[str, str]]):
-        """Save conversation to JSON file with file locking for concurrency safety"""
-        session_file = self._get_session_file(session_id)
-        lock_file = session_file.with_suffix('.lock')
+    def _get_lock_file(self, session_id: str) -> Path:
+        return self.sessions_dir / f"{session_id}.lock"
 
-        data = {
-            "session_id": session_id,
-            "updated_at": datetime.now().isoformat(),
-            "messages": messages
-        }
+    def _recent_window(self) -> int:
+        return max(1, int(getattr(config, "MAX_CONVERSATION_HISTORY", 50)))
 
-        # Use file lock to prevent concurrent write corruption
-        with FileLock(lock_file, timeout=10):
-            with open(session_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
+    def _session_exists(self, session_id: str) -> bool:
+        return (
+            self._get_session_log_file(session_id).exists()
+            or self._get_recent_file(session_id).exists()
+            or self._get_legacy_file(session_id).exists()
+        )
 
-    def load_conversation(self, session_id: str) -> Optional[List[Dict[str, str]]]:
-        """Load conversation from JSON file with file locking for concurrency safety"""
-        session_file = self._get_session_file(session_id)
-        if not session_file.exists():
+    def save_conversation(self, session_id: str, messages: List[Dict[str, Any]]):
+        """Rewrite the full conversation history."""
+        with FileLock(self._get_lock_file(session_id), timeout=10):
+            self._write_full_conversation_unlocked(session_id, messages)
+
+    def append_messages(self, session_id: str, messages: List[Dict[str, Any]]):
+        """Append new messages and refresh the bounded hot-history cache."""
+        if not messages:
+            return
+
+        with FileLock(self._get_lock_file(session_id), timeout=10):
+            self._ensure_migrated_unlocked(session_id)
+
+            log_file = self._get_session_log_file(session_id)
+            with open(log_file, 'a', encoding='utf-8') as f:
+                for message in messages:
+                    f.write(json.dumps(message, ensure_ascii=False, default=str))
+                    f.write("\n")
+
+            recent_messages = self._load_recent_unlocked(session_id)
+            recent_messages.extend(messages)
+            self._write_recent_unlocked(
+                session_id,
+                recent_messages[-self._recent_window():],
+            )
+
+    def load_conversation(self, session_id: str) -> Optional[List[Dict[str, Any]]]:
+        """Load the full conversation history."""
+        if not self._session_exists(session_id):
             return None
 
-        lock_file = session_file.with_suffix('.lock')
-
         try:
-            # Use file lock to ensure we don't read while another process is writing
-            with FileLock(lock_file, timeout=10):
-                with open(session_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    return data.get("messages", [])
+            with FileLock(self._get_lock_file(session_id), timeout=10):
+                self._ensure_migrated_unlocked(session_id)
+                return self._read_log_unlocked(session_id)
         except Exception:
             return None
 
+    def load_recent_conversation(
+        self,
+        session_id: str,
+        limit: Optional[int] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Load the recent conversation cache used on the hot request path."""
+        if not self._session_exists(session_id):
+            return None
+
+        try:
+            with FileLock(self._get_lock_file(session_id), timeout=10):
+                self._ensure_migrated_unlocked(session_id)
+                recent_messages = self._load_recent_unlocked(session_id)
+                if not recent_messages:
+                    full_messages = self._read_log_unlocked(session_id)
+                    recent_messages = full_messages[-self._recent_window():]
+                    self._write_recent_unlocked(session_id, recent_messages)
+                if limit is not None and limit >= 0:
+                    if limit == 0:
+                        return []
+                    return recent_messages[-limit:]
+                return recent_messages
+        except Exception:
+            return None
+
+    def _ensure_migrated_unlocked(self, session_id: str):
+        log_file = self._get_session_log_file(session_id)
+        if log_file.exists():
+            return
+
+        legacy_file = self._get_legacy_file(session_id)
+        if not legacy_file.exists():
+            return
+
+        with open(legacy_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        messages = data.get("messages", [])
+        self._write_full_conversation_unlocked(session_id, messages)
+        if legacy_file.exists():
+            legacy_file.unlink()
+
+    def _write_full_conversation_unlocked(self, session_id: str, messages: List[Dict[str, Any]]):
+        log_file = self._get_session_log_file(session_id)
+        with open(log_file, 'w', encoding='utf-8') as f:
+            for message in messages:
+                f.write(json.dumps(message, ensure_ascii=False, default=str))
+                f.write("\n")
+
+        self._write_recent_unlocked(session_id, messages[-self._recent_window():])
+
+        legacy_file = self._get_legacy_file(session_id)
+        if legacy_file.exists():
+            legacy_file.unlink()
+
+    def _read_log_unlocked(self, session_id: str) -> List[Dict[str, Any]]:
+        log_file = self._get_session_log_file(session_id)
+        if not log_file.exists():
+            return []
+
+        messages: List[Dict[str, Any]] = []
+        with open(log_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                messages.append(json.loads(line))
+        return messages
+
+    def _load_recent_unlocked(self, session_id: str) -> List[Dict[str, Any]]:
+        recent_file = self._get_recent_file(session_id)
+        if not recent_file.exists():
+            return []
+
+        try:
+            with open(recent_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data.get("messages", [])
+        except Exception:
+            return []
+
+    def _write_recent_unlocked(self, session_id: str, messages: List[Dict[str, Any]]):
+        recent_file = self._get_recent_file(session_id)
+        payload = {
+            "session_id": session_id,
+            "updated_at": datetime.now().isoformat(),
+            "messages": messages,
+        }
+        with open(recent_file, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+
     def delete_conversation(self, session_id: str):
-        """Delete a conversation file"""
-        session_file = self._get_session_file(session_id)
-        if session_file.exists():
-            session_file.unlink()
+        """Delete all conversation artifacts for a session."""
+        for path in (
+            self._get_session_log_file(session_id),
+            self._get_recent_file(session_id),
+            self._get_legacy_file(session_id),
+            self._get_lock_file(session_id),
+        ):
+            if path.exists():
+                path.unlink()
 
 
 # Global instances

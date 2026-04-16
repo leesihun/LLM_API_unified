@@ -35,28 +35,75 @@ app.add_middleware(
 )
 
 
+def _session_artifact_paths(sessions_dir: Path, session_id: str) -> list[Path]:
+    return [
+        sessions_dir / f"{session_id}.jsonl",
+        sessions_dir / f"{session_id}.recent.json",
+        sessions_dir / f"{session_id}.json",
+        sessions_dir / f"{session_id}.lock",
+    ]
+
+
+def _session_artifacts_exist(sessions_dir: Path, session_id: str) -> bool:
+    return any(path.exists() for path in _session_artifact_paths(sessions_dir, session_id)[:-1])
+
+
+def _session_id_from_artifact(path: Path) -> str:
+    if path.name.endswith(".recent.json"):
+        return path.name[:-len(".recent.json")]
+    return path.stem
+
+
+def _job_artifact_paths(jobs_dir: Path, job_id: str) -> list[Path]:
+    return [
+        jobs_dir / f"{job_id}.json",
+        jobs_dir / f"{job_id}.lock",
+        jobs_dir / f"{job_id}.output.txt",
+        jobs_dir / f"{job_id}.events.jsonl",
+    ]
+
+
 def _cleanup_old_sessions():
-    """Delete session JSON files older than SESSION_CLEANUP_DAYS."""
+    """Delete session artifacts older than SESSION_CLEANUP_DAYS."""
+    if config.SESSION_CLEANUP_DAYS <= 0:
+        return
+
     sessions_dir = Path("data/sessions")
     if not sessions_dir.exists():
         return
+
     cutoff = datetime.now() - timedelta(days=config.SESSION_CLEANUP_DAYS)
     removed = 0
-    for f in sessions_dir.glob("*.json"):
+    session_ids = {
+        _session_id_from_artifact(path)
+        for path in sessions_dir.iterdir()
+        if path.is_file() and not path.name.endswith(".lock")
+    }
+    for session_id in session_ids:
         try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            updated = datetime.fromisoformat(data.get("updated_at", ""))
+            artifacts = [
+                path for path in _session_artifact_paths(sessions_dir, session_id)
+                if path.exists() and not path.name.endswith(".lock")
+            ]
+            if not artifacts:
+                continue
+            updated = max(datetime.fromtimestamp(path.stat().st_mtime) for path in artifacts)
             if updated < cutoff:
-                f.unlink()
+                for path in _session_artifact_paths(sessions_dir, session_id):
+                    if path.exists():
+                        path.unlink()
                 removed += 1
         except Exception:
             pass
     if removed:
-        print(f"[Startup] Cleaned up {removed} old session file(s)")
+        print(f"[Startup] Cleaned up {removed} old session(s)")
 
 
 def _cleanup_old_jobs():
     """Delete job JSON files older than JOBS_CLEANUP_DAYS."""
+    if config.JOBS_CLEANUP_DAYS <= 0:
+        return
+
     jobs_dir = config.JOBS_DIR
     if not jobs_dir.exists():
         return
@@ -67,10 +114,9 @@ def _cleanup_old_jobs():
             data = json.loads(f.read_text(encoding="utf-8"))
             created = datetime.fromisoformat(data.get("created_at", ""))
             if created < cutoff:
-                f.unlink()
-                lock = f.with_suffix(".lock")
-                if lock.exists():
-                    lock.unlink()
+                for path in _job_artifact_paths(jobs_dir, f.stem):
+                    if path.exists():
+                        path.unlink()
                 removed += 1
         except Exception:
             pass
@@ -80,6 +126,9 @@ def _cleanup_old_jobs():
 
 def _cleanup_old_tool_results():
     """Delete tool result directories that are orphaned or older than TOOL_RESULTS_CLEANUP_DAYS."""
+    if config.TOOL_RESULTS_CLEANUP_DAYS <= 0:
+        return
+
     tool_results_dir = config.TOOL_RESULTS_DIR
     if not tool_results_dir.exists():
         return
@@ -89,9 +138,8 @@ def _cleanup_old_tool_results():
     for d in tool_results_dir.iterdir():
         if not d.is_dir():
             continue
-        session_file = sessions_dir / f"{d.name}.json"
         too_old = datetime.fromtimestamp(d.stat().st_mtime) < cutoff
-        if session_file.exists() and not too_old:
+        if _session_artifacts_exist(sessions_dir, d.name) and not too_old:
             continue
         try:
             shutil.rmtree(d)
@@ -104,6 +152,9 @@ def _cleanup_old_tool_results():
 
 def _cleanup_old_scratch():
     """Delete scratch directories older than SCRATCH_CLEANUP_DAYS or with no session file."""
+    if config.SCRATCH_CLEANUP_DAYS <= 0:
+        return
+
     scratch_dir = config.SCRATCH_DIR
     if not scratch_dir.exists():
         return
@@ -113,9 +164,8 @@ def _cleanup_old_scratch():
     for d in scratch_dir.iterdir():
         if not d.is_dir():
             continue
-        session_file = sessions_dir / f"{d.name}.json"
         too_old = datetime.fromtimestamp(d.stat().st_mtime) < cutoff
-        if session_file.exists() and not too_old:
+        if _session_artifacts_exist(sessions_dir, d.name) and not too_old:
             continue
         try:
             shutil.rmtree(d)
@@ -184,6 +234,10 @@ async def startup_event():
     if config.PYTHON_EXECUTOR_MODE == "opencode":
         from tools.python_coder.opencode_server import start_opencode_server
         start_opencode_server()
+
+    if "rag" in config.AVAILABLE_TOOLS:
+        from tools.rag import preload_models
+        preload_models()
 
 
 @app.on_event("shutdown")

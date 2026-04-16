@@ -7,6 +7,31 @@ passes to each tool's execute/read/write/navigate method.
 """
 
 TOOL_SCHEMAS: dict = {
+    "code_exec": {
+        "name": "code_exec",
+        "description": (
+            "Execute Python code directly. Pass the complete, ready-to-run Python script as the "
+            "'code' argument — no natural-language description, actual code only. "
+            "Runs it in the session workspace, returns stdout/stderr/returncode. "
+            "Prefer this over python_coder for straightforward tasks where you can write the code yourself. "
+            "Use python_coder only for complex tasks that benefit from a separate code-generation step."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "Complete Python source code to execute.",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Maximum seconds for execution (default: 300).",
+                },
+            },
+            "required": ["code"],
+        },
+    },
+
     "websearch": {
         "name": "websearch",
         "description": (
@@ -87,7 +112,7 @@ TOOL_SCHEMAS: dict = {
         "name": "file_reader",
         "description": (
             "Read the contents of a text file. Supports absolute paths (anywhere on the system) "
-            "as well as paths relative to the scratch workspace or user uploads. "
+            "as well as relative paths resolved in this order: session scratch workspace, user uploads, then current working directory. "
             "If the path is known, call file_reader directly instead of exploring first. "
             "Use this instead of python_coder when you just need to see file contents. "
             "Large files can be read in chunks using offset and limit."
@@ -99,12 +124,12 @@ TOOL_SCHEMAS: dict = {
                     "type": "string",
                     "description": (
                         "Path to the file. Absolute paths (e.g. C:/Users/.../file.txt) are read directly. "
-                        "Relative paths are resolved against the scratch workspace."
+                        "Relative paths are resolved against the session scratch workspace first, then user uploads, then the current working directory."
                     ),
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Line number to start reading from (0-indexed, default: 0).",
+                    "description": "Line number to start reading from (1-based, default: 1).",
                 },
                 "limit": {
                     "type": "integer",
@@ -129,7 +154,7 @@ TOOL_SCHEMAS: dict = {
                     "type": "string",
                     "description": (
                         "Path to the file. Absolute paths write directly to that location. "
-                        "Relative paths write inside the scratch workspace."
+                        "Relative paths write inside the session scratch workspace."
                     ),
                 },
                 "content": {
@@ -150,7 +175,7 @@ TOOL_SCHEMAS: dict = {
         "name": "file_navigator",
         "description": (
             "List directory contents or search for files using glob patterns. "
-            "Supports absolute paths (anywhere on the system) as well as the scratch workspace. "
+            "Supports absolute paths (anywhere on the system) as well as the session scratch workspace. "
             "Use this only when paths are unknown; avoid repeated retries with equivalent path variants."
         ),
         "parameters": {
@@ -169,7 +194,7 @@ TOOL_SCHEMAS: dict = {
                     "type": "string",
                     "description": (
                         "Directory path to list or search in. Absolute paths are used directly. "
-                        "Relative paths resolve against scratch workspace."
+                        "Relative paths resolve against the session scratch workspace."
                     ),
                 },
                 "pattern": {
@@ -188,8 +213,8 @@ TOOL_SCHEMAS: dict = {
             "or any command-line task. "
             "Multiple shell_exec calls in a single turn run concurrently — use this for parallel work. "
             "For long-running scripts, set a large timeout (e.g. 600–3600). "
-            "If the process exceeds the timeout, partial output is returned along with the PID; "
-            "call shell_exec with 'kill <pid>' to terminate if needed."
+            "If the process exceeds the timeout, the result reports that it is still running and includes the PID. "
+            "Use process_monitor instead when you need incremental output or background process management."
         ),
         "parameters": {
             "type": "object",
@@ -207,7 +232,7 @@ TOOL_SCHEMAS: dict = {
                 },
                 "working_directory": {
                     "type": "string",
-                    "description": "Working directory for the command. Defaults to the scratch workspace.",
+                    "description": "Working directory for the command. Defaults to the session scratch workspace; relative paths resolve there too.",
                 },
             },
             "required": ["command"],

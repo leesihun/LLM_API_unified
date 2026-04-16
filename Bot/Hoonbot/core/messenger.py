@@ -15,6 +15,9 @@ _api_key: str = ""
 # Persistent HTTP client — shared across all requests
 _client: Optional[httpx.AsyncClient] = None
 
+# Cached bot identity from /api/bots/me
+_bot_info_cache: Optional[dict] = None
+
 # Room info cache: room_id -> {"name": str, "isGroup": bool}
 _room_cache: dict[int, dict] = {}
 
@@ -40,8 +43,10 @@ async def close_client() -> None:
 
 
 def set_api_key(key: str) -> None:
-    global _api_key
+    global _api_key, _bot_info_cache
     _api_key = key
+    _bot_info_cache = None
+    _room_cache.clear()
     config.MESSENGER_API_KEY = key
 
 
@@ -145,15 +150,18 @@ async def send_message(room_id: int, content: str, reply_to_id: int | None = Non
 async def send_message_returning_id(room_id: int, content: str) -> int | None:
     """Send a message and return its ID (for later editing/deletion)."""
     try:
-        client = _get_client()
-        resp = await client.post(
-            f"{config.MESSENGER_URL}/api/send-message",
-            headers=_headers(),
-            json={"roomId": room_id, "content": content, "type": "text"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("message", {}).get("id") or data.get("id")
+        async def _send():
+            client = _get_client()
+            resp = await client.post(
+                f"{config.MESSENGER_URL}/api/send-message",
+                headers=_headers(),
+                json={"roomId": room_id, "content": content, "type": "text"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data.get("message", {}).get("id") or data.get("id")
+
+        return await with_retry(_send, label="Messenger send (id)", max_attempts=3)
     except Exception:
         return None
 
@@ -161,13 +169,16 @@ async def send_message_returning_id(room_id: int, content: str) -> int | None:
 async def edit_message(message_id: int, content: str) -> None:
     """Edit a previously sent message."""
     try:
-        client = _get_client()
-        resp = await client.post(
-            f"{config.MESSENGER_URL}/api/edit-message",
-            headers=_headers(),
-            json={"messageId": message_id, "content": content},
-        )
-        resp.raise_for_status()
+        async def _edit():
+            client = _get_client()
+            resp = await client.post(
+                f"{config.MESSENGER_URL}/api/edit-message",
+                headers=_headers(),
+                json={"messageId": message_id, "content": content},
+            )
+            resp.raise_for_status()
+
+        await with_retry(_edit, label="Messenger edit", max_attempts=2)
     except Exception:
         pass  # Best-effort
 
@@ -175,13 +186,16 @@ async def edit_message(message_id: int, content: str) -> None:
 async def delete_message(message_id: int) -> None:
     """Soft-delete a previously sent message."""
     try:
-        client = _get_client()
-        resp = await client.post(
-            f"{config.MESSENGER_URL}/api/delete-message",
-            headers=_headers(),
-            json={"messageId": message_id},
-        )
-        resp.raise_for_status()
+        async def _delete():
+            client = _get_client()
+            resp = await client.post(
+                f"{config.MESSENGER_URL}/api/delete-message",
+                headers=_headers(),
+                json={"messageId": message_id},
+            )
+            resp.raise_for_status()
+
+        await with_retry(_delete, label="Messenger delete", max_attempts=2)
     except Exception:
         pass  # Best-effort
 
@@ -233,7 +247,11 @@ async def stop_typing(room_id: int) -> None:
 # Bot info & room queries
 # ---------------------------------------------------------------------------
 
-async def get_bot_info() -> Optional[dict]:
+async def get_bot_info(refresh: bool = False) -> Optional[dict]:
+    global _bot_info_cache
+    if _bot_info_cache is not None and not refresh:
+        return _bot_info_cache
+
     try:
         client = _get_client()
         resp = await client.get(
@@ -241,7 +259,8 @@ async def get_bot_info() -> Optional[dict]:
             headers=_headers(),
         )
         if resp.status_code == 200:
-            return resp.json()
+            _bot_info_cache = resp.json()
+            return _bot_info_cache
     except Exception:
         pass
     return None

@@ -63,7 +63,7 @@ All settings live in `config.py`. Key settings to know:
 
 **Per-tool overrides** via `TOOL_PARAMETERS` dict (temperature, max_tokens, timeout per tool) and `TOOL_RESULT_BUDGET` dict (char limits for microcompaction).
 
-**RAG configuration** (`RAG_*` settings): embedding model path, chunking strategy (`"semantic"` by default), hybrid search (`RAG_USE_HYBRID_SEARCH=True`), reranking (`RAG_USE_RERANKING=True`), multi-query expansion (`RAG_USE_MULTI_QUERY=True`). These are all enabled by default — see config.py for model paths (`RAG_EMBEDDING_MODEL`, `RAG_RERANKER_MODEL`).
+**RAG configuration** (`RAG_*` settings): embedding model path, chunking strategy (`"semantic"` by default), hybrid search (`RAG_USE_HYBRID_SEARCH=True`), reranking (`RAG_USE_RERANKING=True`). These are all enabled by default — see config.py for model paths (`RAG_EMBEDDING_MODEL`, `RAG_RERANKER_MODEL`).
 
 ## Architecture
 
