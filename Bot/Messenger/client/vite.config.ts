@@ -49,6 +49,21 @@ export default defineConfig({
   },
   server: {
     host: true,
+    // Keep the inotify footprint small on Linux: skip build outputs and any
+    // sibling server directories that the client never needs to reload for.
+    watch: {
+      ignored: [
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/dist/**',
+        '**/dist-electron/**',
+        '**/dist-web/**',
+        '**/../server/uploads/**',
+        '**/../server/data/**',
+        '**/../server/dist/**',
+        '**/../server/public/**',
+      ],
+    },
     proxy: {
       '/auth': 'http://localhost:3000',
       '/rooms': 'http://localhost:3000',

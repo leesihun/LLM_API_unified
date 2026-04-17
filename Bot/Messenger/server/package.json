@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "tsx watch --ignore=./uploads/** --ignore=./data/** --ignore=./dist/** --ignore=./public/** src/index.ts",
     "start": "tsx src/index.ts",
     "build": "node build.mjs",
     "db:init": "tsx src/db/init.ts"
