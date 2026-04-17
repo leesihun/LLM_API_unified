@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import config
 from core import messenger
-from core.context import build_llm_context
+from core.context import build_llm_context, read_memory, MEMORY_FILE
 from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
@@ -278,7 +278,14 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             count = _room_msg_count.get(room_id, 0) + 1
             _room_msg_count[room_id] = count
 
-            user_content = f"{msg_header}\n{content}"
+            # Always prepend current memory so it survives LLM history compaction.
+            # The initial session message had memory too, but it gets dropped once
+            # MAX_CONVERSATION_HISTORY is exceeded.
+            memory = read_memory()
+            memory_header = (
+                f"[Memory — {MEMORY_FILE}]\n{memory}\n\n---\n\n" if memory else ""
+            )
+            user_content = f"{memory_header}{msg_header}\n{content}"
             if count == config.MEMORY_FLUSH_THRESHOLD:
                 user_content += (
                     "\n\n[System: This session is getting long. "

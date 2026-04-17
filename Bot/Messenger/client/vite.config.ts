@@ -51,7 +51,14 @@ export default defineConfig({
     host: true,
     // Keep the inotify footprint small on Linux: skip build outputs and any
     // sibling server directories that the client never needs to reload for.
+    //
+    // On network/scratch filesystems (NFS, Lustre, GPFS) or on hosts where
+    // `fs.inotify.max_user_watches` cannot be raised, set the environment
+    // variable `CHOKIDAR_USEPOLLING=1` before `npm run dev` — this makes both
+    // tsx-watch (server) and Vite (client) stop using inotify entirely.
     watch: {
+      usePolling: !!process.env.CHOKIDAR_USEPOLLING,
+      interval: Number(process.env.CHOKIDAR_INTERVAL) || 1000,
       ignored: [
         '**/node_modules/**',
         '**/.git/**',
