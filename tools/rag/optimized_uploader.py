@@ -15,7 +15,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import numpy as np
 
 import config
-from tools.rag.tool import _ensure_chunk_lookup, _set_chunk_lookup_for_doc
+from tools.rag.tool import _ensure_chunk_lookup, _set_chunk_lookup_for_doc, _release_cuda_cache
 
 
 def _process_pdf_page_batch(pdf_path: str, page_start: int, page_end: int) -> str:
@@ -288,7 +288,9 @@ class OptimizedRAGUploader:
         
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2)
-        
+
+        _release_cuda_cache("OptimizedRAGUploader.upload_pdf_optimized")
+
         total_time = time.time() - overall_start
         update_progress(f"Upload complete!", 100)
         print()  # New line after progress bar

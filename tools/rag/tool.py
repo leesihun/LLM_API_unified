@@ -3,6 +3,7 @@ RAG (Retrieval-Augmented Generation) Tool
 Uses FAISS for vector similarity search with configurable embeddings
 """
 import json
+import os
 import time
 import hashlib
 from pathlib import Path
@@ -45,14 +46,84 @@ def get_global_embedding_model():
             "Install with: pip install sentence-transformers"
         )
 
+    # Load in FP16 to halve model-weight VRAM (~2.3 GB → ~1.15 GB for bge-m3).
+    # Accuracy impact on bge-m3 is near-zero in practice.
+    model_kwargs = {}
+    if config.RAG_EMBEDDING_DEVICE == "cuda":
+        try:
+            import torch
+            model_kwargs["torch_dtype"] = torch.float16
+            print(f"[RAG] Loading embedding model in FP16 (half VRAM footprint)")
+        except ImportError:
+            pass
+
     print(f"[RAG] Loading embedding model: {config.RAG_EMBEDDING_MODEL}")
     _GLOBAL_EMBEDDING_MODEL = SentenceTransformer(
         config.RAG_EMBEDDING_MODEL,
         device=config.RAG_EMBEDDING_DEVICE,
+        model_kwargs=model_kwargs,
     )
     dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
     print(f"[RAG] Embedding model loaded - dimension: {dim}")
+
+    # Diagnostic: show VRAM state after model load so the operator can confirm
+    # FP16 savings and verify the allocator config is in effect.
+    try:
+        import torch
+        if torch.cuda.is_available():
+            alloc = torch.cuda.memory_allocated() / 1e9
+            resv = torch.cuda.memory_reserved() / 1e9
+            alloc_conf = os.environ.get("PYTORCH_CUDA_ALLOC_CONF", "(not set)")
+            print(f"[RAG] VRAM after model load: alloc={alloc:.2f} GB  "
+                  f"reserved={resv:.2f} GB  "
+                  f"PYTORCH_CUDA_ALLOC_CONF={alloc_conf}")
+    except ImportError:
+        pass
+
     return _GLOBAL_EMBEDDING_MODEL
+
+
+def _release_cuda_cache(context: str = ""):
+    """Return freed CUDA blocks to the driver so nvidia-smi drops back down.
+
+    Cost is one cudaStreamSynchronize + freelist bookkeeping (~10-30 ms).
+    Irrelevant in upload paths (seconds/minutes), acceptable as a conditional
+    call on the retrieve hot-path when fragmentation is severe.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            before = torch.cuda.memory_reserved() / (1024 ** 3)
+            torch.cuda.empty_cache()
+            after = torch.cuda.memory_reserved() / (1024 ** 3)
+            freed = before - after
+            if freed > 0.01:
+                print(f"[RAG] CUDA cache released ({context}): "
+                      f"reserved {before:.2f} → {after:.2f} GiB (freed {freed:.2f} GiB)")
+    except ImportError:
+        pass
+
+
+def _maybe_release_cuda_cache(threshold_gib: float = 4.0):
+    """Release CUDA cache only when fragmentation exceeds *threshold_gib*.
+
+    Fragmentation = memory_reserved - memory_allocated.  Calling empty_cache()
+    on every retrieve() would add 10-30 ms of user-visible latency for no gain
+    when fragmentation is small.  This conditional variant keeps the hot path
+    fast while still bounding runaway reserved memory between uploads.
+    """
+    try:
+        import torch
+        if torch.cuda.is_available():
+            reserved = torch.cuda.memory_reserved()
+            allocated = torch.cuda.memory_allocated()
+            frag_gib = (reserved - allocated) / (1024 ** 3)
+            if frag_gib > threshold_gib:
+                _release_cuda_cache(
+                    context=f"retrieve fragmentation {frag_gib:.1f} GiB > {threshold_gib} GiB threshold"
+                )
+    except ImportError:
+        pass
 
 
 def _ensure_chunk_lookup(metadata: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -336,6 +407,7 @@ class RAGTool:
             }
 
         print(f"[RAG] Upload complete!")
+        _release_cuda_cache("BaseRAGTool.upload_document")
         result = {
             "success": True,
             "document_name": doc_name,
@@ -543,6 +615,8 @@ class RAGTool:
                 f"    Content: {chunk_preview}..."])
         _log_lines.extend(["", "=" * 80])
         log_to_prompts_file("\n".join(_log_lines))
+
+        _maybe_release_cuda_cache()
 
         return {
             "success": True,
@@ -1015,6 +1089,7 @@ class RAGTool:
                 result["vram_after_mb"] = round(vram_after, 1) if vram_after is not None else None
                 result["vram_peak_mb"] = round(vram_peak, 1) if vram_peak is not None else None
                 result["vram_delta_mb"] = round((vram_after - vram_before), 1) if vram_after is not None else None
+            _release_cuda_cache("BaseRAGTool._upload_pdf_optimized")
             return result
             
         except Exception as e:

@@ -26,6 +26,8 @@ from tools.rag.tool import (
     _set_chunk_lookup_for_doc,
     _rebuild_chunk_lookup,
     get_global_embedding_model,
+    _release_cuda_cache,
+    _maybe_release_cuda_cache,
 )
 
 # ---------------------------------------------------------------------------
@@ -272,6 +274,8 @@ class EnhancedRAGTool:
 
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, indent=2)
+
+        _release_cuda_cache("EnhancedRAGTool.upload_document")
 
         result = {
             "success": True,
@@ -521,6 +525,8 @@ class EnhancedRAGTool:
         _log_lines.append(f"Total time: {total_time:.2f}s")
         _log_lines.append("=" * 80)
         log_to_prompts_file("\n".join(_log_lines))
+
+        _maybe_release_cuda_cache()
 
         return {
             "success": True,
