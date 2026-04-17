@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 
 import config
 from core import messenger
-from core.context import build_llm_context, read_memory, MEMORY_FILE
+from core.context import build_llm_context
 from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
@@ -273,19 +273,17 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             room_info["name"], room_id, room_info["isGroup"], sender_name, reply_to_data
         )
 
+        # Always inject the full context (PROMPT.md + session vars + memory) so it
+        # survives LLM history compaction and is present in every LLM call —
+        # matching heartbeat behaviour where context is fresh on every tick.
+        context = build_llm_context()
+        user_content = f"{context}\n\n---\n\n{msg_header}\n{content}"
+
         if existing_session_id:
             # Track message count and nudge memory flush when session is getting long
             count = _room_msg_count.get(room_id, 0) + 1
             _room_msg_count[room_id] = count
 
-            # Always prepend current memory so it survives LLM history compaction.
-            # The initial session message had memory too, but it gets dropped once
-            # MAX_CONVERSATION_HISTORY is exceeded.
-            memory = read_memory()
-            memory_header = (
-                f"[Memory — {MEMORY_FILE}]\n{memory}\n\n---\n\n" if memory else ""
-            )
-            user_content = f"{memory_header}{msg_header}\n{content}"
             if count == config.MEMORY_FLUSH_THRESHOLD:
                 user_content += (
                     "\n\n[System: This session is getting long. "
@@ -303,10 +301,7 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             logger.info(f"{log_prefix} Continuing session {existing_session_id} (msg #{count})")
         else:
             _room_msg_count[room_id] = 0  # Reset counter for new session
-            context = build_llm_context()
-            messages = [
-                {"role": "user", "content": f"{context}\n\n---\n\n{msg_header}\n{content}"},
-            ]
+            messages = [{"role": "user", "content": user_content}]
             llm_data = {
                 "model": config.LLM_MODEL,
                 "messages": json.dumps(messages),
