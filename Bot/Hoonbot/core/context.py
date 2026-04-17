@@ -23,20 +23,24 @@ _PROMPT_FILE = os.path.join(os.path.dirname(__file__), "..", "PROMPT.md")
 # ---------------------------------------------------------------------------
 
 _system_prompt_cache: str = ""
+_system_prompt_mtime: float | None = None
 _memory_cache: str = ""
 _memory_mtime: float | None = None
 
 
 def load_system_prompt() -> str:
-    """Return cached PROMPT.md content (loaded from disk on first call)."""
-    global _system_prompt_cache
-    if _system_prompt_cache:
-        return _system_prompt_cache
+    """Return PROMPT.md content, reloading when the file changes (mtime-based)."""
+    global _system_prompt_cache, _system_prompt_mtime
     try:
+        mtime = os.path.getmtime(_PROMPT_FILE)
+        if _system_prompt_mtime == mtime:
+            return _system_prompt_cache
         with open(_PROMPT_FILE, "r", encoding="utf-8") as f:
             _system_prompt_cache = f.read()
+        _system_prompt_mtime = mtime
     except FileNotFoundError:
         _system_prompt_cache = "You are a helpful AI assistant."
+        _system_prompt_mtime = None
     return _system_prompt_cache
 
 
