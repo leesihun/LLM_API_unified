@@ -230,13 +230,21 @@ async def mark_read(room_id: int, message_ids: list) -> None:
 # Typing indicators
 # ---------------------------------------------------------------------------
 
-async def send_typing(room_id: int) -> None:
+async def send_typing(room_id: int, status_text: str | None = None) -> None:
+    """Show a typing indicator. Optional status_text replaces the default verb.
+
+    When omitted, the client renders the native "{name}님이 입력 중...".
+    When provided, it renders "{name}님이 {status_text}...".
+    """
+    body: dict = {"roomId": room_id}
+    if status_text:
+        body["statusText"] = status_text
     try:
         client = _get_client()
         await client.post(
             f"{config.MESSENGER_URL}/api/typing",
             headers=_headers(),
-            json={"roomId": room_id},
+            json=body,
         )
     except Exception:
         pass  # Best-effort

@@ -158,7 +158,7 @@ export interface ServerToClientEvents {
   message_edited: (data: { messageId: number; content: string; updatedAt: string }) => void;
   message_deleted: (data: { messageId: number }) => void;
   message_read: (data: { messageId: number; userId: number; roomId: number }) => void;
-  user_typing: (data: { roomId: number; userId: number; userName: string }) => void;
+  user_typing: (data: { roomId: number; userId: number; userName: string; statusText?: string }) => void;
   user_stop_typing: (data: { roomId: number; userId: number }) => void;
   user_online_status: (data: { userId: number; online: boolean }) => void;
   room_created: (room: RoomWithDetails) => void;

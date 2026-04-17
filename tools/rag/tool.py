@@ -16,8 +16,43 @@ from backend.utils.prompts_log_append import log_to_prompts_file
 # ---------------------------------------------------------------------------
 # Process-level singletons — loaded once, reused across all requests
 # ---------------------------------------------------------------------------
+# _GLOBAL_EMBEDDING_MODEL is the SINGLE source of truth for the embedding
+# model in this worker process. Both BaseRAGTool (this file) and
+# EnhancedRAGTool (enhanced_tool.py) read/write it through
+# get_global_embedding_model(). Never instantiate SentenceTransformer
+# anywhere else — duplicates would stack another ~2.3 GB of VRAM per copy.
 _GLOBAL_EMBEDDING_MODEL = None   # SentenceTransformer (GPU-resident)
 _GLOBAL_FAISS_CACHE: Dict[str, Any] = {}  # "path:mtime" → faiss.Index
+
+
+def get_global_embedding_model():
+    """Load-or-return the shared SentenceTransformer singleton for this process.
+
+    Call from anywhere that needs the embedding model. First call loads weights
+    onto `config.RAG_EMBEDDING_DEVICE`; every subsequent call returns the exact
+    same object. This guarantees one and only one embedding-model VRAM stack
+    per worker process, regardless of how many RAG tool instances are created.
+    """
+    global _GLOBAL_EMBEDDING_MODEL
+    if _GLOBAL_EMBEDDING_MODEL is not None:
+        return _GLOBAL_EMBEDDING_MODEL
+
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError:
+        raise ImportError(
+            "sentence-transformers not installed. "
+            "Install with: pip install sentence-transformers"
+        )
+
+    print(f"[RAG] Loading embedding model: {config.RAG_EMBEDDING_MODEL}")
+    _GLOBAL_EMBEDDING_MODEL = SentenceTransformer(
+        config.RAG_EMBEDDING_MODEL,
+        device=config.RAG_EMBEDDING_DEVICE,
+    )
+    dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
+    print(f"[RAG] Embedding model loaded - dimension: {dim}")
+    return _GLOBAL_EMBEDDING_MODEL
 
 
 def _ensure_chunk_lookup(metadata: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
@@ -81,29 +116,9 @@ class RAGTool:
         self.embedding_dim = None
 
     def _load_embedding_model(self):
-        """Load embedding model — use process-level singleton to avoid reloading per request."""
-        global _GLOBAL_EMBEDDING_MODEL
-        if _GLOBAL_EMBEDDING_MODEL is not None:
-            self.embedding_model = _GLOBAL_EMBEDDING_MODEL
-            self.embedding_dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
-            return
-
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers not installed. "
-                "Install with: pip install sentence-transformers"
-            )
-
-        print(f"[RAG] Loading embedding model: {config.RAG_EMBEDDING_MODEL}")
-        _GLOBAL_EMBEDDING_MODEL = SentenceTransformer(
-            config.RAG_EMBEDDING_MODEL,
-            device=config.RAG_EMBEDDING_DEVICE
-        )
-        self.embedding_model = _GLOBAL_EMBEDDING_MODEL
-        self.embedding_dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
-        print(f"[RAG] Model loaded - dimension: {self.embedding_dim}")
+        """Bind the process-level singleton embedding model to this instance."""
+        self.embedding_model = get_global_embedding_model()
+        self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
 
     def create_collection(self, collection_name: str) -> Dict[str, Any]:
         """

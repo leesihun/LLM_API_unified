@@ -19,7 +19,7 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
   const [messages, setMessages] = useState<MessageWithSender[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [typingUsers, setTypingUsers] = useState<Map<number, string>>(new Map());
+  const [typingUsers, setTypingUsers] = useState<Map<number, { name: string; statusText?: string }>>(new Map());
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
   const [editContent, setEditContent] = useState('');
   const [showMention, setShowMention] = useState(false);
@@ -181,9 +181,9 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
     // Client-side typing auto-clear timeouts (safety net)
     const typingAutoClears = new Map<number, ReturnType<typeof setTimeout>>();
 
-    const handleTyping = (data: { roomId: number; userId: number; userName: string }) => {
+    const handleTyping = (data: { roomId: number; userId: number; userName: string; statusText?: string }) => {
       if (data.roomId !== room.id || data.userId === user.id) return;
-      setTypingUsers((prev) => new Map(prev).set(data.userId, data.userName));
+      setTypingUsers((prev) => new Map(prev).set(data.userId, { name: data.userName, statusText: data.statusText }));
 
       // Auto-clear after 20s if no stop event arrives (client-side safety net)
       const existing = typingAutoClears.get(data.userId);
@@ -660,10 +660,14 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
   };
 
   const typingText = (() => {
-    const names = Array.from(typingUsers.values());
-    if (names.length === 0) return null;
-    if (names.length === 1) return `${names[0]}님이 입력 중...`;
-    return `${names.join(', ')}님이 입력 중...`;
+    const entries = Array.from(typingUsers.values());
+    if (entries.length === 0) return null;
+    if (entries.length === 1) {
+      const { name, statusText } = entries[0];
+      return `${name}님이 ${statusText ?? '입력 중'}...`;
+    }
+    const names = entries.map((e) => e.name).join(', ');
+    return `${names}님이 입력 중...`;
   })();
 
   const getDisplayName = () => {

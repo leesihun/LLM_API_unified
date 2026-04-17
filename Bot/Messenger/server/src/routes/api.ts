@@ -793,7 +793,7 @@ const API_TYPING_TIMEOUT_MS = 15_000;
 const apiTypingTimeouts = new Map<string, ReturnType<typeof setTimeout>>();
 
 router.post('/typing', (req: Request, res: Response) => {
-  const { roomId } = req.body;
+  const { roomId, statusText } = req.body;
   if (!roomId) {
     res.status(400).json({ error: 'roomId is required.' });
     return;
@@ -806,11 +806,15 @@ router.post('/typing', (req: Request, res: Response) => {
   }
 
   if (ioInstance) {
-    ioInstance.to(`room:${roomId}`).emit('user_typing', {
+    const payload: { roomId: number; userId: number; userName: string; statusText?: string } = {
       roomId: Number(roomId),
       userId: sender.id,
       userName: sender.name,
-    });
+    };
+    if (typeof statusText === 'string' && statusText.trim()) {
+      payload.statusText = statusText.trim();
+    }
+    ioInstance.to(`room:${roomId}`).emit('user_typing', payload);
 
     // Auto-clear after timeout (prevents stuck indicators if stop-typing never arrives)
     const timeoutKey = `api:${sender.id}:${roomId}`;

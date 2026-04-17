@@ -21,13 +21,21 @@ import config
 from backend.utils.prompts_log_append import log_to_prompts_file
 from tools.rag.advanced_chunking import AdvancedChunker
 from tools.rag.hybrid_retrieval import HybridRetriever, RerankerCrossEncoder
-from tools.rag.tool import _ensure_chunk_lookup, _set_chunk_lookup_for_doc, _rebuild_chunk_lookup
+from tools.rag.tool import (
+    _ensure_chunk_lookup,
+    _set_chunk_lookup_for_doc,
+    _rebuild_chunk_lookup,
+    get_global_embedding_model,
+)
 
 # ---------------------------------------------------------------------------
 # Process-level singletons — loaded once, reused across all requests
 # ---------------------------------------------------------------------------
-_GLOBAL_EMBEDDING_MODEL = None   # SentenceTransformer (GPU-resident)
-_GLOBAL_CHUNKER = None           # AdvancedChunker (wraps embedding model)
+# NOTE: The embedding model itself lives in tools.rag.tool as the shared
+# singleton (accessed via get_global_embedding_model). Do NOT create another
+# _GLOBAL_EMBEDDING_MODEL here — a duplicate would load a second ~2.3 GB
+# bge-m3 into this worker's VRAM.
+_GLOBAL_CHUNKER = None           # AdvancedChunker (wraps the shared embedding model)
 _GLOBAL_RERANKER = None          # RerankerCrossEncoder (GPU-resident)
 _GLOBAL_FAISS_CACHE: Dict[str, Any] = {}  # "path:mtime" → faiss.Index
 _GLOBAL_BM25_CACHE: Dict[str, Any] = {}  # "path:mtime" → BM25Okapi
@@ -78,36 +86,23 @@ class EnhancedRAGTool:
         print(f"  Chunking: {config.RAG_CHUNKING_STRATEGY}")
 
     def _load_embedding_model(self):
-        """Load embedding model — use process-level singleton to avoid reloading per request."""
-        global _GLOBAL_EMBEDDING_MODEL, _GLOBAL_CHUNKER
-        if _GLOBAL_EMBEDDING_MODEL is not None:
-            self.embedding_model = _GLOBAL_EMBEDDING_MODEL
-            self.embedding_dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
-            self.chunker = _GLOBAL_CHUNKER
-            return
+        """Bind the shared embedding-model singleton and its chunker to this instance.
 
-        try:
-            from sentence_transformers import SentenceTransformer
-        except ImportError:
-            raise ImportError(
-                "sentence-transformers not installed. "
-                "Install with: pip install sentence-transformers"
+        The SentenceTransformer lives once per worker in tools.rag.tool.
+        We just wrap it with an AdvancedChunker (also a singleton here since
+        the wrapper holds the same model reference) and return.
+        """
+        global _GLOBAL_CHUNKER
+        self.embedding_model = get_global_embedding_model()
+        self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
+
+        if _GLOBAL_CHUNKER is None:
+            _GLOBAL_CHUNKER = AdvancedChunker(
+                embedding_model=self.embedding_model,
+                chunk_size=config.RAG_CHUNK_SIZE,
+                overlap=config.RAG_CHUNK_OVERLAP,
             )
-
-        print(f"[ENHANCED RAG] Loading embedding model: {config.RAG_EMBEDDING_MODEL}")
-        _GLOBAL_EMBEDDING_MODEL = SentenceTransformer(
-            config.RAG_EMBEDDING_MODEL,
-            device=config.RAG_EMBEDDING_DEVICE
-        )
-        _GLOBAL_CHUNKER = AdvancedChunker(
-            embedding_model=_GLOBAL_EMBEDDING_MODEL,
-            chunk_size=config.RAG_CHUNK_SIZE,
-            overlap=config.RAG_CHUNK_OVERLAP
-        )
-        self.embedding_model = _GLOBAL_EMBEDDING_MODEL
-        self.embedding_dim = _GLOBAL_EMBEDDING_MODEL.get_sentence_embedding_dimension()
         self.chunker = _GLOBAL_CHUNKER
-        print(f"[ENHANCED RAG] Model loaded - dimension: {self.embedding_dim}")
 
     def _load_hybrid_retriever(self):
         """Lazy load hybrid retriever"""
