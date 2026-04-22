@@ -8,11 +8,10 @@ instead of doing it on every single write.
 """
 from __future__ import annotations
 
-import logging
 import os
 from collections import deque
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Optional
 
 from filelock import FileLock
 
@@ -25,13 +24,6 @@ _ROTATION_INTERVAL: int = 100   # check size every N appends
 
 def _prompts_lock_path(log_path: Path) -> Path:
     return log_path.with_name(log_path.name + ".lock")
-
-
-def _iter_line_chunks(text: str) -> Iterator[str]:
-    if not text:
-        return
-    for chunk in text.splitlines(keepends=True):
-        yield chunk
 
 
 def _rotate_if_needed(path: Path, max_lines: int) -> None:
@@ -109,29 +101,3 @@ def log_to_prompts_file(message: str) -> None:
         append_capped_prompts_log(chunk)
     except Exception as e:
         print(f"[WARNING] Failed to write to prompts.log: {e}")
-
-
-class CappedPromptsLogHandler(logging.Handler):
-    """logging.Handler that writes to prompts.log with the same line cap + lock."""
-
-    def __init__(self, log_path: Optional[Path] = None):
-        super().__init__()
-        self.log_path = Path(log_path or config.PROMPTS_LOG_PATH)
-
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            msg = self.format(record)
-            line = msg if msg.endswith("\n") else msg + "\n"
-            append_capped_prompts_log(line, path=self.log_path)
-        except Exception:
-            self.handleError(record)
-
-
-def attach_capped_prompts_handler(logger: logging.Logger, path: Optional[Path] = None) -> None:
-    if logger.handlers:
-        return
-    h = CappedPromptsLogHandler(path or config.PROMPTS_LOG_PATH)
-    h.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(h)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False

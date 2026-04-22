@@ -98,13 +98,6 @@ def _load_memo_cached(username: str) -> str:
         return _MemoTool.load_for_prompt(username)
 
 
-def reload_prompt_cache():
-    """Reload cached prompt and schemas (call after config changes)."""
-    global _CACHED_SYSTEM_PROMPT, _CACHED_TOOL_SCHEMAS
-    _CACHED_SYSTEM_PROMPT = _load_system_prompt()
-    _CACHED_TOOL_SCHEMAS = _build_tool_schemas()
-
-
 class AgentLoop:
     """
     Single agent loop that uses llama.cpp native tool calling.

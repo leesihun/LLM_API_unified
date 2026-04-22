@@ -1,191 +1,47 @@
-aiofiles
-aiohappyeyeballs
-aiohttp
-aiosignal
-annotated-types
-anyio
-attrs
-backoff
-bcrypt==4.0.1
-beautifulsoup4
-blosc2
-build
-cachetools
-Cerberus
-certifi
-cffi
-cftime
-chardet
-charset-normalizer
-click
-colorama
-coloredlogs
-contourpy
-cryptography
-cycler
-dataclasses-json
-distro
-durationpy
-ecdsa
-et_xmlfile
-faiss-cpu
-fastapi
-filelock
-flatbuffers
-fonttools
-frozenlist
-fsspec
-google-auth
-googleapis-common-protos
-greenlet
-grpcio
-h11
-h5py
-httpcore
-httptools
-httpx
-httpx-sse
-huggingface-hub
-humanfriendly
-idna
-imageio
-importlib_metadata
-importlib_resources
-Jinja2
-joblib
-jsonpatch
-jsonpointer
-jsonschema
-jsonschema-specifications
-kiwisolver
-kubernetes
-langchain
-langchain-classic
-langchain-community
-langchain-core
-langchain-text-splitters
-langgraph
-langgraph-checkpoint
-langgraph-prebuilt
-langgraph-sdk
-langsmith
-lxml
-markdown-it-py
-MarkupSafe
-marshmallow
-matplotlib
-mdurl
-mmh3
-mpmath
-msgpack
-multidict
-mypy_extensions
-narwhals
-ndindex
-netCDF4
-networkx
-nltk
-numexpr
-numpy
-oauthlib
-onnxruntime
-openpyxl
-opentelemetry-api
-opentelemetry-exporter-otlp-proto-common
-opentelemetry-proto
-opentelemetry-semantic-conventions
-orjson
-ormsgpack
-overrides
-packaging
-pandas
-passlib==1.7.4
-patsy
-pdfminer.six
-pdfplumber
-pillow
-platformdirs
-plotly
-posthog
-propcache
-protobuf
-py-cpuinfo
-pyarrow
-pyasn1
-pyasn1_modules
-pybase64
-pycparser
-pydantic
-pydantic-settings
-pydantic_core
-Pygments
-pyparsing
-pypdf
-PyPDF2
-PyMuPDF  # Fast PDF parsing (5-10x faster than PyPDF2) - required for optimized RAG uploads
-pypdfium2
-PyPika
-pyproject_hooks
-pyreadline3
-python-dateutil
-python-docx
-python-dotenv
-python-pptx
-python-jose
-python-multipart
-pytz
-PyYAML
-referencing
-regex
-requests
-requests-oauthlib
-requests-toolbelt
-rich
-rpds-py
-rsa
-safetensors
-scikit-learn
-scipy
-seaborn
-sentence-transformers
-rank-bm25  # For hybrid search (keyword + semantic)
-setuptools
-shellingham
-six
-sniffio
-soupsieve
-SQLAlchemy
-sse-starlette
-starlette
-statsmodels
-sympy
-tables
-tavily-python
-tenacity
-textblob
-threadpoolctl
-tiktoken
-tokenizers
-torch
-tqdm
-transformers
-typer
-typing-inspect
-typing-inspection
-typing_extensions
-tzdata
-urllib3
-uvicorn
-watchfiles
-websocket-client
-websockets
-xarray
-xlrd
-xlwt
-xxhash
-yarl
-zipp
-zstandard
-llama-cpp-python
-pip-system-certs
-aider-chat
+# ============================================================
+# LLM API Fast — Python Dependencies
+# ============================================================
+
+# --------------- Web Framework ---------------
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+pydantic>=2.0.0
+sse-starlette>=1.6.0        # Server-Sent Events for streaming responses
+
+# --------------- HTTP Client ---------------
+httpx>=0.25.0               # Async HTTP client for llama.cpp backend
+
+# --------------- Authentication ---------------
+passlib[bcrypt]>=1.7.4      # Password hashing
+python-jose[cryptography]>=3.3.0  # JWT tokens
+
+# --------------- File Locking ---------------
+filelock>=3.12.0            # Safe concurrent log/DB writes
+
+# --------------- RAG: Vector Search ---------------
+numpy>=1.24.0
+sentence-transformers>=2.2.0  # Embedding model (bge-m3 etc.)
+rank-bm25>=0.2.2            # BM25 for hybrid retrieval
+faiss-cpu>=1.7.4            # Vector index (swap for faiss-gpu on CUDA systems)
+# faiss-gpu>=1.7.4          # Uncomment for GPU-accelerated FAISS
+
+# --------------- RAG: Document Parsing ---------------
+pandas>=2.0.0               # CSV / Excel ingestion
+openpyxl>=3.1.0             # Excel (.xlsx) backend for pandas
+python-docx>=0.8.11         # DOCX parsing
+PyMuPDF>=1.23.0             # Fast PDF text extraction (fitz)
+langchain-community>=0.0.10 # Fallback PyPDFLoader for complex PDFs
+
+# --------------- Image Handling ---------------
+Pillow>=10.0.0              # Image resize / base64 encode for file uploads
+
+# --------------- Web Search ---------------
+tavily-python>=0.3.0        # Tavily API client for websearch tool
+
+# --------------- PyTorch (GPU) ---------------
+# torch is only required when RAG_EMBEDDING_DEVICE="cuda".
+# Install the CUDA-matched build from https://pytorch.org/get-started/locally/
+# Example (CUDA 12.1):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+# Leave this commented if running CPU-only or if torch is pre-installed.
+# torch>=2.0.0

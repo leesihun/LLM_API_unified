@@ -45,7 +45,6 @@ def main():
             print("Available pages:")
             print(f"  - Main Chat:  http://{HOST}:{PORT}/index.html")
             print(f"  - Login:      http://{HOST}:{PORT}/login.html")
-            print(f"  - Legacy:     http://{HOST}:{PORT}/index_legacy.html")
             print()
             print("Press Ctrl+C to stop the server")
             print("=" * 60)

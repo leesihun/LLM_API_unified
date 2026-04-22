@@ -1,22 +1,4 @@
-"""Logging handlers that flush after each record so tail -f and editors see lines immediately."""
-import logging
 import threading
-
-
-class FlushFileHandler(logging.FileHandler):
-    def emit(self, record):
-        super().emit(record)
-        self.flush()
-
-
-def attach_flush_file_handler(logger: logging.Logger, path, level: int = logging.INFO) -> None:
-    if logger.handlers:
-        return
-    h = FlushFileHandler(path, encoding="utf-8")
-    h.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(h)
-    logger.setLevel(level)
-    logger.propagate = False
 
 
 _agent_log_banner_lock = threading.Lock()

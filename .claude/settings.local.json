@@ -34,7 +34,11 @@
       "Bash(opencode run:*)",
       "Read(//c/Users/Lee/.config/opencode/**)",
       "Bash(ls:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(xargs wc *)",
+      "Bash(chmod +x \"c:/Users/Lee/Desktop/Huni/LLM_API_fast/gather-llamacpp.sh\" \"c:/Users/Lee/Desktop/Huni/LLM_API_fast/install-llamacpp.sh\")",
+      "WebFetch(domain:developer.nvidia.com)",
+      "WebFetch(domain:developer.download.nvidia.com)"
     ],
     "deny": [],
     "ask": []

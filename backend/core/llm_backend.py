@@ -161,47 +161,6 @@ class LlamaCppBackend:
         return payload
 
     # ------------------------------------------------------------------
-    # Non-streaming wrapper — consumes chat_stream() and accumulates.
-    # Kept for callers that want a single LLMResponse at the end.
-    # ------------------------------------------------------------------
-
-    async def chat(
-        self,
-        messages: List[Dict[str, Any]],
-        model: str,
-        temperature: float = 0.7,
-        tools: Optional[List[Dict[str, Any]]] = None,
-        top_p: Optional[float] = None,
-        top_k: Optional[int] = None,
-        min_p: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        repeat_penalty: Optional[float] = None,
-        id_slot: Optional[int] = None,
-    ) -> LLMResponse:
-        content_parts: list[str] = []
-        tool_calls: list[ToolCall] = []
-        finish_reason = "stop"
-
-        async for event in self.chat_stream(
-            messages, model, temperature,
-            tools=tools, top_p=top_p, top_k=top_k, min_p=min_p,
-            max_tokens=max_tokens, repeat_penalty=repeat_penalty,
-            id_slot=id_slot,
-        ):
-            if isinstance(event, TextEvent):
-                content_parts.append(event.content)
-            elif isinstance(event, ToolCallDeltaEvent):
-                tool_calls.extend(event.tool_calls)
-                finish_reason = event.finish_reason
-
-        content = "".join(content_parts) if content_parts else None
-        return LLMResponse(
-            content=content,
-            tool_calls=tool_calls or None,
-            finish_reason=finish_reason,
-        )
-
-    # ------------------------------------------------------------------
     # Streaming chat (with optional tool calling)
     # ------------------------------------------------------------------
 
