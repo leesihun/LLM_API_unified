@@ -90,19 +90,24 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         {"role": "user", "content": f"{context}\n\n---\n\n{heartbeat_prompt}"},
     ]
 
-    logger.info(f"[Heartbeat] Calling LLM (model={config.LLM_MODEL})")
-    full_text = ""
-    try:
+    logger.info(f"[Heartbeat] Calling LLM (model={config.LLM_MODEL}) at {config.LLM_API_URL}")
+
+    payload = {
+        "model": config.LLM_MODEL,
+        "messages": json.dumps(messages),
+        "stream": "true",
+    }
+    headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
+
+    async def _stream_once() -> str:
+        """Open a fresh stream and accumulate text. Returns collected text."""
+        text_buf = ""
         client = get_client()
         async with client.stream(
             "POST",
             f"{config.LLM_API_URL}/v1/chat/completions",
-            data={
-                "model": config.LLM_MODEL,
-                "messages": json.dumps(messages),
-                "stream": "true",
-            },
-            headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
+            data=payload,
+            headers=headers,
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
@@ -124,19 +129,56 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
                 choices = event.get("choices", [])
                 if not choices:
                     continue
-                text = choices[0].get("delta", {}).get("content", "")
-                if text:
-                    full_text += text
+                chunk = choices[0].get("delta", {}).get("content", "")
+                if chunk:
+                    text_buf += chunk
+        return text_buf
 
-    except (httpx.ConnectError, httpx.TimeoutException) as exc:
+    # Stale-keepalive errors look like RemoteProtocolError / ReadError /
+    # WriteError on the first byte. Retry once on a freshly-dialed socket
+    # before giving up — the pool will have purged the dead connection.
+    stale_errors = (
+        httpx.RemoteProtocolError,
+        httpx.ReadError,
+        httpx.WriteError,
+    )
+    full_text = ""
+    try:
+        try:
+            full_text = await _stream_once()
+        except stale_errors as exc:
+            logger.warning(
+                f"[Heartbeat] Stale connection ({type(exc).__name__}: {exc}) — retrying once"
+            )
+            full_text = await _stream_once()
+
+    except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+        # Real connect failure — server unreachable. Arm cooldown.
         _llm_cooldown_until = asyncio.get_event_loop().time() + config.HEARTBEAT_LLM_COOLDOWN_SECONDS
         logger.warning(
-            f"[Heartbeat] LLM connection failed: {exc}. "
+            f"[Heartbeat] LLM unreachable ({type(exc).__name__}: {exc}). "
             f"Cooling down for {config.HEARTBEAT_LLM_COOLDOWN_SECONDS}s"
         )
         return
+    except httpx.TimeoutException as exc:
+        # Timeout mid-request. Only cool down if we never received any bytes —
+        # a late-stream hiccup shouldn't silence the next full interval.
+        if not full_text:
+            _llm_cooldown_until = asyncio.get_event_loop().time() + config.HEARTBEAT_LLM_COOLDOWN_SECONDS
+            logger.warning(
+                f"[Heartbeat] LLM timeout with no response ({type(exc).__name__}: {exc}). "
+                f"Cooling down for {config.HEARTBEAT_LLM_COOLDOWN_SECONDS}s"
+            )
+            return
+        logger.warning(
+            f"[Heartbeat] Stream timeout after {len(full_text)} chars "
+            f"({type(exc).__name__}) — using partial reply"
+        )
     except Exception as exc:
-        logger.error(f"[Heartbeat] Unexpected error during LLM call: {exc}", exc_info=True)
+        logger.error(
+            f"[Heartbeat] Unexpected error during LLM call ({type(exc).__name__}): {exc}",
+            exc_info=True,
+        )
         return
 
     reply = full_text.strip()

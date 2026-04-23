@@ -12,7 +12,7 @@ from typing import Literal
 # ============================================================================
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 10007
-SERVER_WORKERS = 4
+SERVER_WORKERS = 2
 LOG_LEVEL = "INFO"
 
 # ============================================================================
@@ -41,7 +41,7 @@ LLAMACPP_CACHE_PROMPT = True
 # Connection pool size for persistent HTTP connections to llama.cpp
 LLAMACPP_CONNECTION_POOL_SIZE = 20
 # Number of parallel slots on llama.cpp server (for id_slot session pinning)
-LLAMACPP_SLOTS = 4
+LLAMACPP_SLOTS = 2
 
 # ============================================================================
 # Logging Settings (before Agent — agent log target references PROMPTS_LOG_PATH)
