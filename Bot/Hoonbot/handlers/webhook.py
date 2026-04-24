@@ -27,6 +27,9 @@ router = APIRouter()
 # Per-room debounce state
 _room_debounce: dict = {}
 
+# Per-room active processing task (set while process_message is running)
+_room_active_task: dict[int, asyncio.Task] = {}
+
 # Per-room message counter (resets on new session)
 _room_msg_count: dict[int, int] = {}
 
@@ -194,13 +197,17 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: in
     entry = _room_debounce.get(room_id)
     if entry and entry["task"] and not entry["task"].done():
         entry["task"].cancel()
-        # Stop typing for the cancelled task to prevent stuck indicators
-        asyncio.create_task(messenger.stop_typing(room_id))
         combined = entry["content"] + "\n" + content
         combined_files = list(entry.get("files") or [])
     else:
         combined = content
         combined_files = []
+
+    # Cancel any in-flight process_message task for this room
+    active = _room_active_task.pop(room_id, None)
+    if active and not active.done():
+        active.cancel()
+    asyncio.create_task(messenger.stop_typing(room_id))
 
     if file_info:
         combined_files.append(file_info)
@@ -209,10 +216,14 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: in
         await asyncio.sleep(config.DEBOUNCE_SECONDS)
         final = _room_debounce.pop(room_id, None)
         if final:
-            await process_message(
-                room_id, final["content"], final["sender"], final.get("msg_id"),
-                file_infos=final.get("files"), reply_to_data=final.get("reply_to_data"),
-            )
+            _room_active_task[room_id] = asyncio.current_task()
+            try:
+                await process_message(
+                    room_id, final["content"], final["sender"], final.get("msg_id"),
+                    file_infos=final.get("files"), reply_to_data=final.get("reply_to_data"),
+                )
+            finally:
+                _room_active_task.pop(room_id, None)
 
     _room_debounce[room_id] = {
         "content": combined,
@@ -244,6 +255,15 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
     start = time.monotonic()
     log_prefix = f"[Room {room_id}] [{sender_name}]"
     logger.info(f"{log_prefix} Processing: {content[:80]!r}")
+
+    # @clear: wipe session and return immediately
+    if "@clear" in content.lower():
+        _room_sessions.pop(room_id, None)
+        _room_msg_count.pop(room_id, None)
+        _save_room_sessions()
+        await messenger.send_message(room_id, "컨텍스트가 초기화되었습니다. 새 대화를 시작하세요.")
+        logger.info(f"{log_prefix} Session cleared by @clear command")
+        return
 
     await messenger.send_typing(room_id, status_text=_STATUS_GENERATING)
 
@@ -432,10 +452,10 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
     full_text = ""
     running_tools: dict[str, str] = {}  # tool_call_id -> tool_name, insertion-ordered
     session_id_from_header: str | None = None
+    status_msg_id: int | None = None  # ID of the live tool-status message in chat
 
     async def _refresh_typing() -> None:
-        """Periodically re-fire the typing event with the current status so
-        the indicator stays visible through long-running tool calls."""
+        """Periodically re-fire the typing event so the indicator stays visible."""
         while True:
             await asyncio.sleep(_TYPING_REFRESH_INTERVAL_SECONDS)
             await messenger.send_typing(room_id, status_text=_format_tool_status(running_tools))
@@ -480,11 +500,20 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                     status = ts.get("status", "")
                     if status == "started":
                         running_tools[tool_key] = tool_name
-                        # Discard any pre-tool reasoning text so we only keep the
-                        # final answer produced after all tools have completed.
+                        # Discard any pre-tool reasoning text
                         full_text = ""
+                        status_text = _format_tool_status(running_tools)
+                        if status_msg_id is None:
+                            status_msg_id = await messenger.send_message_returning_id(
+                                room_id, f"🔧 {status_text}..."
+                            )
+                        else:
+                            await messenger.edit_message(status_msg_id, f"🔧 {status_text}...")
                     elif status in {"completed", "failed"}:
                         running_tools.pop(tool_key, None)
+                        if running_tools and status_msg_id is not None:
+                            status_text = _format_tool_status(running_tools)
+                            await messenger.edit_message(status_msg_id, f"🔧 {status_text}...")
                     await messenger.send_typing(room_id, status_text=_format_tool_status(running_tools))
                     continue
 
@@ -500,8 +529,9 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
 
     except httpx.ReadTimeout:
         logger.warning(f"{log_prefix} Stream read timeout after collecting {len(full_text)} chars")
+        if status_msg_id is not None:
+            await messenger.delete_message(status_msg_id)
         if full_text.strip():
-            # Surface what we have so the user sees a partial reply rather than silence
             await messenger.send_message(
                 room_id,
                 full_text.strip() + "\n\n⚠️ (응답이 시간 초과로 잘렸어요)",
@@ -520,13 +550,15 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
         result_like = {"x_session_id": session_id_from_header}
         await _save_session_from_response(room_id, result_like, existing_session_id, log_prefix)
 
+    # Delete tool status message before sending the final reply
+    if status_msg_id is not None:
+        await messenger.delete_message(status_msg_id)
+
     final_text = full_text.strip()
     if final_text:
         await messenger.send_message(room_id, final_text, reply_to_id=reply_to_id)
         return final_text
 
-    # LLM finished with tool calls only — surface a short acknowledgment so
-    # the user knows the turn ended.
     fallback = "완료."
     await messenger.send_message(room_id, fallback, reply_to_id=reply_to_id)
     logger.warning(f"{log_prefix} LLM produced no text output — sent fallback acknowledgment")
