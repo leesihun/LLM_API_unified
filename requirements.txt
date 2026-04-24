@@ -38,6 +38,10 @@ Pillow>=10.0.0              # Image resize / base64 encode for file uploads
 # --------------- Web Search ---------------
 tavily-python>=0.3.0        # Tavily API client for websearch tool
 
+# --------------- Persistent Python Kernel (python_coder kernel mode) ---------------
+jupyter_client>=8.0.0       # AsyncKernelManager / AsyncKernelClient
+ipykernel>=6.0.0            # IPython kernel backend
+
 # --------------- PyTorch (GPU) ---------------
 # torch is only required when RAG_EMBEDDING_DEVICE="cuda".
 # Install the CUDA-matched build from https://pytorch.org/get-started/locally/

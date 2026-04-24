@@ -207,17 +207,21 @@ WEBSEARCH_MAX_RESULTS = 5
 # ============================================================================
 # Python Coder Tool Settings
 # ============================================================================
-PYTHON_EXECUTOR_MODE: Literal["native", "opencode"] = "native"
+PYTHON_EXECUTOR_MODE: Literal["native", "opencode", "kernel"] = "kernel"
 
-PYTHON_EXECUTOR_TIMEOUT = 864000
+# Kept for code_exec tool and opencode fallback (subprocess caps):
+PYTHON_EXECUTOR_TIMEOUT = 300
 PYTHON_EXECUTOR_MAX_OUTPUT_SIZE = 1024 * 1024 * 10
 PYTHON_WORKSPACE_DIR = SCRATCH_DIR
-PYTHON_CODER_TIMEOUT = 864000
 
-# Native-mode self-debug: on non-zero exit, regenerate with traceback context.
-PYTHON_EXECUTOR_MAX_RETRIES = 2
-# Hard wall-clock cap wrapping generation + execution + retries for one tool call.
-PYTHON_EXECUTOR_TOTAL_TIMEOUT = 180
+# Layered timeouts for native / kernel executor:
+PYTHON_GENERATION_TIMEOUT = 120      # LLM code-generation call
+PYTHON_EXECUTION_TIMEOUT = 60        # per-attempt subprocess / kernel default
+PYTHON_EXECUTION_TIMEOUT_MAX = 900   # ceiling when caller passes a bigger value
+PYTHON_EXECUTION_IDLE_TIMEOUT = 60   # kill subprocess if stdout silent for N s
+PYTHON_TOTAL_TIMEOUT = 600           # wall-clock cap: gen + exec + all retries
+
+PYTHON_EXECUTOR_MAX_RETRIES = 2      # self-debug retries on non-zero exit
 
 OPENCODE_PATH: str = "opencode"
 OPENCODE_SERVER_PORT: int = 37254
