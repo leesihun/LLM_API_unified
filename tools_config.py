@@ -13,8 +13,9 @@ TOOL_SCHEMAS: dict = {
             "Execute Python code directly. Pass the complete, ready-to-run Python script as the "
             "'code' argument — no natural-language description, actual code only. "
             "Runs it in the session workspace, returns stdout/stderr/returncode. "
-            "Prefer this over python_coder for straightforward tasks where you can write the code yourself. "
-            "Use python_coder only for complex tasks that benefit from a separate code-generation step."
+            "Use only for very simple, self-contained scripts you can write confidently in a few lines "
+            "(no file processing, no multi-step logic, no external libraries). "
+            "For all other coding tasks — even moderately complex ones — use python_coder instead."
         ),
         "parameters": {
             "type": "object",
@@ -57,9 +58,9 @@ TOOL_SCHEMAS: dict = {
     "python_coder": {
         "name": "python_coder",
         "description": (
-            "Execute a coding task with one self-contained call: generate Python code, run it, and "
-            "return structured execution results. Describe WHAT you want done, not HOW. "
-            "Use python_coder for new coding tasks; use shell_exec only for existing scripts or direct shell work."
+            "Default tool for all coding tasks — OpenCode generates and runs the Python code from your description. "
+            "Use python_coder for anything beyond trivial one-liners: file processing, data analysis, automation, "
+            "multi-step scripts, anything with real logic. Describe WHAT you want done, not HOW."
         ),
         "parameters": {
             "type": "object",

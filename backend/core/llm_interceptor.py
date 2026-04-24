@@ -38,18 +38,38 @@ class LLMInterceptor:
         lines.append("=" * 80)
 
         if is_request:
-            # Log metadata only — skip serialising full message array (very expensive for long convos)
             messages = log_data.get("messages", [])
             role_counts: Dict[str, int] = {}
             for m in messages:
                 r = m.get("role", "unknown")
                 role_counts[r] = role_counts.get(r, 0) + 1
             role_summary = ", ".join(f"{v} {k}" for k, v in role_counts.items())
-            lines.append("")
             lines.append(f"  Messages:    {len(messages)} ({role_summary})")
             if log_data.get("tools_provided"):
                 lines.append(f"  Tools:       {log_data['tools_provided']} schema(s) provided")
             lines.append("")
+            for i, m in enumerate(messages):
+                role = m.get("role", "unknown").upper()
+                content = m.get("content")
+                tool_calls = m.get("tool_calls")
+                tool_call_id = m.get("tool_call_id")
+                lines.append(f"[{i}] {role}" + (f" (tool_call_id={tool_call_id})" if tool_call_id else ""))
+                if isinstance(content, list):
+                    for part in content:
+                        ptype = part.get("type", "")
+                        if ptype == "text":
+                            lines.append(part.get("text", ""))
+                        elif ptype == "tool_result":
+                            lines.append(f"<tool_result id={part.get('tool_use_id', '')}>\n{part.get('content', '')}\n</tool_result>")
+                        else:
+                            lines.append(json.dumps(part, ensure_ascii=False))
+                elif content is not None:
+                    lines.append(str(content))
+                if tool_calls:
+                    for tc in tool_calls:
+                        fn = tc.get("function", {})
+                        lines.append(f"  → tool_call: {fn.get('name', '?')}({fn.get('arguments', '')})")
+                lines.append("")
         else:
             response_text = log_data.get("response", log_data.get("partial_response", ""))
             lines.append("")

@@ -746,11 +746,12 @@ class AgentLoop:
         iterations to short summaries. Only the current iteration's messages stay
         full-size (hot tail).
         """
-        if current_iteration == 0 or not self._iteration_boundaries:
+        warm = config.AGENT_COMPACTION_WARM_WINDOW
+        if current_iteration == 0 or len(self._iteration_boundaries) <= warm:
             return
 
-        # Everything before where the current iteration started is "old"
-        old_boundary = self._iteration_boundaries[-1]
+        # Everything before the warm window is "old" — keep the last `warm` iterations uncompressed
+        old_boundary = self._iteration_boundaries[-(warm + 1)]
         summary_cap = config.AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS
         # Don't compress if already very small
         tool_result_min = 120

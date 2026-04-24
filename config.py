@@ -26,11 +26,11 @@ OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "lla
 # Model Parameters (Default LLM Inference Settings)
 # ============================================================================
 DEFAULT_TEMPERATURE = 0.7
-DEFAULT_TOP_P = 0.9
+DEFAULT_TOP_P = 0.95
 DEFAULT_TOP_K = 40
-DEFAULT_MIN_P = 0.05
+DEFAULT_MIN_P = 0.1
 DEFAULT_MAX_TOKENS = 128000
-DEFAULT_REPEAT_PENALTY = 1.1
+DEFAULT_REPEAT_PENALTY = 1
 
 # ============================================================================
 # llama.cpp Performance Tuning
@@ -49,7 +49,7 @@ LLAMACPP_SLOTS = 2
 LOG_DIR = Path("data/logs")
 PROMPTS_LOG_PATH = LOG_DIR / "prompts.log"
 # Oldest lines are dropped when the file would exceed this (see prompts_log_append).
-PROMPTS_LOG_MAX_LINES = 100_000
+PROMPTS_LOG_MAX_LINES = 10_000
 
 # ============================================================================
 # Agent Settings
@@ -60,7 +60,8 @@ AGENT_SYSTEM_PROMPT = "system.txt"
 AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
-AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 80
+AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 500
+AGENT_COMPACTION_WARM_WINDOW = 1  # keep this many previous iterations uncompressed
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
 # True = offload log writes to thread pool (non-blocking, recommended for production).
 AGENT_LOG_ASYNC = True
@@ -179,8 +180,8 @@ DEFAULT_TOOL_TIMEOUT = 864000
 # ============================================================================
 TOOL_RESULT_BUDGET = {
     "websearch": 2000,
-    "code_exec": 5000,
-    "python_coder": 5000,
+    "code_exec": 8000,
+    "python_coder": 8000,
     "rag": 3000,
     "file_reader": 4000,
     "file_writer": 500,

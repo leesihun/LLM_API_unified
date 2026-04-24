@@ -45,7 +45,7 @@ HOONBOT_BOT_NAME=Bot
 HOONBOT_HOME_ROOM_NAME=Heartbeat
 HOONBOT_HOME_ROOM_ID=1
 HOONBOT_HEARTBEAT_ENABLED=true
-HOONBOT_HEARTBEAT_INTERVAL=600
+HOONBOT_HEARTBEAT_INTERVAL=3000
 # If heartbeat hits LLM connectivity errors, pause heartbeat LLM calls for this duration (seconds).
 HOONBOT_HEARTBEAT_LLM_COOLDOWN_SECONDS=600
 # Active hours: heartbeat only runs between these times (HH:MM 24h). Default = always on.

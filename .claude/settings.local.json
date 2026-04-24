@@ -39,7 +39,8 @@
       "Bash(chmod +x \"c:/Users/Lee/Desktop/Huni/LLM_API_fast/gather-llamacpp.sh\" \"c:/Users/Lee/Desktop/Huni/LLM_API_fast/install-llamacpp.sh\")",
       "WebFetch(domain:developer.nvidia.com)",
       "WebFetch(domain:developer.download.nvidia.com)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(xargs grep *)"
     ],
     "deny": [],
     "ask": []
