@@ -17,15 +17,18 @@ class FileWriterTool:
         self.workspace.mkdir(parents=True, exist_ok=True)
 
     def _resolve_target(self, path: str) -> Path:
-        """
-        Resolve file path for write operations.
-
-        Absolute paths are used directly.
-        Relative paths are resolved inside the session scratch workspace.
-        """
         target_path = Path(path).expanduser()
         if target_path.is_absolute():
-            return target_path.resolve()
+            resolved = target_path.resolve()
+            allowed = [d.resolve() for d in config.ALLOWED_WRITE_DIRS]
+            if not any(resolved.is_relative_to(a) for a in allowed):
+                allowed_str = ", ".join(str(a) for a in allowed)
+                raise PermissionError(
+                    f"Absolute path '{resolved}' is outside allowed write directories. "
+                    f"Allowed: {allowed_str}. "
+                    f"Use a relative path (goes to session scratch) or write under data/llm_generated/."
+                )
+            return resolved
         return (self.workspace / target_path).resolve()
 
     def write(

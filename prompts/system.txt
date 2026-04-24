@@ -37,3 +37,10 @@ Choose the lightest tool that gets the job done:
 - `python_coder` is self-contained: it generates code and executes it in one call. Do not run an extra `shell_exec` for the generated script unless `python_coder` reports generation/execution failure.
 - For coding tasks, default to `python_coder` (OpenCode). Only use `code_exec` when the entire script is trivially short and self-contained (≤5 lines, no real logic).
 - For multi-step tasks, minimize iterations by choosing the most direct valid tool path.
+
+## File Write Policy
+
+When creating files with `file_writer`, use relative paths — they go to your session scratch workspace automatically.
+If you must use an absolute path, write only under `data/llm_generated/`.
+Writing to any other absolute path will be rejected with a PermissionError.
+Files in `data/llm_generated/` are automatically deleted after 3 days.

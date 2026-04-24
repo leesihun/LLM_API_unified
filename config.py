@@ -295,6 +295,13 @@ TOOL_RESULTS_CLEANUP_DAYS = 14  # data/tool_results/{session_id}/ dirs
 LOG_ROTATION_DAYS = 14          # rotate data/logs/prompts.log after N days
 
 # ============================================================================
+# LLM File Write Policy
+# ============================================================================
+LLM_GENERATED_DIR = Path("data/llm_generated")   # dedicated dir for LLM absolute-path writes
+LLM_FILE_RETENTION_DAYS = 3                        # auto-delete files older than N days (0 = disabled)
+ALLOWED_WRITE_DIRS: list[Path] = [LLM_GENERATED_DIR, SCRATCH_DIR, UPLOAD_DIR]
+
+# ============================================================================
 # Streaming Settings
 # ============================================================================
 STREAM_CHUNK_SIZE = 1
@@ -323,3 +330,4 @@ RAG_METADATA_DIR.mkdir(parents=True, exist_ok=True)
 TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 MEMO_DIR.mkdir(parents=True, exist_ok=True)
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
+LLM_GENERATED_DIR.mkdir(parents=True, exist_ok=True)

@@ -4,6 +4,7 @@ Main FastAPI application — single server for chat, auth, tools, and sessions.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+import asyncio
 import json
 import shutil
 import sys
@@ -176,6 +177,32 @@ def _cleanup_old_scratch():
         print(f"[Startup] Cleaned up {removed} orphaned/old scratch dir(s)")
 
 
+def _cleanup_old_llm_generated():
+    """Delete files in LLM_GENERATED_DIR older than LLM_FILE_RETENTION_DAYS; remove empty dirs."""
+    if config.LLM_FILE_RETENTION_DAYS <= 0:
+        return
+    llm_dir = config.LLM_GENERATED_DIR
+    if not llm_dir.exists():
+        return
+    cutoff = datetime.now() - timedelta(days=config.LLM_FILE_RETENTION_DAYS)
+    removed_files = removed_dirs = 0
+    for entry in sorted(llm_dir.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        try:
+            if entry == llm_dir:
+                continue
+            if entry.is_file() or entry.is_symlink():
+                if datetime.fromtimestamp(entry.stat().st_mtime) < cutoff:
+                    entry.unlink()
+                    removed_files += 1
+            elif entry.is_dir() and not any(entry.iterdir()):
+                entry.rmdir()
+                removed_dirs += 1
+        except Exception:
+            pass
+    if removed_files or removed_dirs:
+        print(f"[Cleanup] llm_generated: removed {removed_files} file(s), {removed_dirs} empty dir(s)")
+
+
 def _rotate_log_if_stale(log_path: Path, label: str):
     """Rotate a .log file if its ctime is older than LOG_ROTATION_DAYS."""
     if not log_path.exists():
@@ -211,6 +238,7 @@ async def startup_event():
     _cleanup_old_jobs()
     _cleanup_old_tool_results()
     _cleanup_old_scratch()
+    _cleanup_old_llm_generated()
     _cleanup_old_logs()
 
     try:
@@ -234,6 +262,16 @@ async def startup_event():
     if config.PYTHON_EXECUTOR_MODE == "opencode":
         from tools.python_coder.opencode_server import start_opencode_server
         start_opencode_server()
+
+    async def _periodic_llm_cleanup():
+        while True:
+            await asyncio.sleep(24 * 60 * 60)
+            try:
+                _cleanup_old_llm_generated()
+            except Exception as e:
+                print(f"[Cleanup] llm_generated background error: {e}")
+
+    asyncio.create_task(_periodic_llm_cleanup())
 
     if "rag" in config.AVAILABLE_TOOLS:
         from tools.rag import preload_models
