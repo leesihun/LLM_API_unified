@@ -480,6 +480,9 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                     status = ts.get("status", "")
                     if status == "started":
                         running_tools[tool_key] = tool_name
+                        # Discard any pre-tool reasoning text so we only keep the
+                        # final answer produced after all tools have completed.
+                        full_text = ""
                     elif status in {"completed", "failed"}:
                         running_tools.pop(tool_key, None)
                     await messenger.send_typing(room_id, status_text=_format_tool_status(running_tools))
@@ -497,8 +500,15 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
 
     except httpx.ReadTimeout:
         logger.warning(f"{log_prefix} Stream read timeout after collecting {len(full_text)} chars")
-        if not full_text:
-            raise
+        if full_text.strip():
+            # Surface what we have so the user sees a partial reply rather than silence
+            await messenger.send_message(
+                room_id,
+                full_text.strip() + "\n\n⚠️ (응답이 시간 초과로 잘렸어요)",
+                reply_to_id=reply_to_id,
+            )
+            return full_text
+        raise
     finally:
         refresh_task.cancel()
         try:

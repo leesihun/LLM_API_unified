@@ -12,9 +12,11 @@ def get_client() -> httpx.AsyncClient:
     """Return the shared LLM API client."""
     global _client
     if _client is None or _client.is_closed:
-        timeout = float(config.LLM_TIMEOUT_SECONDS)
         _client = httpx.AsyncClient(
-            timeout=httpx.Timeout(timeout, connect=min(10.0, timeout)),
+            # read=None disables the per-chunk timeout so long tool executions
+            # (OpenCode startup, slow shell, etc.) don't kill the stream mid-answer.
+            # connect/write/pool still have reasonable caps.
+            timeout=httpx.Timeout(connect=10.0, read=None, write=60.0, pool=60.0),
             trust_env=False,
             limits=httpx.Limits(
                 max_connections=10,
