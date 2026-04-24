@@ -41,34 +41,95 @@ class NativePythonExecutor(BasePythonExecutor):
         """
         Generate and execute Python code from a natural language instruction.
 
+        On non-zero exit, regenerate with the traceback fed back to the LLM
+        (bounded by PYTHON_EXECUTOR_MAX_RETRIES and PYTHON_EXECUTOR_TOTAL_TIMEOUT).
+
         Args:
             instruction: Natural language description of the task
-            timeout: Execution timeout in seconds (optional)
+            timeout: Per-attempt subprocess execution timeout (optional)
         """
         exec_timeout = timeout or self.timeout
-        start_time = time.time()
+        total_timeout = getattr(config, 'PYTHON_EXECUTOR_TOTAL_TIMEOUT', 180)
+        max_retries = getattr(config, 'PYTHON_EXECUTOR_MAX_RETRIES', 2)
+        total_deadline = time.time() + total_timeout
+        max_attempts = 1 + max_retries
 
-        existing_py_files = [f for f in self.list_files() if f.endswith('.py')]
-        code, script_name = await self._generate_code(instruction, existing_py_files)
+        last_result: Optional[Dict[str, Any]] = None
+        prev_code: Optional[str] = None
+        prev_stderr: Optional[str] = None
 
-        script_path = self.workspace / script_name
+        for attempt in range(max_attempts):
+            if time.time() >= total_deadline:
+                break
 
-        self._log_execution_start(instruction, code, script_name, exec_timeout, existing_py_files)
+            attempt_start = time.time()
+            existing_py_files = [f for f in self.list_files() if f.endswith('.py')]
 
-        script_path.write_text(code, encoding='utf-8')
-        print(f"[PYTHON] Script written: {script_path}")
+            code, script_name = await self._generate_code(
+                instruction,
+                existing_py_files,
+                prev_code=prev_code,
+                prev_stderr=prev_stderr,
+            )
+            script_path = self.workspace / script_name
 
-        return await self._run_script(script_name, exec_timeout, start_time)
+            if attempt == 0:
+                self._log_execution_start(instruction, code, script_name, exec_timeout, existing_py_files)
+            else:
+                print(f"[PYTHON] Retry {attempt}/{max_retries} after previous failure")
+                log_to_prompts_file(f"\n[PYTHON] Retry attempt {attempt}/{max_retries}")
+                log_to_prompts_file(f"  Script: {script_name}")
+
+            script_path.write_text(code, encoding='utf-8')
+            print(f"[PYTHON] Script written: {script_path}")
+
+            remaining = max(1, int(total_deadline - time.time()))
+            per_attempt_timeout = min(exec_timeout, remaining)
+            result = await self._run_script(script_name, per_attempt_timeout, attempt_start)
+            last_result = result
+
+            if result.get('returncode') == 0 and result.get('executed'):
+                return result
+
+            prev_code = code
+            prev_stderr = (result.get('stderr') or result.get('error') or '')[:2000]
+
+        return last_result if last_result is not None else self._result_dict(
+            success=False, script_name="", executed=False,
+            stdout="", stderr="No attempts completed within total timeout",
+            returncode=-1, execution_time=0.0,
+            error="No attempts completed within total timeout",
+        )
 
     # ------------------------------------------------------------------
     # Code generation from instruction
     # ------------------------------------------------------------------
 
-    async def _generate_code(self, instruction: str, existing_py_files: List[str]) -> Tuple[str, str]:
-        """Generate Python code from natural language instruction via LLM."""
+    async def _generate_code(
+        self,
+        instruction: str,
+        existing_py_files: List[str],
+        prev_code: Optional[str] = None,
+        prev_stderr: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """Generate Python code from natural language instruction via LLM.
+
+        When prev_code and prev_stderr are provided, the prompt asks the LLM
+        to fix the previous attempt using the traceback.
+        """
         files_context = self._build_workspace_context(existing_py_files)
 
-        if files_context:
+        if prev_code is not None and prev_stderr:
+            prompt = (
+                "The previous Python script failed. Fix the error below.\n\n"
+                "**Previous code:**\n"
+                f"```python\n{prev_code}\n```\n\n"
+                "**Error / traceback:**\n"
+                f"```\n{prev_stderr}\n```\n\n"
+                f"**Original instruction:** {instruction}\n\n"
+                "Output ONLY the corrected complete Python code:\n```python"
+            )
+        elif files_context:
             prompt = (
                 "Generate executable Python code based on the instruction below.\n\n"
                 f"**Existing workspace files:**{files_context}\n\n"
@@ -90,6 +151,8 @@ class NativePythonExecutor(BasePythonExecutor):
         print(f"[PYTHON] Instruction: {instruction[:200]}{'...' if len(instruction) > 200 else ''}")
         if existing_py_files:
             print(f"[PYTHON] Workspace context: {existing_py_files}")
+        if prev_code is not None:
+            print(f"[PYTHON] Retry mode: feeding back {len(prev_stderr or '')} chars of stderr")
 
         code = await self._llm_call_async(prompt)
         script_name = self._generate_script_name(code)

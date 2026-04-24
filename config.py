@@ -207,12 +207,17 @@ WEBSEARCH_MAX_RESULTS = 5
 # ============================================================================
 # Python Coder Tool Settings
 # ============================================================================
-PYTHON_EXECUTOR_MODE: Literal["native", "opencode"] = "opencode"
+PYTHON_EXECUTOR_MODE: Literal["native", "opencode"] = "native"
 
 PYTHON_EXECUTOR_TIMEOUT = 864000
 PYTHON_EXECUTOR_MAX_OUTPUT_SIZE = 1024 * 1024 * 10
 PYTHON_WORKSPACE_DIR = SCRATCH_DIR
 PYTHON_CODER_TIMEOUT = 864000
+
+# Native-mode self-debug: on non-zero exit, regenerate with traceback context.
+PYTHON_EXECUTOR_MAX_RETRIES = 2
+# Hard wall-clock cap wrapping generation + execution + retries for one tool call.
+PYTHON_EXECUTOR_TOTAL_TIMEOUT = 180
 
 OPENCODE_PATH: str = "opencode"
 OPENCODE_SERVER_PORT: int = 37254
