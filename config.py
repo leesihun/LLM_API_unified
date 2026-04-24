@@ -132,7 +132,7 @@ TOOL_PARAMETERS = {
         "timeout": 864000,
     },
     "python_coder": {
-        "temperature": 1.0,
+        "temperature": 0.5,
         "max_tokens": 128000,
         "timeout": 864000,
     },
@@ -216,9 +216,9 @@ PYTHON_WORKSPACE_DIR = SCRATCH_DIR
 
 # Layered timeouts for native / kernel executor:
 PYTHON_GENERATION_TIMEOUT = 120      # LLM code-generation call
-PYTHON_EXECUTION_TIMEOUT = 60        # per-attempt subprocess / kernel default
+PYTHON_EXECUTION_TIMEOUT = 300       # per-attempt subprocess / kernel default
 PYTHON_EXECUTION_TIMEOUT_MAX = 900   # ceiling when caller passes a bigger value
-PYTHON_EXECUTION_IDLE_TIMEOUT = 60   # kill subprocess if stdout silent for N s
+PYTHON_EXECUTION_IDLE_TIMEOUT = None # disabled — most scripts don't print continuously
 PYTHON_TOTAL_TIMEOUT = 600           # wall-clock cap: gen + exec + all retries
 
 PYTHON_EXECUTOR_MAX_RETRIES = 2      # self-debug retries on non-zero exit
