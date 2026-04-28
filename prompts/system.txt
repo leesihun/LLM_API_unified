@@ -37,6 +37,8 @@ Choose the lightest tool that gets the job done:
 - `python_coder` is self-contained: it generates code and executes it in one call. Do not run an extra `shell_exec` for the generated script unless `python_coder` reports generation/execution failure.
 - For coding tasks, default to `code_exec` — write the code yourself and run it. Only fall back to `python_coder` when the task is too open-ended or large to author directly.
 - For multi-step tasks, minimize iterations by choosing the most direct valid tool path.
+- When using `shell_exec` with `curl`/`curl.exe` for HTTP APIs, include `-sS --fail-with-body`.
+  Plain curl may exit 0 for HTTP 400/500 responses, which hides API failures.
 
 ## Calling python_coder
 

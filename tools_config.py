@@ -230,6 +230,8 @@ TOOL_SCHEMAS: dict = {
             "Execute shell commands. Use for running scripts, package management, git operations, "
             "or any command-line task. "
             "Multiple shell_exec calls in a single turn run concurrently — use this for parallel work. "
+            "When using curl/curl.exe for HTTP APIs, include -sS --fail-with-body so HTTP 4xx/5xx "
+            "responses become failed tool results instead of exit-code-0 successes. "
             "For long-running scripts, set a large timeout (e.g. 600–3600). "
             "If the process exceeds the timeout, the result reports that it is still running and includes the PID. "
             "Use process_monitor instead when you need incremental output or background process management."

@@ -31,6 +31,16 @@ export function emitToUser(userId: number, event: string, data: any) {
   }
 }
 
+function validateOutgoingMessage(type: unknown, fileUrl: unknown): string | null {
+  if (type !== 'text' && type !== 'image' && type !== 'file') {
+    return 'type must be text, image, or file.';
+  }
+  if ((type === 'image' || type === 'file') && (typeof fileUrl !== 'string' || fileUrl.trim() === '')) {
+    return `${type} messages require fileUrl. Upload the file first and pass the returned fileUrl.`;
+  }
+  return null;
+}
+
 export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToClientEvents>) {
   ioRef = io;
   io.on('connection', (socket: TypedSocket) => {
@@ -77,6 +87,13 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
     // Send message (membership required)
     socket.on('send_message', (data) => {
       const { roomId, content, type, fileUrl, fileName, fileSize, mentions, replyToId } = data;
+
+      const validationError = validateOutgoingMessage(type, fileUrl);
+      if (validationError) {
+        console.warn(`[Socket] Rejected send_message from user ${userId}: ${validationError}`);
+        (socket as any).emit('message_error', { error: validationError });
+        return;
+      }
 
       const membership = queryOne('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, userId]);
       if (!membership) return;

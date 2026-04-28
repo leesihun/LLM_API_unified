@@ -86,6 +86,49 @@ function fetchFullMessage(messageId: number) {
   );
 }
 
+function validateMessagePayload(type: unknown, content: unknown, fileUrl: unknown): string | null {
+  if (type !== 'text' && type !== 'image' && type !== 'file') {
+    return 'type must be text, image, or file.';
+  }
+
+  const hasContent = typeof content === 'string' && content.trim().length > 0;
+  if (type === 'text' && !hasContent) {
+    return 'content is required for text messages.';
+  }
+
+  if ((type === 'image' || type === 'file') && (typeof fileUrl !== 'string' || fileUrl.trim() === '')) {
+    return `${type} messages require fileUrl. Upload the file first and pass the returned fileUrl.`;
+  }
+
+  return null;
+}
+
+function decodeImageDataUrl(data: unknown): { buffer: Buffer; ext: string } | { error: string } {
+  if (typeof data !== 'string' || data.trim() === '') {
+    return { error: 'No image data' };
+  }
+
+  const match = data.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) {
+    return { error: 'data must be a base64 image data URL' };
+  }
+
+  const base64Data = match[2].replace(/\s/g, '');
+  if (!base64Data) {
+    return { error: 'No image data' };
+  }
+
+  const buffer = Buffer.from(base64Data, 'base64');
+  if (buffer.length === 0) {
+    return { error: 'Decoded image is empty' };
+  }
+
+  const subtype = match[1].toLowerCase();
+  const extMap: Record<string, string> = { jpeg: 'jpg', 'svg+xml': 'svg' };
+  const safeSubtype = extMap[subtype] ?? (subtype.replace(/[^a-z0-9]/g, '') || 'png');
+  return { buffer, ext: `.${safeSubtype}` };
+}
+
 // ===========================================================================
 // MESSAGES
 // ===========================================================================
@@ -98,8 +141,14 @@ router.post('/send-message', (req: Request, res: Response) => {
     mentions = [], replyToId = null,
   } = req.body;
 
-  if (!roomId || !content) {
-    res.status(400).json({ error: 'roomId and content are required.' });
+  if (!roomId) {
+    res.status(400).json({ error: 'roomId is required.' });
+    return;
+  }
+
+  const validationError = validateMessagePayload(type, content, fileUrl);
+  if (validationError) {
+    res.status(400).json({ error: validationError });
     return;
   }
 
@@ -191,8 +240,8 @@ router.post('/send-file', upload.single('file'), (req: Request, res: Response) =
 router.post('/send-base64', (req: Request, res: Response) => {
   const { data, roomId, content, fileName } = req.body;
 
-  if (!data || !roomId) {
-    res.status(400).json({ error: 'data and roomId are required.' });
+  if (!roomId) {
+    res.status(400).json({ error: 'roomId is required.' });
     return;
   }
 
@@ -211,14 +260,12 @@ router.post('/send-base64', (req: Request, res: Response) => {
     return;
   }
 
-  const base64Data = data.replace(/^data:image\/\w+;base64,/, '');
-  const buffer = Buffer.from(base64Data, 'base64');
-
-  let ext = '.png';
-  const mimeMatch = data.match(/^data:image\/(\w+);base64,/);
-  if (mimeMatch) {
-    ext = '.' + mimeMatch[1].replace('jpeg', 'jpg');
+  const decoded = decodeImageDataUrl(data);
+  if ('error' in decoded) {
+    res.status(400).json({ error: decoded.error });
+    return;
   }
+  const { buffer, ext } = decoded;
 
   const dateFolder = new Date().toISOString().slice(0, 10);
   const dir = path.join(UPLOADS_DIR, dateFolder);

@@ -8,6 +8,7 @@ blocks on a full pipe. On timeout, partial output collected so far is still
 available (the shared buffer holds everything streamed up to that moment).
 """
 import asyncio
+import re
 import time
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -19,6 +20,21 @@ _READ_CHUNK = 4096
 
 # Track already-created workspace directories to skip redundant mkdir calls
 _created_dirs: set = set()
+
+_CURL_HTTP_RE = re.compile(r"(?i)(^|[\s;&|()])(?:curl|curl\.exe)(?=$|[\s])")
+_HTTP_URL_RE = re.compile(r"(?i)https?://")
+_CURL_FAIL_LONG_RE = re.compile(r"(?<!\S)--fail(?:-with-body)?(?:\s|=|$)")
+_CURL_FAIL_SHORT_RE = re.compile(r"(?<!\S)-[A-Za-z]*f[A-Za-z]*(?=\s|$)")
+
+
+def _needs_curl_fail_flag(command: str) -> bool:
+    """Return True for curl HTTP calls that would hide HTTP 4xx/5xx as exit 0."""
+    if not _CURL_HTTP_RE.search(command) or not _HTTP_URL_RE.search(command):
+        return False
+    return not (
+        _CURL_FAIL_LONG_RE.search(command)
+        or _CURL_FAIL_SHORT_RE.search(command)
+    )
 
 
 async def _drain_into(
@@ -94,6 +110,18 @@ class ShellExecTool:
         cwd.mkdir(parents=True, exist_ok=True)
 
         start = time.time()
+        if _needs_curl_fail_flag(command):
+            return {
+                "success": False,
+                "error": (
+                    "curl HTTP/API calls must include --fail-with-body or -f "
+                    "so HTTP 4xx/5xx responses become failed tool results."
+                ),
+                "hint": "Use: curl.exe -sS --fail-with-body ...",
+                "duration": round(time.time() - start, 2),
+                "command": command,
+            }
+
         try:
             proc = await asyncio.create_subprocess_shell(
                 command,
@@ -159,12 +187,21 @@ class ShellExecTool:
         await asyncio.gather(stdout_task, stderr_task)
 
         duration = time.time() - start
-        return {
-            "success": proc.returncode == 0,
-            "stdout": _decode(stdout_buf),
-            "stderr": _decode(stderr_buf),
+        stdout = _decode(stdout_buf)
+        stderr = _decode(stderr_buf)
+        success = proc.returncode == 0
+        result = {
+            "success": success,
+            "stdout": stdout,
+            "stderr": stderr,
             "exit_code": proc.returncode,
             "duration": round(duration, 2),
             "command": command,
             "pid": proc.pid,
         }
+        if success and stderr.strip() and not stdout.strip():
+            result["warning"] = (
+                "Command exited 0 but wrote to stderr and produced no stdout. "
+                "For API calls, verify the response body or use strict HTTP failure flags."
+            )
+        return result

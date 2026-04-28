@@ -148,15 +148,39 @@ async def handle_webhook(request: Request):
     if msg_type == "image":
         file_name = data.get("fileName", "image")
         file_url = data.get("fileUrl", "")
-        if file_url:
-            file_info = {"url": file_url, "name": file_name}
+        if not file_url:
+            logger.warning(f"[Webhook] Image message {msg_id} has no fileUrl; refusing to process as an image")
+            is_home = room_id == config.MESSENGER_HOME_ROOM_ID
+            mention_tag = f"@{config.MESSENGER_BOT_NAME}"
+            if room_id is not None and (is_home or mention_tag.lower() in content.lower()):
+                asyncio.create_task(
+                    messenger.send_message(
+                        room_id,
+                        "이미지 파일을 찾을 수 없어 처리할 수 없어요. 다시 업로드해주세요.",
+                        reply_to_id=msg_id,
+                    )
+                )
+            return {"ok": False, "error": "Image message missing fileUrl"}
+        file_info = {"url": file_url, "name": file_name}
         if not content:
             content = f"[Image: {file_name}]"
     elif msg_type == "file":
         file_name = data.get("fileName", "file")
         file_url = data.get("fileUrl", "")
-        if file_url:
-            file_info = {"url": file_url, "name": file_name}
+        if not file_url:
+            logger.warning(f"[Webhook] File message {msg_id} has no fileUrl; refusing to process as a file")
+            is_home = room_id == config.MESSENGER_HOME_ROOM_ID
+            mention_tag = f"@{config.MESSENGER_BOT_NAME}"
+            if room_id is not None and (is_home or mention_tag.lower() in content.lower()):
+                asyncio.create_task(
+                    messenger.send_message(
+                        room_id,
+                        "파일을 찾을 수 없어 처리할 수 없어요. 다시 업로드해주세요.",
+                        reply_to_id=msg_id,
+                    )
+                )
+            return {"ok": False, "error": "File message missing fileUrl"}
+        file_info = {"url": file_url, "name": file_name}
         if not content:
             content = f"[File: {file_name}]"
     elif msg_type != "text":

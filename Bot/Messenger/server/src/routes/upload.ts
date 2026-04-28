@@ -48,6 +48,32 @@ const uploadChunk = multer({ storage: chunkTempStorage });
 
 const router = Router();
 
+function decodeImageDataUrl(data: unknown): { buffer: Buffer; ext: string } | { error: string } {
+  if (typeof data !== 'string' || data.trim() === '') {
+    return { error: 'No image data' };
+  }
+
+  const match = data.match(/^data:image\/([a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/);
+  if (!match) {
+    return { error: 'data must be a base64 image data URL' };
+  }
+
+  const base64Data = match[2].replace(/\s/g, '');
+  if (!base64Data) {
+    return { error: 'No image data' };
+  }
+
+  const buffer = Buffer.from(base64Data, 'base64');
+  if (buffer.length === 0) {
+    return { error: 'Decoded image is empty' };
+  }
+
+  const subtype = match[1].toLowerCase();
+  const extMap: Record<string, string> = { jpeg: 'jpg', 'svg+xml': 'svg' };
+  const safeSubtype = extMap[subtype] ?? (subtype.replace(/[^a-z0-9]/g, '') || 'png');
+  return { buffer, ext: `.${safeSubtype}` };
+}
+
 // POST /upload/file
 router.post('/file', (req: Request, res: Response) => {
   console.log('[Upload /file] route reached — starting multer');
@@ -158,17 +184,13 @@ router.post('/file-chunk', (req: Request, res: Response) => {
 router.post('/image-base64', (req: Request, res: Response) => {
   const { data, fileName } = req.body;
 
-  if (!data) {
-    res.status(400).json({ error: 'No image data' });
+  const decoded = decodeImageDataUrl(data);
+  if ('error' in decoded) {
+    res.status(400).json({ error: decoded.error });
     return;
   }
 
-  const base64Data = data.replace(/^data:image\/\w+;base64,/, '');
-  const buffer = Buffer.from(base64Data, 'base64');
-
-  let ext = '.png';
-  const mimeMatch = data.match(/^data:image\/(\w+);base64,/);
-  if (mimeMatch) ext = '.' + mimeMatch[1].replace('jpeg', 'jpg');
+  const { buffer, ext } = decoded;
 
   const dateFolder = new Date().toISOString().slice(0, 10);
   const dir = path.join(UPLOADS_DIR, dateFolder);
