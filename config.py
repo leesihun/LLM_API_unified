@@ -54,7 +54,7 @@ PROMPTS_LOG_MAX_LINES = 10_000
 # ============================================================================
 # Agent Settings
 # ============================================================================
-AGENT_MAX_ITERATIONS = 30
+AGENT_MAX_ITERATIONS = 300
 AGENT_TOOL_LOOP_MAX_TOKENS = 4096
 AGENT_SYSTEM_PROMPT = "system.txt"
 AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
