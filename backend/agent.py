@@ -519,6 +519,7 @@ class AgentLoop:
                 cache["python_coder"] = PythonCoderTool(session_id=self.session_id)
             return await cache["python_coder"].execute(
                 instruction=arguments["instruction"],
+                context=arguments.get("context"),
                 timeout=arguments.get("timeout"),
             )
 
@@ -1005,6 +1006,28 @@ class AgentLoop:
                     duration=round(duration, 2),
                 )
                 msgs.append(self._build_tool_result_msg(tc, result))
+
+            # If any tool requested clarification, relay the question to the user
+            # and pause the loop. The user's next message resumes with full context.
+            clarifications = [
+                (tc, r) for tc, r in zip(all_tool_calls, results)
+                if r.get("needs_clarification")
+            ]
+            if clarifications:
+                if len(clarifications) == 1:
+                    tc, r = clarifications[0]
+                    question = r.get("question") or r.get("error") or "Need more information to proceed."
+                    relay = question
+                else:
+                    lines = ["I need some clarification before I can continue:\n"]
+                    for i, (tc, r) in enumerate(clarifications, 1):
+                        q = r.get("question") or r.get("error") or "?"
+                        lines.append(f"{i}. **{tc.function.name}**: {q}")
+                    relay = "\n".join(lines)
+                self._log(f"  [CLARIFICATION] Pausing — relaying question to user: {relay[:300]}")
+                self._log_agent_complete("Tool requested clarification from user", iteration + 1)
+                yield TextEvent(content=relay)
+                return
 
         # Max iterations — final answer without tools
         print(f"[AGENT-STREAM] Max iterations ({self.max_iterations}) reached, requesting final answer")

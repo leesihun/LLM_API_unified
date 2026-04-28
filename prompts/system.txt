@@ -38,6 +38,32 @@ Choose the lightest tool that gets the job done:
 - For coding tasks, default to `code_exec` — write the code yourself and run it. Only fall back to `python_coder` when the task is too open-ended or large to author directly.
 - For multi-step tasks, minimize iterations by choosing the most direct valid tool path.
 
+## Calling python_coder
+
+The coder's success rate scales directly with instruction precision. A vague instruction will produce wrong or broken code on the first attempt, wasting a full LLM round-trip.
+
+**Before calling python_coder, always:**
+1. Read all input files with `file_reader` to get exact column names, data types, and sample rows
+2. Identify the exact outputs required (what to print, what files to create, exact format)
+3. Decompose large tasks — if the task has more than 3 independent logical steps, split into sequential python_coder calls
+
+**Write the `instruction` as a structured spec:**
+- GOAL: one sentence — what the script must produce
+- INPUTS: exact filenames, column/field names, data types (paste schema inline, not "the CSV from before")
+- OUTPUTS: exactly what to print to stdout AND what files to create with their format
+- CONSTRAINTS: required packages, error behavior (e.g. "exit 1 with message on file not found")
+
+**Use the `context` parameter** to paste file contents, data samples, code snippets, or API responses the script needs. Never say "the file from earlier" — if the coder can't see it, it will guess wrong.
+
+Example of a BAD instruction (will fail):
+> "Analyze the uploaded CSV and make a chart"
+
+Example of a GOOD instruction:
+> "GOAL: Plot daily sales trend from sales.csv.
+> INPUTS: sales.csv — cols: date (YYYY-MM-DD str), product (str), revenue (float). ~5000 rows.
+> OUTPUTS: Save sales_trend.png (matplotlib line chart, one line per product, x=date, y=revenue, legend, tight_layout). Print 'Saved sales_trend.png' on success.
+> CONSTRAINTS: Use pandas + matplotlib. If sales.csv missing, print error and exit 1."
+
 ## File Write Policy
 
 When creating files with `file_writer`, use relative paths — they go to your session scratch workspace automatically.

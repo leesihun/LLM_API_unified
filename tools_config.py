@@ -58,10 +58,10 @@ TOOL_SCHEMAS: dict = {
     "python_coder": {
         "name": "python_coder",
         "description": (
-            "Fallback tool: an internal LLM generates and runs Python code from a natural-language "
-            "description. Slower and less reliable than code_exec — only use when the task is too "
-            "open-ended or large to write directly yourself. Prefer code_exec whenever you can author "
-            "the code. Describe WHAT you want done, not HOW."
+            "An internal LLM generates and runs Python code from your spec. "
+            "Only use when the task is too open-ended or large to write with code_exec directly. "
+            "BEFORE calling: read all input files with file_reader so you know exact schemas, "
+            "column names, and formats. Then write a precise spec — vague instructions fail."
         ),
         "parameters": {
             "type": "object",
@@ -69,13 +69,29 @@ TOOL_SCHEMAS: dict = {
                 "instruction": {
                     "type": "string",
                     "description": (
-                        "Natural language description of the coding task. "
-                        "Example: 'Read data.csv, compute the mean of each column, save summary to summary.txt'"
+                        "A precise engineering spec. Include all that apply:\n"
+                        "GOAL: one sentence — what the script must produce\n"
+                        "INPUTS: exact filenames, column names, data types (paste schema inline)\n"
+                        "OUTPUTS: exactly what to print to stdout AND what files to create with format\n"
+                        "CONSTRAINTS: required packages, error behavior, things to avoid\n\n"
+                        "BAD:  'Analyze the CSV and make a chart'\n"
+                        "GOOD: 'Read sales.csv (cols: date str, product str, units int, revenue float). "
+                        "Compute monthly revenue per product. Print markdown table sorted by revenue desc. "
+                        "Save monthly_revenue.csv with cols: month,product,revenue.'"
+                    ),
+                },
+                "context": {
+                    "type": "string",
+                    "description": (
+                        "Optional. Paste file contents, data samples, code snippets, or API responses "
+                        "the script needs. Include full content here — do not reference files by path "
+                        "without also providing their content. Read files first with file_reader, "
+                        "then paste the relevant portions here."
                     ),
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Maximum seconds for code generation + execution (default: 864000).",
+                    "description": "Maximum seconds for code generation + execution (default: 300).",
                 },
             },
             "required": ["instruction"],
