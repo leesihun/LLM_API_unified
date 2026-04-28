@@ -25,15 +25,6 @@ def get_python_executor(session_id: str) -> BasePythonExecutor:
         from tools.python_coder.native_tool import NativePythonExecutor
         return NativePythonExecutor(session_id)
 
-    elif mode == "kernel":
-        try:
-            from tools.python_coder.kernel_executor import KernelExecutor
-            return KernelExecutor(session_id)
-        except ImportError as e:
-            print(f"[WARN] kernel mode unavailable ({e}), falling back to native")
-            from tools.python_coder.native_tool import NativePythonExecutor
-            return NativePythonExecutor(session_id)
-
     elif mode == "opencode":
         from tools.python_coder.opencode_tool import OpenCodeExecutor
         return OpenCodeExecutor(session_id)
@@ -41,7 +32,7 @@ def get_python_executor(session_id: str) -> BasePythonExecutor:
     else:
         raise ValueError(
             f"Invalid PYTHON_EXECUTOR_MODE: '{mode}'. "
-            f"Must be 'native', 'kernel', or 'opencode'"
+            f"Must be 'native' or 'opencode'"
         )
 
 

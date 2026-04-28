@@ -207,14 +207,14 @@ WEBSEARCH_MAX_RESULTS = 5
 # ============================================================================
 # Python Coder Tool Settings
 # ============================================================================
-PYTHON_EXECUTOR_MODE: Literal["native", "opencode", "kernel"] = "kernel"
+PYTHON_EXECUTOR_MODE: Literal["native", "opencode"] = "native"
 
 # Kept for code_exec tool and opencode fallback (subprocess caps):
 PYTHON_EXECUTOR_TIMEOUT = 300
 PYTHON_EXECUTOR_MAX_OUTPUT_SIZE = 1024 * 1024 * 10
 PYTHON_WORKSPACE_DIR = SCRATCH_DIR
 
-# Layered timeouts for native / kernel executor:
+# Layered timeouts for native executor:
 PYTHON_GENERATION_TIMEOUT = 120      # LLM code-generation call
 PYTHON_EXECUTION_TIMEOUT = 300       # per-attempt subprocess / kernel default
 PYTHON_EXECUTION_TIMEOUT_MAX = 900   # ceiling when caller passes a bigger value

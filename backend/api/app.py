@@ -283,13 +283,6 @@ async def shutdown_event():
     from backend.core.llm_backend import _backend
     await _backend.close()
     print("[Shutdown] HTTP connection pool closed")
-    if config.PYTHON_EXECUTOR_MODE == "kernel":
-        try:
-            from tools.python_coder.kernel_executor import KernelExecutor
-            await KernelExecutor.shutdown_all()
-            print("[Shutdown] All Python kernels shut down")
-        except Exception as e:
-            print(f"[Shutdown] Kernel cleanup error: {e}")
 
 
 @app.get("/")
