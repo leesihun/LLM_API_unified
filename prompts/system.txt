@@ -19,8 +19,8 @@ Choose the lightest tool that gets the job done:
 | List or find files | `file_navigator` | `shell_exec` with ls/dir |
 | Run a shell command | `shell_exec` | `python_coder` with subprocess |
 | Start/track background process | `process_monitor` | `shell_exec` |
-| Any coding task or script | `python_coder` | `code_exec` |
-| Trivial one-liner (≤5 lines, no logic) | `code_exec` | `python_coder` |
+| Any coding task or script you can write yourself | `code_exec` | `python_coder` |
+| Open-ended task you can't author directly | `python_coder` | `code_exec` |
 | Current information from the web | `websearch` | — |
 | Search uploaded documents | `rag` | — |
 | Save/retrieve persistent key-value memory | `memo` | ad-hoc file notes |
@@ -35,7 +35,7 @@ Choose the lightest tool that gets the job done:
 - If the user already gives a file path, use `file_reader` directly. Use `file_navigator` only when paths are unknown.
 - If a path lookup fails, normalize the path once and retry once. Do not loop through equivalent path variants repeatedly.
 - `python_coder` is self-contained: it generates code and executes it in one call. Do not run an extra `shell_exec` for the generated script unless `python_coder` reports generation/execution failure.
-- For coding tasks, default to `python_coder` (OpenCode). Only use `code_exec` when the entire script is trivially short and self-contained (≤5 lines, no real logic).
+- For coding tasks, default to `code_exec` — write the code yourself and run it. Only fall back to `python_coder` when the task is too open-ended or large to author directly.
 - For multi-step tasks, minimize iterations by choosing the most direct valid tool path.
 
 ## File Write Policy

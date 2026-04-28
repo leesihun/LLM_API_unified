@@ -10,12 +10,12 @@ TOOL_SCHEMAS: dict = {
     "code_exec": {
         "name": "code_exec",
         "description": (
-            "Execute Python code directly. Pass the complete, ready-to-run Python script as the "
-            "'code' argument — no natural-language description, actual code only. "
-            "Runs it in the session workspace, returns stdout/stderr/returncode. "
-            "Use only for very simple, self-contained scripts you can write confidently in a few lines "
-            "(no file processing, no multi-step logic, no external libraries). "
-            "For all other coding tasks — even moderately complex ones — use python_coder instead."
+            "Default tool for coding tasks. Execute Python code directly — pass the complete, "
+            "ready-to-run script as the 'code' argument. Runs in the session workspace, returns "
+            "stdout/stderr/returncode. Use this for any task where you can write the code yourself: "
+            "file processing, data analysis, calculations, multi-step logic, library calls. "
+            "Only fall back to python_coder when the task genuinely requires the LLM to author "
+            "a substantial program from a high-level description."
         ),
         "parameters": {
             "type": "object",
@@ -58,9 +58,10 @@ TOOL_SCHEMAS: dict = {
     "python_coder": {
         "name": "python_coder",
         "description": (
-            "Default tool for all coding tasks — OpenCode generates and runs the Python code from your description. "
-            "Use python_coder for anything beyond trivial one-liners: file processing, data analysis, automation, "
-            "multi-step scripts, anything with real logic. Describe WHAT you want done, not HOW."
+            "Fallback tool: an internal LLM generates and runs Python code from a natural-language "
+            "description. Slower and less reliable than code_exec — only use when the task is too "
+            "open-ended or large to write directly yourself. Prefer code_exec whenever you can author "
+            "the code. Describe WHAT you want done, not HOW."
         ),
         "parameters": {
             "type": "object",

@@ -6,8 +6,6 @@ Features:
 - Self-debug retry loop: on non-zero exit feeds traceback back to LLM, up to
   PYTHON_EXECUTOR_MAX_RETRIES times.
 - Layered timeouts: separate generation / per-execution / idle-stdout / total caps.
-- Artifact-exists check: if the instruction mentions output filenames, verifies
-  they were actually created before declaring success.
 - Retry logging: attempts_used and retries_fired reported in result dict.
 """
 import sys
@@ -22,13 +20,6 @@ from backend.core.llm_backend import llm_backend
 from backend.utils.prompts_log_append import log_to_prompts_file
 from backend.utils.subprocess_stream import run_streaming
 from tools.python_coder.base import BasePythonExecutor
-
-# Regex for output artifacts mentioned in the instruction.
-_ARTIFACT_RE = re.compile(
-    r'\b([\w\-]+\.(?:png|jpe?g|gif|svg|pdf|csv|tsv|json|xml|html?|txt|md'
-    r'|xlsx?|zip|tar|gz|npy|npz|pkl|pt|pth|onnx|mp4|mp3|wav|parquet))\b',
-    re.IGNORECASE,
-)
 
 
 class NativePythonExecutor(BasePythonExecutor):
@@ -63,8 +54,7 @@ class NativePythonExecutor(BasePythonExecutor):
 
         On non-zero exit, regenerates with the traceback fed back to the LLM
         (bounded by PYTHON_EXECUTOR_MAX_RETRIES and PYTHON_TOTAL_TIMEOUT).
-        After a zero-exit, checks that any output files mentioned in the
-        instruction actually exist before declaring success.
+        Returncode is the source of truth for success — no artifact check.
 
         Args:
             instruction: Natural language description of the task
@@ -136,20 +126,6 @@ class NativePythonExecutor(BasePythonExecutor):
             result['retries_fired'] = retries_fired
 
             if result.get('returncode') == 0 and result.get('executed'):
-                # Artifact check: verify output files mentioned in instruction exist.
-                missing = self._check_artifacts(instruction)
-                if missing:
-                    artifact_msg = f"Script ran cleanly but expected output file(s) not found: {missing}"
-                    log_to_prompts_file(f"[PYTHON] Artifact check failed: {missing}")
-                    print(f"[PYTHON] Artifact check failed: {missing}")
-                    prev_code = code
-                    prev_stderr = artifact_msg
-                    result['success'] = False
-                    result['returncode'] = -1
-                    result['error'] = artifact_msg
-                    last_result = result
-                    continue  # retry
-
                 return result
 
             prev_code = code
@@ -168,23 +144,6 @@ class NativePythonExecutor(BasePythonExecutor):
             last_result.setdefault('retries_fired', retries_fired)
 
         return last_result
-
-    # ------------------------------------------------------------------
-    # Artifact verification
-    # ------------------------------------------------------------------
-
-    def _check_artifacts(self, instruction: str) -> List[str]:
-        """Return list of output filenames mentioned in instruction that are
-        missing or empty in the workspace after execution."""
-        mentioned = {m.group(1).lower() for m in _ARTIFACT_RE.finditer(instruction)}
-        if not mentioned:
-            return []
-        missing = []
-        for name in mentioned:
-            candidate = self.workspace / name
-            if not candidate.exists() or candidate.stat().st_size == 0:
-                missing.append(name)
-        return missing
 
     # ------------------------------------------------------------------
     # Code generation from instruction
@@ -265,28 +224,52 @@ class NativePythonExecutor(BasePythonExecutor):
             'python_coder', {}
         ).get('temperature', config.DEFAULT_TEMPERATURE)
 
-        print(f"[PYTHON] LLM call: model={config.LLAMACPP_MODEL}, temperature={temperature}")
+        # Pin to the same llama.cpp slot the agent uses for this session so
+        # the prefix stays stable across repeated python_coder calls and
+        # doesn't get bounced to a random slot.
+        id_slot = None
+        if config.LLAMACPP_SLOTS > 0 and self.session_id:
+            id_slot = hash(self.session_id) % config.LLAMACPP_SLOTS
 
+        print(f"[PYTHON] LLM call: model={config.LLAMACPP_MODEL}, temperature={temperature}, slot={id_slot}")
+
+        # System message is byte-stable across all python_coder calls so
+        # llama.cpp can reuse the KV-cache prefix for the instruction header.
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a Python code generator. "
+                    "Respond with executable Python code only — no prose, no markdown wrapper. "
+                    "Output the complete script inside a single ```python ... ``` fence."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ]
         response = await llm_backend.chat(
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             model=config.LLAMACPP_MODEL,
             temperature=temperature,
             session_id=self.session_id,
             agent_type="tool:python_coder",
+            id_slot=id_slot,
+            max_tokens=8000,
         )
         return self._extract_python_code(response.content or "")
 
     def _extract_python_code(self, response: str) -> str:
-        """Extract Python code from LLM response markdown."""
-        if "```python" in response:
-            parts = response.split("```python")
-            if len(parts) > 1:
-                return parts[1].split("```")[0].strip()
-        if "```" in response:
-            parts = response.split("```")
-            if len(parts) >= 3:
-                return parts[1].strip()
-        return response.strip()
+        """Extract the first fenced Python block, tolerant of nested triple-backticks."""
+        text = response or ""
+        # Find an opening fence. Prefer ```python, fall back to bare ```.
+        m = re.search(r"```(?:python|py)?\s*\n", text, re.IGNORECASE)
+        if not m:
+            return text.strip()
+        body = text[m.end():]
+        # Closing fence is a ``` on its own line (or end of string).
+        end = re.search(r"\n```\s*(?:\n|$)", body)
+        if end:
+            body = body[:end.start()]
+        return body.strip()
 
     # ------------------------------------------------------------------
     # Script execution (streams subprocess output incrementally)

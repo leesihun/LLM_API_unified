@@ -133,7 +133,7 @@ class AgentLoop:
         self._available_rag_collections: Optional[List[str]] = None
         self._tool_cache: Dict[str, Any] = {}
         self._filtered_tool_schemas: Optional[List[Dict[str, Any]]] = None
-        self._compressed_up_to: int = 0  # tracks how far _compress_old_iterations has processed
+        self._compressed_up_to: int = 0  # tracks how far old-iteration compression has processed
         # Cache log verbosity once (avoids getattr + .lower() on every log call)
         self._log_level: str = str(getattr(config, "AGENT_LOG_VERBOSITY", "summary")).lower()
 
@@ -740,45 +740,45 @@ class AgentLoop:
         except Exception as e:
             print(f"[MICROCOMPACT] Failed to save tool result to disk: {e}")
 
-    def _compress_old_iterations(self, msgs: List[Dict[str, Any]], current_iteration: int):
+    def _compress_old_iterations(self, msgs: List[Dict[str, Any]], current_iteration: int) -> List[Dict[str, Any]]:
         """
-        Compress tool results AND assistant tool-call messages from all previous
-        iterations to short summaries. Only the current iteration's messages stay
-        full-size (hot tail).
+        Return a copy of msgs with old-iteration tool results and assistant
+        tool-call messages compressed to short summaries. The original msgs list
+        is NEVER mutated so the llama.cpp KV-cache prefix stays byte-stable
+        across iterations.
+
+        Only messages before the warm-window boundary are compressed; the hot
+        tail (recent `warm` iterations) is passed through unchanged.
         """
         warm = config.AGENT_COMPACTION_WARM_WINDOW
         if current_iteration == 0 or len(self._iteration_boundaries) <= warm:
-            return
+            return msgs
 
-        # Everything before the warm window is "old" — keep the last `warm` iterations uncompressed
         old_boundary = self._iteration_boundaries[-(warm + 1)]
         summary_cap = config.AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS
-        # Don't compress if already very small
         tool_result_min = 120
-        # Compress assistant tool-call messages above this size
         assistant_min = 80
 
-        # Start from where we left off last time — skip already-compressed messages
-        start_idx = self._compressed_up_to
-
         compressed_count = 0
-        for i in range(start_idx, old_boundary):
-            msg = msgs[i]
+        result: List[Dict[str, Any]] = []
+
+        for i, msg in enumerate(msgs):
+            if i >= old_boundary:
+                result.append(msg)
+                continue
+
             role = msg.get("role")
 
-            # Compress tool result messages
             if role == "tool":
                 content = msg.get("content", "")
                 if len(content) > tool_result_min:
                     tool_name = msg.get("name", "tool")
                     summary = content[:summary_cap].replace('\n', ' ')
-                    msg["content"] = f"[{tool_name}: {summary}...]"
+                    msg = {**msg, "content": f"[{tool_name}: {summary}...]"}
                     compressed_count += 1
 
-            # Compress assistant tool-call request messages
             elif role == "assistant" and msg.get("tool_calls"):
                 tc_list = msg["tool_calls"]
-                # Check total JSON size; only compress if substantial
                 raw_size = sum(
                     len(tc.get("function", {}).get("arguments", ""))
                     for tc in tc_list
@@ -787,27 +787,30 @@ class AgentLoop:
                     names = ", ".join(
                         tc.get("function", {}).get("name", "?") for tc in tc_list
                     )
-                    msg["content"] = f"[called: {names}]"
-                    msg["tool_calls"] = [
-                        {
-                            "id": tc.get("id", f"call_{j}"),
-                            "type": "function",
-                            "function": {
-                                "name": tc.get("function", {}).get("name", ""),
-                                # Keep arguments minimal — just enough for the model to track context
-                                "arguments": "{}",
-                            },
-                        }
-                        for j, tc in enumerate(tc_list)
-                    ]
+                    msg = {
+                        **msg,
+                        "content": f"[called: {names}]",
+                        "tool_calls": [
+                            {
+                                "id": tc.get("id", f"call_{j}"),
+                                "type": "function",
+                                "function": {
+                                    "name": tc.get("function", {}).get("name", ""),
+                                    "arguments": "{}",
+                                },
+                            }
+                            for j, tc in enumerate(tc_list)
+                        ],
+                    }
                     compressed_count += 1
 
-        # Advance the pointer so next call skips these messages
-        self._compressed_up_to = old_boundary
+            result.append(msg)
 
         if compressed_count:
             self._log(f"  [MICROCOMPACT] Compressed {compressed_count} old message(s) "
                       f"from iterations before {current_iteration + 1}")
+
+        return result
 
     # ------------------------------------------------------------------
     # History limit enforcement
@@ -944,8 +947,11 @@ class AgentLoop:
             pending_tasks: list[tuple[ToolCall, asyncio.Task]] = []
             log_start = len(self.tool_calls_log)
 
+            # Build compressed view for the LLM call — msgs itself is never mutated
+            # so the KV-cache prefix stays byte-stable across iterations.
+            llm_msgs = self._compress_old_iterations(msgs, iteration)
             async for event in self.llm.chat_stream(
-                msgs, self.model, self.temperature,
+                llm_msgs, self.model, self.temperature,
                 tools=tool_schemas,
                 session_id=self.session_id,
                 agent_type="agent:stream",
@@ -999,9 +1005,6 @@ class AgentLoop:
                     duration=round(duration, 2),
                 )
                 msgs.append(self._build_tool_result_msg(tc, result))
-
-            # Compress old iterations
-            self._compress_old_iterations(msgs, iteration)
 
         # Max iterations — final answer without tools
         print(f"[AGENT-STREAM] Max iterations ({self.max_iterations}) reached, requesting final answer")

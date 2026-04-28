@@ -25,11 +25,11 @@ OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "lla
 # ============================================================================
 # Model Parameters (Default LLM Inference Settings)
 # ============================================================================
-DEFAULT_TEMPERATURE = 0.7
+DEFAULT_TEMPERATURE = 1.0  # 0.7
 DEFAULT_TOP_P = 0.95
 DEFAULT_TOP_K = 40
 DEFAULT_MIN_P = 0.1
-DEFAULT_MAX_TOKENS = 128000
+DEFAULT_MAX_TOKENS = 8192
 DEFAULT_REPEAT_PENALTY = 1
 
 # ============================================================================
@@ -54,14 +54,14 @@ PROMPTS_LOG_MAX_LINES = 10_000
 # ============================================================================
 # Agent Settings
 # ============================================================================
-AGENT_MAX_ITERATIONS = 100
-AGENT_TOOL_LOOP_MAX_TOKENS = 16384
+AGENT_MAX_ITERATIONS = 30
+AGENT_TOOL_LOOP_MAX_TOKENS = 4096
 AGENT_SYSTEM_PROMPT = "system.txt"
 AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
 AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 500
-AGENT_COMPACTION_WARM_WINDOW = 1  # keep this many previous iterations uncompressed
+AGENT_COMPACTION_WARM_WINDOW = 4  # keep this many previous iterations uncompressed
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
 # True = offload log writes to thread pool (non-blocking, recommended for production).
 AGENT_LOG_ASYNC = True
@@ -127,14 +127,12 @@ TOOL_PARAMETERS = {
         "timeout": 864000,
     },
     "code_exec": {
-        "temperature": 0.7,
+        "temperature": 1.0,
         "max_tokens": 8000,
         "timeout": 864000,
     },
     "python_coder": {
-        "temperature": 0.5,
-        "max_tokens": 128000,
-        "timeout": 864000,
+        "temperature": 1.0,
     },
     "rag": {
         "temperature": 0.2,
@@ -221,7 +219,7 @@ PYTHON_EXECUTION_TIMEOUT_MAX = 900   # ceiling when caller passes a bigger value
 PYTHON_EXECUTION_IDLE_TIMEOUT = None # disabled — most scripts don't print continuously
 PYTHON_TOTAL_TIMEOUT = 600           # wall-clock cap: gen + exec + all retries
 
-PYTHON_EXECUTOR_MAX_RETRIES = 2      # self-debug retries on non-zero exit
+PYTHON_EXECUTOR_MAX_RETRIES = 1      # self-debug retries on non-zero exit
 
 OPENCODE_PATH: str = "opencode"
 OPENCODE_SERVER_PORT: int = 37254
@@ -314,7 +312,7 @@ ALLOWED_WRITE_DIRS: list[Path] = []  # empty = allow all absolute paths
 # Streaming Settings
 # ============================================================================
 STREAM_CHUNK_SIZE = 1
-STREAM_TIMEOUT = 864000
+STREAM_TIMEOUT = 600
 
 # ============================================================================
 # CORS Settings

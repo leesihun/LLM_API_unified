@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { pipeline } from 'stream/promises';
 import { v4 as uuidv4 } from 'uuid';
 
 const UPLOADS_DIR = process.env.MESSENGER_UPLOADS_DIR || path.join(__dirname, '..', '..', 'uploads');
@@ -126,27 +127,30 @@ router.post('/file-chunk', (req: Request, res: Response) => {
 
     const finalName = `${uuidv4()}${ext}`;
     const finalPath = path.join(dir, finalName);
-    const writeStream = fs.createWriteStream(finalPath);
     const sortedChunks = fs.readdirSync(chunkDir).sort();
 
-    for (const chunk of sortedChunks) {
-      writeStream.write(fs.readFileSync(path.join(chunkDir, chunk)));
-    }
-    writeStream.end();
-
-    writeStream.on('finish', () => {
-      try { fs.rmSync(chunkDir, { recursive: true, force: true }); } catch {}
-      const fileUrl = `/uploads/${dateFolder}/${finalName}`;
-      const fileSize = fs.statSync(finalPath).size;
-      console.log(`[Upload /file-chunk] Assembled ${safeFileName} (${total} chunks, ${(fileSize / 1024 / 1024).toFixed(2)} MB) -> ${fileUrl}`);
-      res.json({ done: true, fileUrl, fileName: safeFileName, fileSize });
-    });
-
-    writeStream.on('error', (writeErr: Error) => {
-      console.error('[Upload /file-chunk] Assembly error:', writeErr);
-      try { fs.rmSync(chunkDir, { recursive: true, force: true }); } catch {}
-      if (!res.headersSent) res.status(500).json({ error: 'File assembly failed' });
-    });
+    (async () => {
+      const writeStream = fs.createWriteStream(finalPath);
+      try {
+        for (const chunk of sortedChunks) {
+          await pipeline(fs.createReadStream(path.join(chunkDir, chunk)), writeStream, { end: false });
+        }
+        await new Promise<void>((resolve, reject) => {
+          writeStream.end((err?: Error | null) => (err ? reject(err) : resolve()));
+        });
+        try { fs.rmSync(chunkDir, { recursive: true, force: true }); } catch {}
+        const fileUrl = `/uploads/${dateFolder}/${finalName}`;
+        const fileSize = fs.statSync(finalPath).size;
+        console.log(`[Upload /file-chunk] Assembled ${safeFileName} (${total} chunks, ${(fileSize / 1024 / 1024).toFixed(2)} MB) -> ${fileUrl}`);
+        res.json({ done: true, fileUrl, fileName: safeFileName, fileSize });
+      } catch (writeErr) {
+        console.error('[Upload /file-chunk] Assembly error:', writeErr);
+        try { writeStream.destroy(); } catch {}
+        try { fs.rmSync(chunkDir, { recursive: true, force: true }); } catch {}
+        try { fs.rmSync(finalPath, { force: true }); } catch {}
+        if (!res.headersSent) res.status(500).json({ error: 'File assembly failed' });
+      }
+    })();
   });
 });
 
