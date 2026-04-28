@@ -308,7 +308,7 @@ LOG_ROTATION_DAYS = 14          # rotate data/logs/prompts.log after N days
 # ============================================================================
 LLM_GENERATED_DIR = Path("data/llm_generated")   # dedicated dir for LLM absolute-path writes
 LLM_FILE_RETENTION_DAYS = 3                        # auto-delete files older than N days (0 = disabled)
-ALLOWED_WRITE_DIRS: list[Path] = [LLM_GENERATED_DIR, SCRATCH_DIR, UPLOAD_DIR]
+ALLOWED_WRITE_DIRS: list[Path] = []  # empty = allow all absolute paths
 
 # ============================================================================
 # Streaming Settings

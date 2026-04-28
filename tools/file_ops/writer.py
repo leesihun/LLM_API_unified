@@ -21,7 +21,7 @@ class FileWriterTool:
         if target_path.is_absolute():
             resolved = target_path.resolve()
             allowed = [d.resolve() for d in config.ALLOWED_WRITE_DIRS]
-            if not any(resolved.is_relative_to(a) for a in allowed):
+            if allowed and not any(resolved.is_relative_to(a) for a in allowed):
                 allowed_str = ", ".join(str(a) for a in allowed)
                 raise PermissionError(
                     f"Absolute path '{resolved}' is outside allowed write directories. "
