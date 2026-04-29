@@ -222,8 +222,15 @@ async def chat_completions(
         if session_id:
             session = db.get_session(session_id)
             if not session:
-                raise HTTPException(status_code=404, detail="Session not found")
-            history = conversation_store.load_recent_conversation(session_id) or []
+                if session_id.startswith("hb_"):
+                    # Heartbeat sessions are auto-created on first tick of each hour
+                    db.create_session(session_id, username)
+                    db.update_session_title(session_id, f"Heartbeat {session_id[3:]}")
+                    history = []
+                else:
+                    raise HTTPException(status_code=404, detail="Session not found")
+            else:
+                history = conversation_store.load_recent_conversation(session_id) or []
         else:
             session_id = str(uuid.uuid4())
             db.create_session(session_id, username)

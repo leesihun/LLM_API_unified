@@ -42,6 +42,7 @@ def list_sessions(
             message_count=session["message_count"],
         )
         for session in sessions
+        if not session["id"].startswith("hb_")
     ]
 
     return SessionsListResponse(sessions=session_infos)

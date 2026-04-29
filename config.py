@@ -61,7 +61,7 @@ AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
 AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 500
-AGENT_COMPACTION_WARM_WINDOW = 4  # keep this many previous iterations uncompressed
+AGENT_COMPACTION_WARM_WINDOW = 5  # keep this many previous iterations uncompressed
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
 # True = offload log writes to thread pool (non-blocking, recommended for production).
 AGENT_LOG_ASYNC = True
@@ -291,7 +291,7 @@ JOBS_CLEANUP_DAYS = 30
 # ============================================================================
 # Session Settings
 # ============================================================================
-MAX_CONVERSATION_HISTORY = 50
+MAX_CONVERSATION_HISTORY = 200
 SESSION_CLEANUP_DAYS = 7
 
 # ============================================================================
