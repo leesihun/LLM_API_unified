@@ -37,6 +37,13 @@ import config
 router = APIRouter(prefix="/v1", tags=["chat"])
 
 
+def _format_exception(exc: Exception) -> str:
+    message = str(exc).strip()
+    if message:
+        return f"{type(exc).__name__}: {message}"
+    return f"{type(exc).__name__}: {repr(exc)}"
+
+
 # ---------------------------------------------------------------------------
 # Request parsing — handles both JSON and multipart/form-data
 # ---------------------------------------------------------------------------
@@ -321,7 +328,12 @@ async def chat_completions(
                     ))
 
                 except Exception as e:
-                    error_data = {"error": {"message": str(e), "type": "internal_error"}}
+                    error_data = {
+                        "error": {
+                            "message": _format_exception(e),
+                            "type": "internal_error",
+                        }
+                    }
                     yield {"data": json.dumps(error_data)}
 
             return EventSourceResponse(generate_stream())

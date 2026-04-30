@@ -517,6 +517,14 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                 except json.JSONDecodeError:
                     continue
 
+                if "error" in event:
+                    err = event.get("error") or {}
+                    err_type = err.get("type", "stream_error")
+                    err_message = str(err.get("message") or "").strip()
+                    if not err_message:
+                        err_message = json.dumps(err, ensure_ascii=False)
+                    raise RuntimeError(f"LLM API stream error ({err_type}): {err_message}")
+
                 if "tool_status" in event:
                     ts = event["tool_status"]
                     tool_name = ts.get("tool_name", "")
@@ -562,6 +570,13 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                 reply_to_id=reply_to_id,
             )
             return full_text
+        raise
+    except Exception:
+        if status_msg_id is not None:
+            try:
+                await messenger.delete_message(status_msg_id)
+            except Exception:
+                pass
         raise
     finally:
         refresh_task.cancel()

@@ -22,6 +22,13 @@ class LLMInterceptor:
         self.log_path = log_path or config.PROMPTS_LOG_PATH
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
 
+    def _format_exception(self, exc: Exception) -> str:
+        """Return a useful error string even for timeout exceptions with empty str()."""
+        message = str(exc).strip()
+        if message:
+            return f"{type(exc).__name__}: {message}"
+        return f"{type(exc).__name__}: {repr(exc)}"
+
     # ------------------------------------------------------------------
     # Logging helpers
     # ------------------------------------------------------------------
@@ -277,7 +284,7 @@ class LLMInterceptor:
 
         except Exception as e:
             response_log["success"] = False
-            response_log["error"] = str(e)
+            response_log["error"] = self._format_exception(e)
             response_log["duration_seconds"] = time.time() - start_time
             response_log["partial_response"] = collected_text
             response_log["estimated_tokens"] = {

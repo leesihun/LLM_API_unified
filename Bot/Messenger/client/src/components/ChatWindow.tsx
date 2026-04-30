@@ -998,7 +998,7 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
               onPaste={handlePaste}
               placeholder="메시지를 입력하세요... (@으로 멘션)"
               minRows={1}
-              maxRows={8}
+              maxRows={12}
               className="flex-1 resize-none px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
             />
 
