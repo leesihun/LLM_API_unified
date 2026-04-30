@@ -333,7 +333,10 @@ TOOL_SCHEMAS: dict = {
             "Prefer code_exec over shell_exec for Python-specific work — it sets up the correct "
             "workspace and captures output cleanly.\n\n"
             "Before declaring success: verify the script actually ran and produced the expected "
-            "output. Check returncode and stderr."
+            "output. Check returncode and stderr.\n\n"
+            "Timeout policy: omit timeout for the default limit. Set a positive timeout for "
+            "known-long runs. Set timeout=0 only when the user explicitly wants no wall-clock "
+            "timeout; this can run indefinitely until the process exits or is externally stopped."
         ),
         "parameters": {
             "type": "object",
@@ -344,7 +347,7 @@ TOOL_SCHEMAS: dict = {
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Maximum seconds for execution (default: 300).",
+                    "description": "Maximum seconds for execution (default: 300). Set 0 for no wall-clock timeout.",
                 },
             },
             "required": ["code"],
@@ -636,7 +639,8 @@ TOOL_SCHEMAS: dict = {
         "description": (
             "DEPRECATED — use code_exec instead. "
             "An internal LLM generates and runs Python code from your spec. "
-            "Only use when the task is too open-ended or large to write with code_exec directly."
+            "Only use when the task is too open-ended or large to write with code_exec directly. "
+            "Set timeout=0 only when the user explicitly wants no script wall-clock timeout."
         ),
         "parameters": {
             "type": "object",
@@ -651,7 +655,7 @@ TOOL_SCHEMAS: dict = {
                 },
                 "timeout": {
                     "type": "integer",
-                    "description": "Maximum seconds for code generation + execution (default: 300).",
+                    "description": "Maximum seconds for generated script execution (default: 300). Set 0 for no script wall-clock timeout.",
                 },
             },
             "required": ["instruction"],

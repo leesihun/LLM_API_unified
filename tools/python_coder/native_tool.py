@@ -25,6 +25,10 @@ from tools.python_coder.base import BasePythonExecutor
 _NEEDS_CLARIFICATION_PREFIX = "NEEDS_CLARIFICATION:"
 
 
+def _format_timeout(timeout: Optional[int]) -> str:
+    return "never" if timeout is None else f"{timeout}s"
+
+
 class NeedsClarificationError(Exception):
     def __init__(self, question: str):
         self.question = question
@@ -176,16 +180,18 @@ class NativePythonExecutor(BasePythonExecutor):
         Args:
             instruction: Structured spec (goal / inputs / outputs / constraints)
             context: Optional inlined file contents, data samples, or code snippets
-            timeout: Per-attempt execution timeout override (clamped to max)
+            timeout: Per-attempt execution timeout override (clamped to max).
+                     Set timeout <= 0 to disable script wall-clock timeout.
         """
         # Per-attempt execution timeout: caller hint clamped to max, else default.
         if timeout is not None:
-            per_exec = min(max(int(timeout), 1), self.execution_timeout_max)
+            requested_timeout = int(timeout)
+            per_exec = None if requested_timeout <= 0 else min(max(requested_timeout, 1), self.execution_timeout_max)
         else:
             per_exec = self.execution_timeout
 
-        total_timeout = self.timeout
-        total_deadline = time.time() + total_timeout
+        total_timeout = None if per_exec is None else self.timeout
+        total_deadline = None if total_timeout is None else time.time() + total_timeout
         max_retries = getattr(config, 'PYTHON_EXECUTOR_MAX_RETRIES', 2)
         max_attempts = 1 + max_retries
 
@@ -197,7 +203,7 @@ class NativePythonExecutor(BasePythonExecutor):
         retries_fired = 0
 
         for attempt in range(max_attempts):
-            if time.time() >= total_deadline:
+            if total_deadline is not None and time.time() >= total_deadline:
                 break
 
             attempt_start = time.time()
@@ -243,10 +249,15 @@ class NativePythonExecutor(BasePythonExecutor):
                 print(f"[PYTHON] Retry {attempt}/{max_retries} — feeding back traceback")
                 log_to_prompts_file(f"\n[PYTHON] Retry {attempt}/{max_retries}")
 
-            remaining = max(1, int(total_deadline - time.time()))
+            if total_deadline is None:
+                exec_timeout = None
+            else:
+                assert per_exec is not None
+                remaining = max(1, int(total_deadline - time.time()))
+                exec_timeout = min(per_exec, remaining)
             result = await self._run_script(
                 script_name,
-                min(per_exec, remaining),
+                exec_timeout,
                 attempt_start,
             )
             last_result = result
@@ -425,11 +436,12 @@ class NativePythonExecutor(BasePythonExecutor):
     # Script execution (streams subprocess output incrementally)
     # ------------------------------------------------------------------
 
-    async def _run_script(self, script_name: str, exec_timeout: int, start_time: float) -> Dict[str, Any]:
+    async def _run_script(self, script_name: str, exec_timeout: Optional[int], start_time: float) -> Dict[str, Any]:
         """Execute a Python script with streaming output capture."""
         print(f"\n[PYTHON] Executing {script_name}...")
         print(f"  Python: {sys.executable}")
         print(f"  Working dir: {self.workspace}")
+        print(f"  Timeout: {_format_timeout(exec_timeout)}")
 
         try:
             result = await run_streaming(
@@ -455,7 +467,7 @@ class NativePythonExecutor(BasePythonExecutor):
         files = self._get_workspace_files()
 
         if result.timed_out:
-            reason = "idle (no stdout)" if result.idle_killed else f"wall-clock ({exec_timeout}s)"
+            reason = "idle (no stdout)" if result.idle_killed else f"wall-clock ({_format_timeout(exec_timeout)})"
             error_msg = f"Execution killed: {reason}"
             print(f"[PYTHON] ERROR: {error_msg}")
             self._log_execution_error("TIMEOUT", error_msg, execution_time)
@@ -573,13 +585,13 @@ class NativePythonExecutor(BasePythonExecutor):
     # ------------------------------------------------------------------
 
     def _log_execution_start(self, instruction: str, code: str, script_name: str,
-                              timeout: int, existing_files: List[str]) -> None:
+                              timeout: Optional[int], existing_files: List[str]) -> None:
         log_to_prompts_file("\n\n" + "=" * 80)
         log_to_prompts_file("TOOL EXECUTION: python_coder (native)")
         log_to_prompts_file("=" * 80)
         log_to_prompts_file(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         log_to_prompts_file(f"Session: {self.session_id}")
-        log_to_prompts_file(f"Script: {script_name}  Timeout: {timeout}s")
+        log_to_prompts_file(f"Script: {script_name}  Timeout: {_format_timeout(timeout)}")
         log_to_prompts_file(f"Workspace files: {existing_files}")
         log_to_prompts_file("")
         log_to_prompts_file("INSTRUCTION:")

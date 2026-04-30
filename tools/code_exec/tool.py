@@ -17,6 +17,10 @@ from backend.utils.prompts_log_append import log_to_prompts_file
 from backend.utils.subprocess_stream import run_streaming
 
 
+def _format_timeout(timeout: Optional[int]) -> str:
+    return "never" if timeout is None else f"{timeout}s"
+
+
 class CodeExecTool:
     """
     Execute Python code supplied directly by the LLM.
@@ -46,8 +50,9 @@ class CodeExecTool:
         Args:
             code:    Complete Python source to execute.
             timeout: Max seconds (default: config.PYTHON_EXECUTOR_TIMEOUT).
+                     Set timeout <= 0 to disable the wall-clock timeout.
         """
-        exec_timeout = timeout or getattr(config, "PYTHON_EXECUTOR_TIMEOUT", 300)
+        exec_timeout = self._resolve_timeout(timeout)
         start_time = time.time()
 
         script_name = self._make_script_name(code)
@@ -55,7 +60,7 @@ class CodeExecTool:
         script_path.write_text(code, encoding="utf-8")
 
         print(f"\n[CODE_EXEC] Script: {script_path}")
-        print(f"[CODE_EXEC] Timeout: {exec_timeout}s")
+        print(f"[CODE_EXEC] Timeout: {_format_timeout(exec_timeout)}")
         self._log_execution_start(code, script_name, exec_timeout)
 
         try:
@@ -79,7 +84,7 @@ class CodeExecTool:
 
         execution_time = time.time() - start_time
         if result.timed_out:
-            msg = f"Execution timeout after {exec_timeout}s"
+            msg = f"Execution timeout after {_format_timeout(exec_timeout)}"
             print(f"[CODE_EXEC] TIMEOUT: {msg}")
             self._log_execution_error("TIMEOUT", msg, execution_time)
             return self._result_dict(
@@ -102,6 +107,15 @@ class CodeExecTool:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _resolve_timeout(timeout: Optional[int]) -> Optional[int]:
+        if timeout is None:
+            return getattr(config, "PYTHON_EXECUTOR_TIMEOUT", 300)
+        timeout = int(timeout)
+        if timeout <= 0:
+            return None
+        return timeout
+
     def _make_script_name(self, code: str) -> str:
         """Generate a human-readable timestamped script filename."""
         func_matches = re.findall(r"^\s*def\s+(\w+)", code, re.MULTILINE)
@@ -113,13 +127,13 @@ class CodeExecTool:
             return f"{class_matches[0].lower()}_{ts}.py"
         return f"exec_{ts}.py"
 
-    def _log_execution_start(self, code: str, script_name: str, timeout: int) -> None:
+    def _log_execution_start(self, code: str, script_name: str, timeout: Optional[int]) -> None:
         log_to_prompts_file("\n\n" + "=" * 80)
         log_to_prompts_file("TOOL EXECUTION: code_exec")
         log_to_prompts_file("=" * 80)
         log_to_prompts_file(f"Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         log_to_prompts_file(f"Session: {self.session_id}")
-        log_to_prompts_file(f"Script: {script_name}  Timeout: {timeout}s")
+        log_to_prompts_file(f"Script: {script_name}  Timeout: {_format_timeout(timeout)}")
         log_to_prompts_file("")
         log_to_prompts_file("CODE:")
         log_to_prompts_file("-" * 80)

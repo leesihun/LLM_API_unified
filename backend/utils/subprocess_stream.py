@@ -6,8 +6,9 @@ python_coder opencode) so they all stream stdout/stderr chunk-by-chunk with a
 shared memory cap. Keeps the writing process unblocked by continuing to read
 past the cap (excess bytes are dropped, not stored).
 
-Two kill triggers (beyond normal exit):
+Two optional kill triggers (beyond normal exit):
   - wall-clock timeout  : process runs longer than `timeout` seconds total.
+                          Disabled when `timeout` is None or <= 0.
   - idle-stdout timeout : process produces no stdout for `idle_timeout` seconds
                           (catches hangs that produce no output).
 """
@@ -75,14 +76,15 @@ async def run_streaming(
     program: str,
     args: list[str],
     cwd: str,
-    timeout: int,
+    timeout: Optional[int],
     max_output_size: int,
     idle_timeout: Optional[int] = None,
 ) -> StreamResult:
     """Run a program asynchronously, streaming both stdout and stderr.
 
     Killed when either the wall-clock `timeout` expires OR `idle_timeout`
-    seconds pass with no new stdout bytes (whichever fires first).
+    seconds pass with no new stdout bytes (whichever fires first). Pass
+    timeout=None or timeout<=0 to disable the wall-clock kill trigger.
     Returns whatever was streamed up to that point (timed_out=True).
     """
     proc = await asyncio.create_subprocess_exec(
@@ -106,7 +108,7 @@ async def run_streaming(
     )
 
     proc_task = asyncio.create_task(proc.wait())
-    deadline = loop.time() + timeout
+    deadline = None if timeout is None or timeout <= 0 else loop.time() + timeout
 
     def _decode():
         return (
@@ -137,7 +139,7 @@ async def run_streaming(
         if proc_task in done:
             break
         now = loop.time()
-        if now >= deadline:
+        if deadline is not None and now >= deadline:
             return await _kill_and_drain(idle=False)
         if idle_timeout is not None and (now - last_stdout[0]) >= idle_timeout:
             return await _kill_and_drain(idle=True)
