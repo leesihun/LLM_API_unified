@@ -15,6 +15,7 @@ from typing import List, Dict, Any, Optional, AsyncIterator
 from uuid import uuid4
 
 import config
+from tools_config import TOOL_METADATA
 from backend.core.llm_backend import (
     StreamEvent, TextEvent,
     ToolCallDeltaEvent, ToolCall, ToolStatusEvent, llm_backend,
@@ -38,7 +39,7 @@ def _load_system_prompt() -> str:
 
 def _build_tool_schemas() -> List[Dict[str, Any]]:
     """Build tool schemas once at module load. Frozen order for cache stability."""
-    from tools_config import TOOL_SCHEMAS, TOOL_METADATA
+    from tools_config import TOOL_SCHEMAS
     schemas = []
     for tool_name in config.AVAILABLE_TOOLS:
         schema = TOOL_SCHEMAS.get(tool_name)
