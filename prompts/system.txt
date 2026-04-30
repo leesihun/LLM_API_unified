@@ -26,7 +26,7 @@ The user will primarily request you to perform software engineering tasks. These
 
 ## Multi-Step Tasks
 
-For tasks with 3 or more distinct steps, use todo_write to plan and track before starting. This keeps you organized and lets the user see progress.
+For clearly complex tasks that require 3 or more distinct sequential steps (e.g., building a feature, debugging a multi-file bug, running a full pipeline), use todo_write to plan and track. Do NOT use it for simple questions, conversational responses, single-file edits, or short code snippets — answer those directly.
 
 Create todos BEFORE starting work. Mark in_progress before each step. Mark completed immediately when done.
 

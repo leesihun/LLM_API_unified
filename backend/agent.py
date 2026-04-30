@@ -260,8 +260,10 @@ class AgentLoop:
             else:
                 lines.append(f"  Result:      {result_str}")
         else:
-            lines.append(f"  Executed:    {result.get('executed', 'N/A')}")
-            lines.append(f"  Return Code: {result.get('returncode', 'N/A')}")
+            if "executed" in result:
+                lines.append(f"  Executed:    {result['executed']}")
+            if "returncode" in result:
+                lines.append(f"  Return Code: {result['returncode']}")
             preview_cap = 450
             for key in ("stdout", "stderr", "output", "message"):
                 chunk = result.get(key)
@@ -703,10 +705,11 @@ class AgentLoop:
     # Message builders
     # ------------------------------------------------------------------
 
-    def _build_assistant_tool_msg(self, tool_calls: List[ToolCall]) -> Dict[str, Any]:
+    def _build_assistant_tool_msg(self, tool_calls: List[ToolCall],
+                                  content: Optional[str] = None) -> Dict[str, Any]:
         return {
             "role": "assistant",
-            "content": None,
+            "content": content if content else None,
             "tool_calls": [
                 {
                     "id": tc.id,
@@ -1019,6 +1022,10 @@ class AgentLoop:
             all_tool_calls: list[ToolCall] = []
             # (tc, asyncio.Task) pairs — tasks may already be running by stream end
             pending_tasks: list[tuple[ToolCall, asyncio.Task]] = []
+            # Accumulate any text the model streams alongside tool calls so the
+            # assistant turn we record back into msgs preserves it. Without this,
+            # the model sees content=None next iteration and may emit empty replies.
+            streamed_text_parts: list[str] = []
             log_start = len(self.tool_calls_log)
 
             # Build compressed view for the LLM call — msgs itself is never mutated
@@ -1029,9 +1036,10 @@ class AgentLoop:
                 tools=tool_schemas,
                 session_id=self.session_id,
                 agent_type="agent:stream",
-                **self._sampling_kwargs(final_response=False),
+                **self._sampling_kwargs(final_response=True),
             ):
                 if isinstance(event, TextEvent):
+                    streamed_text_parts.append(event.content)
                     yield event
                 elif isinstance(event, ToolCallDeltaEvent):
                     for tc in event.tool_calls:
@@ -1058,7 +1066,10 @@ class AgentLoop:
             self._log_tool_calls_requested(all_tool_calls, iteration)
 
             # Append assistant message (must contain ALL tool calls before results)
-            msgs.append(self._build_assistant_tool_msg(all_tool_calls))
+            msgs.append(self._build_assistant_tool_msg(
+                all_tool_calls,
+                content="".join(streamed_text_parts).strip() or None,
+            ))
 
             # Gather results — many tasks may already be done since they started mid-stream
             results = await asyncio.gather(*[t for _, t in pending_tasks])
