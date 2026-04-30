@@ -31,6 +31,7 @@ class SubAgentTool:
         prompt: str,
         subagent_type: str = "general",
         description: Optional[str] = None,
+        child_session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Spawn a sub-agent and return its final text response.
@@ -55,7 +56,7 @@ class SubAgentTool:
         from backend.agent import AgentLoop
 
         sub_loop = AgentLoop(
-            session_id=self.session_id,
+            session_id=child_session_id or self.session_id,
             username=self.username,
             tools=tools,
         )

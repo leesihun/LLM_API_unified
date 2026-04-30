@@ -475,7 +475,7 @@ class AgentLoop:
             print(f"  {k}: {sv[:150]}{'...' if len(sv) > 150 else ''}")
 
         try:
-            result = await self._dispatch_tool(name, arguments)
+            result = await self._dispatch_tool(name, arguments, tool_call_id=tool_call_id)
             duration = time.time() - start
             print(f"[TOOL] {name} completed in {duration:.2f}s — success={result.get('success', '?')}")
             self.tool_calls_log.append({
@@ -509,7 +509,7 @@ class AgentLoop:
         ]
         return await asyncio.gather(*tasks)
 
-    async def _dispatch_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+    async def _dispatch_tool(self, name: str, arguments: Dict[str, Any], tool_call_id: str = None) -> Dict[str, Any]:
         cache = self._tool_cache
 
         if name == "websearch":
@@ -692,11 +692,16 @@ class AgentLoop:
             if "agent" not in cache:
                 from tools.agent import SubAgentTool
                 cache["agent"] = SubAgentTool(session_id=self.session_id, username=self.username)
+            # Derive a unique session_id per sub-agent invocation so each gets
+            # a distinct llama.cpp KV slot — prevents parallel sub-agents from
+            # serializing on the parent's slot.
+            child_session_id = f"{self.session_id}::{tool_call_id}" if tool_call_id else self.session_id
             # SubAgentTool.execute is async — await directly (not to_thread)
             return await cache["agent"].execute(
                 prompt=arguments["prompt"],
                 subagent_type=arguments.get("subagent_type", "explore"),
                 description=arguments.get("description"),
+                child_session_id=child_session_id,
             )
 
         else:
