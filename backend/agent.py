@@ -38,7 +38,7 @@ def _load_system_prompt() -> str:
 
 def _build_tool_schemas() -> List[Dict[str, Any]]:
     """Build tool schemas once at module load. Frozen order for cache stability."""
-    from tools_config import TOOL_SCHEMAS
+    from tools_config import TOOL_SCHEMAS, TOOL_METADATA
     schemas = []
     for tool_name in config.AVAILABLE_TOOLS:
         schema = TOOL_SCHEMAS.get(tool_name)
@@ -136,6 +136,8 @@ class AgentLoop:
         self._compressed_up_to: int = 0  # tracks how far old-iteration compression has processed
         # Cache log verbosity once (avoids getattr + .lower() on every log call)
         self._log_level: str = str(getattr(config, "AGENT_LOG_VERBOSITY", "summary")).lower()
+        # Session-scoped todo list (injected into dynamic context each iteration)
+        self._session_todos: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Sampling parameters forwarded to llama.cpp
@@ -337,6 +339,8 @@ class AgentLoop:
                 if len(memo_ctx) > memo_cap:
                     memo_ctx = memo_ctx[:memo_cap] + "\n...[memo context truncated]"
                 parts.append(memo_ctx)
+        if self._session_todos:
+            parts.append(self._format_todos())
         if attached_files:
             parts.append(self._format_attached_files(attached_files))
         if not parts:
@@ -398,6 +402,17 @@ class AgentLoop:
         else:
             lines.append("Available collection_name values: []")
             lines.append("No collection exists yet. Ask the user to create a collection before using rag.")
+        return "\n".join(lines)
+
+    def _format_todos(self) -> str:
+        """Format session todos for injection into dynamic context."""
+        status_icon = {"pending": "[ ]", "in_progress": "[~]", "completed": "[x]"}
+        lines = ["\n\n## CURRENT TASKS"]
+        lines.append("Track progress here. Mark tasks completed immediately when done.")
+        for t in self._session_todos:
+            icon = status_icon.get(t.get("status", "pending"), "[ ]")
+            priority = t.get("priority", "medium")
+            lines.append(f"  {icon} {t['id']}: {t['content']} (priority: {priority})")
         return "\n".join(lines)
 
     def _format_attached_files(self, attached_files: List[Dict[str, Any]]) -> str:
@@ -591,6 +606,9 @@ class AgentLoop:
             if "shell_exec" not in cache:
                 from tools.shell import ShellExecTool
                 cache["shell_exec"] = ShellExecTool(session_id=self.session_id)
+            desc = arguments.get("description")
+            if desc:
+                print(f"  [shell_exec] {desc}")
             return await cache["shell_exec"].execute(
                 command=arguments["command"],
                 timeout=arguments.get("timeout", 300),
@@ -621,6 +639,61 @@ class AgentLoop:
                 offset=arguments.get("offset"),
                 max_lines=arguments.get("max_lines"),
                 stream=arguments.get("stream"),
+            )
+
+        elif name == "file_edit":
+            if "file_edit" not in cache:
+                from tools.file_ops import FileEditorTool
+                cache["file_edit"] = FileEditorTool(session_id=self.session_id, username=self.username)
+            return await asyncio.to_thread(
+                cache["file_edit"].edit,
+                path=arguments["path"],
+                old_string=arguments["old_string"],
+                new_string=arguments["new_string"],
+                replace_all=arguments.get("replace_all", False),
+            )
+
+        elif name == "grep":
+            if "grep" not in cache:
+                from tools.grep import GrepTool
+                cache["grep"] = GrepTool()
+            return await asyncio.to_thread(
+                cache["grep"].search,
+                pattern=arguments["pattern"],
+                path=arguments.get("path"),
+                glob=arguments.get("glob"),
+                output_mode=arguments.get("output_mode", "files_with_matches"),
+                context=arguments.get("context", arguments.get("-C", 0)),
+                before=arguments.get("-B", 0),
+                after=arguments.get("-A", 0),
+                case_insensitive=arguments.get("-i", False),
+                file_type=arguments.get("type"),
+                head_limit=arguments.get("head_limit", 250),
+                offset=arguments.get("offset", 0),
+                multiline=arguments.get("multiline", False),
+            )
+
+        elif name == "todo_write":
+            if "todo_write" not in cache:
+                from tools.todo import TodoTool
+                cache["todo_write"] = TodoTool()
+            result = await asyncio.to_thread(
+                cache["todo_write"].write,
+                todos=arguments.get("todos", []),
+            )
+            if result.get("success"):
+                self._session_todos = result["todos"]
+            return result
+
+        elif name == "agent":
+            if "agent" not in cache:
+                from tools.agent import SubAgentTool
+                cache["agent"] = SubAgentTool(session_id=self.session_id, username=self.username)
+            # SubAgentTool.execute is async — await directly (not to_thread)
+            return await cache["agent"].execute(
+                prompt=arguments["prompt"],
+                subagent_type=arguments.get("subagent_type", "explore"),
+                description=arguments.get("description"),
             )
 
         else:
@@ -968,10 +1041,13 @@ class AgentLoop:
                             self.execute_tool(tc.function.name, tc.function.arguments, tc.id)
                         )
                         pending_tasks.append((tc, task))
+                        _meta = TOOL_METADATA.get(tc.function.name, {})
                         yield ToolStatusEvent(
                             tool_name=tc.function.name,
                             tool_call_id=tc.id,
                             status="started",
+                            activity=_meta.get("activity", ""),
+                            user_name=_meta.get("user_name", ""),
                         )
 
             if not all_tool_calls:
@@ -999,11 +1075,14 @@ class AgentLoop:
             for tc, result in zip(all_tool_calls, results):
                 duration = duration_by_call_id.get(tc.id, 0)
                 status = "completed" if result.get("success", True) else "failed"
+                _meta = TOOL_METADATA.get(tc.function.name, {})
                 yield ToolStatusEvent(
                     tool_name=tc.function.name,
                     tool_call_id=tc.id,
                     status=status,
                     duration=round(duration, 2),
+                    activity=_meta.get("activity", ""),
+                    user_name=_meta.get("user_name", ""),
                 )
                 msgs.append(self._build_tool_result_msg(tc, result))
 

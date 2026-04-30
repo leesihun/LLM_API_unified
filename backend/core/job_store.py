@@ -110,7 +110,8 @@ class JobStore:
             job["output_length"] = int(job.get("output_length", 0)) + len(text)
             self._write_unlocked(job_id, job)
 
-    def append_tool_event(self, job_id: str, tool_name: str, status: str, duration: float = 0.0):
+    def append_tool_event(self, job_id: str, tool_name: str, status: str, duration: float = 0.0,
+                          activity: str = "", user_name: str = ""):
         """Append a tool status event to the job event log."""
         with FileLock(self._lock_file(job_id), timeout=10):
             job = self._read_unlocked(job_id)
@@ -120,6 +121,8 @@ class JobStore:
                 "tool": tool_name,
                 "status": status,
                 "duration": duration,
+                "activity": activity,
+                "user_name": user_name,
                 "at": datetime.now().isoformat(),
             }
             with open(self._tool_events_file(job_id), "a", encoding="utf-8") as f:

@@ -109,15 +109,19 @@ STOP_FILE = Path("data/STOP")
 # ============================================================================
 AVAILABLE_TOOLS = [
     "websearch",
-    "code_exec",       # Direct code execution — no second LLM call (prefer over python_coder)
-    "python_coder",    # Instruction-driven — makes a second LLM call to generate code
-    "rag",
-    "file_reader",
-    "file_writer",
-    "file_navigator",
-    "shell_exec",
-    "process_monitor",
-    "memo",
+    "code_exec",        # Direct Python execution — write and run the code yourself
+    # "python_coder",   # Removed — second LLM round-trip; use code_exec or shell_exec instead
+    "rag",              # Unchanged — FAISS vector search over uploaded documents
+    "file_reader",      # Read any file (prefer over shell_exec cat/head/tail)
+    "file_edit",        # NEW — surgical exact-string replacement in existing files
+    "file_writer",      # Create new files or complete rewrites only
+    "file_navigator",   # Discover files by name/glob (prefer over shell_exec find)
+    "grep",             # NEW — ripgrep content search (prefer over shell_exec grep)
+    "shell_exec",       # Shell commands (use for git, package managers, build tools)
+    "process_monitor",  # Background process lifecycle
+    "memo",             # Persistent cross-session key-value memory
+    "todo_write",       # NEW — session task checklist (3+ step tasks)
+    "agent",            # NEW — spawn explore/general subagent in fresh context
 ]
 
 TOOL_PARAMETERS = {
@@ -132,7 +136,7 @@ TOOL_PARAMETERS = {
         "timeout": 864000,
     },
     "python_coder": {
-        "temperature": 1.0,
+        "temperature": 0.2,
     },
     "rag": {
         "temperature": 0.2,
@@ -182,11 +186,15 @@ TOOL_RESULT_BUDGET = {
     "python_coder": 8000,
     "rag": 3000,
     "file_reader": 4000,
+    "file_edit": 500,
     "file_writer": 500,
     "file_navigator": 2000,
+    "grep": 4000,
     "shell_exec": 3000,
     "process_monitor": 3000,
     "memo": 1000,
+    "todo_write": 300,
+    "agent": 6000,
 }
 TOOL_RESULT_DEFAULT_BUDGET = 3000
 TOOL_RESULTS_DIR = Path("data/tool_results")
@@ -219,7 +227,7 @@ PYTHON_EXECUTION_TIMEOUT_MAX = 900   # ceiling when caller passes a bigger value
 PYTHON_EXECUTION_IDLE_TIMEOUT = None # disabled — most scripts don't print continuously
 PYTHON_TOTAL_TIMEOUT = 600           # wall-clock cap: gen + exec + all retries
 
-PYTHON_EXECUTOR_MAX_RETRIES = 1      # self-debug retries on non-zero exit
+PYTHON_EXECUTOR_MAX_RETRIES = 2      # self-debug retries on non-zero exit
 
 OPENCODE_PATH: str = "opencode"
 OPENCODE_SERVER_PORT: int = 37254

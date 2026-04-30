@@ -88,6 +88,8 @@ async def _run_job(
                     tool_name=event.tool_name,
                     status=event.status,
                     duration=getattr(event, "duration", 0.0),
+                    activity=getattr(event, "activity", ""),
+                    user_name=getattr(event, "user_name", ""),
                 )
                 _signal_job(job_id)
 

@@ -58,6 +58,8 @@ class ToolStatusEvent(StreamEvent):
     tool_call_id: str = ""
     status: str = ""        # "started" | "completed" | "failed"
     duration: float = 0.0
+    activity: str = ""      # human-readable spinner text, e.g. "Reading file"
+    user_name: str = ""     # display name for the tool, e.g. "File Reader"
 
 
 # ============================================================================

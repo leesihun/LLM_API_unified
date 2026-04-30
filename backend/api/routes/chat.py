@@ -290,6 +290,8 @@ async def chat_completions(
                                     "tool_call_id": event.tool_call_id,
                                     "status": event.status,
                                     "duration": event.duration,
+                                    "activity": event.activity,
+                                    "user_name": event.user_name,
                                 }
                             })
                             # Named event — standard clients ignore unknown event types
