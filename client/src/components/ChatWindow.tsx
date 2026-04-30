@@ -306,10 +306,17 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
     });
 
     setInput('');
+    if (inputRef.current) { inputRef.current.style.height = '40px'; }
     setReplyingTo(null);
     socket.emit('typing_stop', room.id);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
   }, [input, socket, room, replyingTo]);
+
+  // Auto-resize textarea based on content
+  const autoResize = (el: HTMLTextAreaElement) => {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+  };
 
   // Handle keyboard events
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -940,13 +947,13 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => handleInputChange(e.target.value)}
+              onChange={(e) => { handleInputChange(e.target.value); autoResize(e.target); }}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder="메시지를 입력하세요... (@으로 멘션)"
               rows={1}
-              className="flex-1 resize-none px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm max-h-32"
-              style={{ minHeight: '40px' }}
+              className="flex-1 resize-none px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
+              style={{ minHeight: '40px', maxHeight: '200px', overflowY: 'auto' }}
             />
 
             <button
