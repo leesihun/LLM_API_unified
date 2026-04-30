@@ -10,6 +10,11 @@ const _require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Ensure proper DPI-aware rendering on Windows
+if (process.platform === 'win32') {
+  app.commandLine.appendSwitch('high-dpi-support', '1');
+}
+
 const SERVER_PORT = 10006;
 
 function getIconPath(): string {

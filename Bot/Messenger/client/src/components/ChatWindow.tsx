@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import TextareaAutosize from 'react-textarea-autosize';
 import { useSocket } from '../contexts/SocketContext';
 import axios from 'axios';
 import api, { getServerUrl, getUploadBaseUrl } from '../services/api';
@@ -990,16 +989,15 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
               </svg>
             </label>
 
-            <TextareaAutosize
+            <textarea
               ref={inputRef}
               value={input}
               onChange={(e) => handleInputChange(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder="메시지를 입력하세요... (@으로 멘션)"
-              minRows={1}
-              maxRows={12}
               className="flex-1 resize-none px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
+              style={{ fieldSizing: 'content', minHeight: '40px', maxHeight: '300px', overflowY: 'auto', lineHeight: '1.5' } as React.CSSProperties}
             />
 
             <button
