@@ -1059,6 +1059,21 @@ class AgentLoop:
                         )
 
             if not all_tool_calls:
+                # Empty stream after tool results: model produced no text and no
+                # tool calls. Some chat templates emit an end-of-turn token right
+                # after a tool result, leaving the user with nothing. Retry once
+                # with tools disabled to force a final text answer.
+                if not streamed_text_parts and iteration > 0:
+                    self._log("[AGENT] Empty LLM response after tool result — retrying without tools")
+                    async for event in self.llm.chat_stream(
+                        self._compress_old_iterations(msgs, iteration),
+                        self.model, self.temperature,
+                        session_id=self.session_id,
+                        agent_type="agent:stream:empty-retry",
+                        **self._sampling_kwargs(final_response=True),
+                    ):
+                        if isinstance(event, TextEvent):
+                            yield event
                 self._log_agent_complete("LLM returned final text response (stream)", iteration + 1)
                 return
 
