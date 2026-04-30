@@ -1,4 +1,5 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import TextareaAutosize from 'react-textarea-autosize';
 import { useSocket } from '../contexts/SocketContext';
 import axios from 'axios';
 import api, { getServerUrl, getUploadBaseUrl } from '../services/api';
@@ -343,19 +344,11 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
     });
 
     setInput('');
-    if (inputRef.current) { inputRef.current.style.height = '40px'; }
     setReplyingTo(null);
     socket.emit('typing_stop', room.id);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
   }, [input, socket, room, replyingTo]);
 
-  // Auto-resize textarea whenever input changes (synchronously, before paint)
-  useLayoutEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
-  }, [input, replyingTo, showMention]);
 
   // Handle keyboard events
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -997,15 +990,16 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
               </svg>
             </label>
 
-            <textarea
+            <TextareaAutosize
               ref={inputRef}
               value={input}
               onChange={(e) => handleInputChange(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
               placeholder="메시지를 입력하세요... (@으로 멘션)"
-              rows={1}
-              className="flex-1 resize-none px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm overflow-y-auto"
+              minRows={1}
+              maxRows={8}
+              className="flex-1 resize-none px-4 py-2.5 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none text-sm"
             />
 
             <button

@@ -197,7 +197,16 @@ class LlamaCppBackend:
             f"{self.host}/v1/chat/completions",
             json=payload,
         ) as resp:
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                # Read the body so the actual llama.cpp error reaches the log
+                # instead of an opaque "400 Bad Request" with no detail.
+                body_bytes = await resp.aread()
+                body = body_bytes.decode("utf-8", errors="replace")[:2000]
+                raise httpx.HTTPStatusError(
+                    f"llama.cpp returned {resp.status_code}: {body}",
+                    request=resp.request,
+                    response=resp,
+                )
             async for raw_line in resp.aiter_lines():
                 if not raw_line.startswith("data: "):
                     continue
