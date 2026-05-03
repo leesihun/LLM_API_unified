@@ -56,7 +56,7 @@ class RAGCollectionRequest(BaseModel):
 
 @router.get("/list")
 def list_tools(current_user: Optional[dict] = Depends(get_optional_user)):
-    from tools_config import TOOL_SCHEMAS
+    from tools.schemas import TOOL_SCHEMAS
 
     tools = []
     for tool_name in config.AVAILABLE_TOOLS:
@@ -306,10 +306,12 @@ async def query_rag(request: RAGQueryRequest, current_user: Optional[dict] = Dep
             synthesis_prompt = f"Based on these documents:\n\n{docs_formatted}\n\nAnswer: {request.query}"
 
         from backend.core.llm_backend import llm_backend
+        rag_params = config.TOOL_PARAMETERS.get("rag", {})
         llm_response = await llm_backend.chat(
             [{"role": "user", "content": synthesis_prompt}],
             config.LLAMACPP_MODEL,
-            config.TOOL_PARAMETERS.get("rag", {}).get("temperature", 0.5),
+            rag_params.get("temperature", 0.5),
+            max_tokens=rag_params.get("max_tokens"),
         )
         answer = llm_response.content or ""
 

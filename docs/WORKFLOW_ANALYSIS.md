@@ -384,7 +384,7 @@ Token estimation: `len(str(content)) // 4` (rough, character-based)
 - Stage 1: Async LLM call to llama.cpp (httpx direct, separate from main backend)
 - Stage 2: `subprocess.run([sys.executable, script.py])`
 - Workspace context injected: lists existing .py files + their contents
-- Temperature: 1.0 (from `TOOL_PARAMETERS["python_coder"]`)
+- Temperature: 0.5 (from `TOOL_PARAMETERS["python_coder"]`)
 
 - Output cap: 3000 chars (OpenCode) / `PYTHON_EXECUTOR_MAX_OUTPUT_SIZE` (native)
 - Returns: `{success, execution_mode, stdout, stderr, returncode, script_path, execution_time, files, workspace}`
@@ -427,7 +427,7 @@ Token estimation: `len(str(content)) // 4` (rough, character-based)
 - Hard cap: 50 KB (`MAX_READ_BYTES = 50 * 1024`)
 - Supported: 26+ text/code/config extensions
 - Returns: `{success, content, path, size, total_lines, lines_returned, truncated}`
-- **Bug in schema:** `tools_config.py` says offset is "0-indexed" but code treats it as 1-based
+- **Bug in schema:** `tools/schemas.py` says offset is "0-indexed" but code treats it as 1-based
 
 ### 5.6 file_writer
 **Purpose:** Write or append content to files.
@@ -784,7 +784,6 @@ Verbosity: `OPENCODE_LOG_VERBOSITY = "summary"` (summary/debug)
 | `PYTHON_EXECUTOR_MODE` | `"opencode"` | `"native"` or `"opencode"` |
 | `OPENCODE_SERVER_PORT` | 37254 | OpenCode HTTP server |
 | `OPENCODE_MODEL` | `"llama.cpp/MiniMax"` | `"provider/model"` |
-| `PYTHON_CODER_SMART_EDIT` | True | Smart file editing mode |
 
 ### RAG
 
@@ -904,10 +903,10 @@ Streaming route waits on event instead of sleeping 0.2s. Reduces unnecessary dis
 
 ---
 
-#### H4. `tools_config.py` Schema Bug: `file_reader` offset is 1-based but documented as 0-indexed
+#### H4. `tools/schemas.py` Schema Bug: `file_reader` offset is 1-based but documented as 0-indexed
 **Problem:** LLMs reading the schema think offset=0 is the first line, but the code treats offset=1 as the first line. This causes off-by-one confusion.
 
-**Fix in `tools_config.py`:**
+**Fix in `tools/schemas.py`:**
 ```python
 "offset": {
     "type": "integer",

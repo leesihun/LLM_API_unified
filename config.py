@@ -12,60 +12,53 @@ from typing import Literal
 # ============================================================================
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 10007
-SERVER_WORKERS = 2
+SERVER_WORKERS = 4
 LOG_LEVEL = "INFO"
 
 # ============================================================================
 # llama.cpp Backend
 # ============================================================================
-LLAMACPP_HOST = "http://localhost:5905"
+LLAMACPP_HOST = os.environ.get("LLAMACPP_HOST", "http://localhost:5905")
 LLAMACPP_MODEL = "default"
 OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "llama.cpp/default", "opencode/minimax-m2.5-free")
 
 # ============================================================================
 # Model Parameters (Default LLM Inference Settings)
 # ============================================================================
-DEFAULT_TEMPERATURE = 1.0  # 0.7
+DEFAULT_TEMPERATURE = 0.7  # 0.7
 DEFAULT_TOP_P = 0.95
 DEFAULT_TOP_K = 40
 DEFAULT_MIN_P = 0.1
-DEFAULT_MAX_TOKENS = 8192
-DEFAULT_REPEAT_PENALTY = 1
+DEFAULT_MAX_TOKENS = 100000 # 100k
+DEFAULT_REPEAT_PENALTY = 0.7
 
 # ============================================================================
 # llama.cpp Performance Tuning
 # ============================================================================
-# cache_prompt: tell llama.cpp to reuse KV cache for shared prompt prefixes
-# (biggest speedup for agent loops where system prompt + tool schemas are identical)
 LLAMACPP_CACHE_PROMPT = True
-# Connection pool size for persistent HTTP connections to llama.cpp
 LLAMACPP_CONNECTION_POOL_SIZE = 20
-# Number of parallel slots on llama.cpp server (for id_slot session pinning)
-LLAMACPP_SLOTS = 2
+LLAMACPP_SLOTS = 4
 
 # ============================================================================
 # Logging Settings (before Agent — agent log target references PROMPTS_LOG_PATH)
 # ============================================================================
 LOG_DIR = Path("data/logs")
 PROMPTS_LOG_PATH = LOG_DIR / "prompts.log"
-# Oldest lines are dropped when the file would exceed this (see prompts_log_append).
 PROMPTS_LOG_MAX_LINES = 10_000
 
 # ============================================================================
 # Agent Settings
 # ============================================================================
-AGENT_MAX_ITERATIONS = 300
-AGENT_TOOL_LOOP_MAX_TOKENS = 4096
+AGENT_MAX_ITERATIONS = 100
+AGENT_TOOL_LOOP_MAX_TOKENS = 50000
 AGENT_SYSTEM_PROMPT = "system.txt"
 AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
 AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 500
-AGENT_COMPACTION_WARM_WINDOW = 5  # keep this many previous iterations uncompressed
+AGENT_COMPACTION_WARM_WINDOW = 20  # keep this many previous iterations uncompressed
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
-# True = offload log writes to thread pool (non-blocking, recommended for production).
 AGENT_LOG_ASYNC = True
-# Same file as LLM interceptor + tools: one combined prompts.log (set to another Path to split).
 AGENT_LOG_PATH = PROMPTS_LOG_PATH
 
 # ============================================================================
@@ -76,7 +69,6 @@ DATABASE_PATH = "data/app.db"
 # ============================================================================
 # Authentication Settings
 # ============================================================================
-# Set JWT_SECRET_KEY environment variable in production. The fallback is only for local dev.
 JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "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")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24 * 7
@@ -110,7 +102,6 @@ STOP_FILE = Path("data/STOP")
 AVAILABLE_TOOLS = [
     "websearch",
     "code_exec",        # Direct Python execution — write and run the code yourself
-    # "python_coder",   # Removed — second LLM round-trip; use code_exec or shell_exec instead
     "rag",              # Unchanged — FAISS vector search over uploaded documents
     "file_reader",      # Read any file (prefer over shell_exec cat/head/tail)
     "file_edit",        # NEW — surgical exact-string replacement in existing files
@@ -125,57 +116,22 @@ AVAILABLE_TOOLS = [
 ]
 
 TOOL_PARAMETERS = {
-    "websearch": {
-        "temperature": 0.7,
-        "max_tokens": 30000,
-        "timeout": 864000,
-    },
     "code_exec": {
-        "temperature": 1.0,
-        "max_tokens": 8000,
         "timeout": 864000,
     },
     "python_coder": {
-        "temperature": 0.2,
+        "temperature": 0.6,
+        "max_tokens": 10000,
+        "timeout": 300,
     },
     "rag": {
         "temperature": 0.2,
         "max_tokens": 30000,
-        "timeout": 864000,
-    },
-    "file_reader": {
-        "temperature": 0.3,
-        "max_tokens": 8000,
-        "timeout": 60,
-    },
-    "file_writer": {
-        "temperature": 0.3,
-        "max_tokens": 8000,
-        "timeout": 60,
-    },
-    "file_navigator": {
-        "temperature": 0.3,
-        "max_tokens": 4000,
-        "timeout": 30,
     },
     "shell_exec": {
-        "temperature": 0.7,
-        "max_tokens": 8000,
         "timeout": 864000,
     },
-    "process_monitor": {
-        "temperature": 0.3,
-        "max_tokens": 4000,
-        "timeout": 30,
-    },
-    "memo": {
-        "temperature": 0.1,
-        "max_tokens": 2000,
-        "timeout": 10,
-    },
 }
-
-DEFAULT_TOOL_TIMEOUT = 864000
 
 # ============================================================================
 # Microcompaction: Tool Result Budgets (chars)
@@ -202,9 +158,7 @@ TOOL_RESULTS_DIR = Path("data/tool_results")
 # ============================================================================
 # Web Search Tool Settings
 # ============================================================================
-WEBSEARCH_PROVIDER = "tavily"
-TAVILY_API_KEY = "your-secret-key-change-in-production"
-TAVILY_MAX_RESULTS = 5
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "your-secret-key-change-in-production")
 TAVILY_SEARCH_DEPTH = "advanced"
 TAVILY_INCLUDE_DOMAINS = []
 TAVILY_EXCLUDE_DOMAINS = []
@@ -220,9 +174,8 @@ PYTHON_EXECUTOR_TIMEOUT = 300       # code_exec default; tool timeout=0 disables
 PYTHON_EXECUTOR_MAX_OUTPUT_SIZE = 1024 * 1024 * 10
 PYTHON_WORKSPACE_DIR = SCRATCH_DIR
 
-# Layered timeouts for native executor:
+# Layered timeouts for native python_coder:
 PYTHON_GENERATION_TIMEOUT = 120      # LLM code-generation call
-PYTHON_EXECUTION_TIMEOUT = 300       # per-attempt subprocess default; tool timeout=0 disables wall-clock kill
 PYTHON_EXECUTION_TIMEOUT_MAX = 900   # ceiling when caller passes a bigger value
 PYTHON_EXECUTION_IDLE_TIMEOUT = None # disabled — most scripts don't print continuously
 PYTHON_TOTAL_TIMEOUT = 600           # wall-clock cap: gen + exec + all retries
@@ -234,8 +187,6 @@ OPENCODE_SERVER_PORT: int = 37254
 OPENCODE_SERVER_HOST: str = "127.0.0.1"
 OPENCODE_TIMEOUT: int = 864000
 OPENCODE_LOG_VERBOSITY: Literal["summary", "debug"] = "summary"
-
-PYTHON_CODER_SMART_EDIT = True
 
 # ============================================================================
 # RAG Tool Settings
@@ -267,7 +218,6 @@ RAG_RERANKING_TOP_K = 20
 
 RAG_QUERY_PREFIX = ""
 
-RAG_DEFAULT_COLLECTION = "default"
 RAG_SUPPORTED_FORMATS = [".txt", ".pdf", ".docx", ".xlsx", ".xls", ".md", ".json", ".csv"]
 
 # ============================================================================
@@ -319,7 +269,6 @@ ALLOWED_WRITE_DIRS: list[Path] = []  # empty = allow all absolute paths
 # ============================================================================
 # Streaming Settings
 # ============================================================================
-STREAM_CHUNK_SIZE = 1
 STREAM_TIMEOUT = 600
 
 # ============================================================================

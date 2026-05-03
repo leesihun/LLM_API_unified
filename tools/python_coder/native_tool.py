@@ -152,12 +152,13 @@ class NativePythonExecutor(BasePythonExecutor):
         super().__init__(session_id)
         self.workspace = config.PYTHON_WORKSPACE_DIR / session_id
         self.workspace.mkdir(parents=True, exist_ok=True)
-        # Layered timeout knobs (fall back to sane values if old config):
-        self.generation_timeout = getattr(config, 'PYTHON_GENERATION_TIMEOUT', 120)
-        self.execution_timeout = getattr(config, 'PYTHON_EXECUTION_TIMEOUT', 60)
-        self.execution_timeout_max = getattr(config, 'PYTHON_EXECUTION_TIMEOUT_MAX', 900)
-        self.idle_timeout = getattr(config, 'PYTHON_EXECUTION_IDLE_TIMEOUT', 60)
-        self.timeout = getattr(config, 'PYTHON_TOTAL_TIMEOUT', 600)
+        tool_params = config.TOOL_PARAMETERS['python_coder']
+        self.generation_timeout = config.PYTHON_GENERATION_TIMEOUT
+        self.generation_max_tokens = int(tool_params['max_tokens'])
+        self.execution_timeout = int(tool_params['timeout'])
+        self.execution_timeout_max = config.PYTHON_EXECUTION_TIMEOUT_MAX
+        self.idle_timeout = config.PYTHON_EXECUTION_IDLE_TIMEOUT
+        self.timeout = config.PYTHON_TOTAL_TIMEOUT
         self.max_output_size = config.PYTHON_EXECUTOR_MAX_OUTPUT_SIZE
 
     # ------------------------------------------------------------------
@@ -412,7 +413,7 @@ class NativePythonExecutor(BasePythonExecutor):
             session_id=self.session_id,
             agent_type="tool:python_coder",
             id_slot=id_slot,
-            max_tokens=8000,
+            max_tokens=self.generation_max_tokens,
         )
         return self._extract_python_code(response.content or "")
 

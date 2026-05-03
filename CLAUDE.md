@@ -15,7 +15,7 @@ A self-hosted, OpenAI-compatible LLM API server that wraps **llama.cpp** with a 
 ```
 LLM_API_fast/
 ├── config.py               # ALL settings live here — edit this, not env vars
-├── tools_config.py         # Tool schemas in OpenAI function-calling format
+├── tools/schemas.py        # Tool schemas in OpenAI function-calling format
 ├── run_backend.py          # Entry point: launches uvicorn
 ├── run_frontend.py         # Simple HTTP server for frontend/static/
 ├── backend/
@@ -160,7 +160,7 @@ python stop_inference.py status
 
 1. Create `tools/my_tool/tool.py` with a class that has an `execute()` method returning `{"success": bool, ...}`.
 2. Add `__init__.py` that exports the class.
-3. Add the schema to `tools_config.py` → `TOOL_SCHEMAS` dict.
+3. Add the schema to `tools/schemas.py` → `TOOL_SCHEMAS` dict.
 4. Add the tool name to `AVAILABLE_TOOLS` in `config.py`.
 5. Add a dispatch branch in `backend/agent.py` → `_dispatch_tool()`.
 6. Optionally add tool parameters to `TOOL_PARAMETERS` and `TOOL_RESULT_BUDGET` in `config.py`.

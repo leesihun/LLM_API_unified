@@ -15,7 +15,7 @@ from typing import List, Dict, Any, Optional, AsyncIterator
 from uuid import uuid4
 
 import config
-from tools_config import TOOL_METADATA
+from tools.schemas import TOOL_METADATA
 from backend.core.llm_backend import (
     StreamEvent, TextEvent,
     ToolCallDeltaEvent, ToolCall, ToolStatusEvent, llm_backend,
@@ -39,7 +39,7 @@ def _load_system_prompt() -> str:
 
 def _build_tool_schemas() -> List[Dict[str, Any]]:
     """Build tool schemas once at module load. Frozen order for cache stability."""
-    from tools_config import TOOL_SCHEMAS
+    from tools.schemas import TOOL_SCHEMAS
     schemas = []
     for tool_name in config.AVAILABLE_TOOLS:
         schema = TOOL_SCHEMAS.get(tool_name)
@@ -464,6 +464,15 @@ class AgentLoop:
     # In-process tool execution (with parallel support)
     # ------------------------------------------------------------------
 
+    def _tool_parameters(self, name: str) -> Dict[str, Any]:
+        return config.TOOL_PARAMETERS.get(name, {})
+
+    def _tool_timeout(self, name: str, arguments: Dict[str, Any], default: Optional[int] = None) -> Optional[int]:
+        timeout = arguments.get("timeout")
+        if timeout is not None:
+            return timeout
+        return self._tool_parameters(name).get("timeout", default)
+
     async def execute_tool(self, name: str, arguments: Dict[str, Any],
                            tool_call_id: str = None) -> Dict[str, Any]:
         start = time.time()
@@ -528,7 +537,7 @@ class AgentLoop:
                 cache["code_exec"] = CodeExecTool(session_id=self.session_id)
             return await cache["code_exec"].execute(
                 code=arguments["code"],
-                timeout=arguments.get("timeout"),
+                timeout=self._tool_timeout("code_exec", arguments),
             )
 
         elif name == "python_coder":
@@ -538,7 +547,7 @@ class AgentLoop:
             return await cache["python_coder"].execute(
                 instruction=arguments["instruction"],
                 context=arguments.get("context"),
-                timeout=arguments.get("timeout"),
+                timeout=self._tool_timeout("python_coder", arguments),
             )
 
         elif name == "rag":
@@ -614,7 +623,7 @@ class AgentLoop:
                 print(f"  [shell_exec] {desc}")
             return await cache["shell_exec"].execute(
                 command=arguments["command"],
-                timeout=arguments.get("timeout", 300),
+                timeout=self._tool_timeout("shell_exec", arguments, 300),
                 working_directory=arguments.get("working_directory"),
             )
 
