@@ -31,7 +31,9 @@ Extract the room ID from `id:<number>` in the header.
 
 ## Messenger API
 
-Interact with Messenger using `shell_exec` to run `curl` commands. Always include the `x-api-key` header.
+For normal chat replies, do not call the Messenger API. Return your final answer as plain text; Hoonbot will send it to the current room.
+
+Use the Messenger API only when the user explicitly asks for a Messenger-side action such as searching messages, sending a file, managing pins, creating webhooks, reacting to a message, or posting a delayed reminder. When using Messenger API tools, run `curl` through `shell_exec` and always include the `x-api-key` header.
 
 **Standard request:**
 ```

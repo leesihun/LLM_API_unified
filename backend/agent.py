@@ -7,6 +7,7 @@ Modern agentic workflow following:
 - OpenAI agent guide: streaming observability, tool orchestration
 """
 import asyncio
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -144,6 +145,10 @@ class AgentLoop:
     # Sampling parameters forwarded to llama.cpp
     # ------------------------------------------------------------------
 
+    def _slot_id(self) -> int:
+        digest = hashlib.sha256(self.session_id.encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], "big") % config.LLAMACPP_SLOTS
+
     def _sampling_kwargs(self, final_response: bool = False) -> Dict[str, Any]:
         """Return sampling + slot-pinning params to forward to the LLM backend."""
         kwargs: Dict[str, Any] = {
@@ -158,7 +163,7 @@ class AgentLoop:
             kwargs["max_tokens"] = config.AGENT_TOOL_LOOP_MAX_TOKENS
         # Pin session to a stable llama.cpp KV cache slot for consistent cache hits
         if config.LLAMACPP_SLOTS > 0 and self.session_id:
-            kwargs["id_slot"] = hash(self.session_id) % config.LLAMACPP_SLOTS
+            kwargs["id_slot"] = self._slot_id()
         return kwargs
 
     # ------------------------------------------------------------------

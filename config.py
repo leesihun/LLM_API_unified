@@ -12,7 +12,7 @@ from typing import Literal
 # ============================================================================
 SERVER_HOST = "0.0.0.0"
 SERVER_PORT = 10007
-SERVER_WORKERS = 4
+SERVER_WORKERS = 2
 LOG_LEVEL = "INFO"
 
 # ============================================================================
@@ -29,15 +29,15 @@ DEFAULT_TEMPERATURE = 0.7  # 0.7
 DEFAULT_TOP_P = 0.95
 DEFAULT_TOP_K = 40
 DEFAULT_MIN_P = 0.1
-DEFAULT_MAX_TOKENS = 100000 # 100k
-DEFAULT_REPEAT_PENALTY = 0.7
+DEFAULT_MAX_TOKENS = 8192
+DEFAULT_REPEAT_PENALTY = 1
 
 # ============================================================================
 # llama.cpp Performance Tuning
 # ============================================================================
 LLAMACPP_CACHE_PROMPT = True
 LLAMACPP_CONNECTION_POOL_SIZE = 20
-LLAMACPP_SLOTS = 4
+LLAMACPP_SLOTS = 2
 
 # ============================================================================
 # Logging Settings (before Agent — agent log target references PROMPTS_LOG_PATH)
@@ -50,13 +50,13 @@ PROMPTS_LOG_MAX_LINES = 10_000
 # Agent Settings
 # ============================================================================
 AGENT_MAX_ITERATIONS = 100
-AGENT_TOOL_LOOP_MAX_TOKENS = 50000
+AGENT_TOOL_LOOP_MAX_TOKENS = 4096
 AGENT_SYSTEM_PROMPT = "system.txt"
 AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
 AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 500
-AGENT_COMPACTION_WARM_WINDOW = 20  # keep this many previous iterations uncompressed
+AGENT_COMPACTION_WARM_WINDOW = 5  # keep this many previous iterations uncompressed
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
 AGENT_LOG_ASYNC = True
 AGENT_LOG_PATH = PROMPTS_LOG_PATH

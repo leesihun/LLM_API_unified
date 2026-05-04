@@ -8,6 +8,7 @@ Features:
 - Layered timeouts: separate generation / per-execution / idle-stdout / total caps.
 - Retry logging: attempts_used and retries_fired reported in result dict.
 """
+import hashlib
 import sys
 import time
 import re
@@ -396,7 +397,8 @@ class NativePythonExecutor(BasePythonExecutor):
         # doesn't get bounced to a random slot.
         id_slot = None
         if config.LLAMACPP_SLOTS > 0 and self.session_id:
-            id_slot = hash(self.session_id) % config.LLAMACPP_SLOTS
+            digest = hashlib.sha256(self.session_id.encode("utf-8")).digest()
+            id_slot = int.from_bytes(digest[:8], "big") % config.LLAMACPP_SLOTS
 
         print(f"[PYTHON] LLM call: model={config.LLAMACPP_MODEL}, temperature={temperature}, slot={id_slot}")
 
