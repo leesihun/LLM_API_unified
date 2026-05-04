@@ -115,8 +115,9 @@ def main():
     _sys.path.insert(0, os.path.dirname(__file__))
     import config as _cfg
 
-    # LLM_API_fast URL
-    llm_url = os.environ.get("LLM_API_URL", f"http://localhost:{_cfg.LLM_API_PORT}").rstrip("/")
+    # LLM_API_fast URL. config.LLM_API_URL already applies this priority:
+    # environment override > Bot/settings.txt override > localhost/Cloudflare default.
+    llm_url = _cfg.LLM_API_URL.rstrip("/")
     username = _cfg.LLM_API_USERNAME
     password = _cfg.LLM_API_PASSWORD
     print(f"\nLLM_API_fast URL: {llm_url}")
