@@ -289,6 +289,39 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
         logger.info(f"{log_prefix} Session cleared by @clear command")
         return
 
+    # @compact: summarize old history in-place via LLM API
+    if "@compact" in content.lower():
+        session_id = _get_session_id(room_id)
+        if not session_id:
+            await messenger.send_message(room_id, "압축할 대화가 없습니다. 먼저 대화를 시작하세요.")
+            logger.info(f"{log_prefix} @compact ignored — no active session")
+            return
+        await messenger.send_typing(room_id, status_text="요약 중...")
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    f"{config.LLM_API_URL}/api/chat/sessions/{session_id}/compact",
+                    headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            if data.get("success"):
+                orig = data["original_count"]
+                new = data["new_count"]
+                _room_msg_count[room_id] = 0
+                await messenger.send_message(
+                    room_id,
+                    f"컨텍스트가 요약되었습니다. ({orig}개 → {new}개 메시지)"
+                )
+                logger.info(f"{log_prefix} Session compacted {orig} → {new} messages by @compact")
+            else:
+                await messenger.send_message(room_id, f"압축 실패: {data.get('message', '알 수 없는 오류')}")
+                logger.warning(f"{log_prefix} @compact returned failure: {data.get('message')}")
+        except Exception as e:
+            await messenger.send_message(room_id, f"압축 중 오류 발생: {e}")
+            logger.error(f"{log_prefix} @compact failed: {e}")
+        return
+
     await messenger.send_typing(room_id, status_text=_STATUS_GENERATING)
 
     try:

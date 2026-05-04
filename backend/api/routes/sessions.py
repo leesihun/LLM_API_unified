@@ -2,6 +2,7 @@
 Session management endpoints
 /api/chat/sessions - List or search user sessions
 /api/chat/sessions/{session_id} - Rename a session
+/api/chat/sessions/{session_id}/compact - Summarize old history in-place
 /api/chat/history/{session_id} - Get conversation history
 """
 from fastapi import APIRouter, HTTPException, Depends
@@ -72,6 +73,55 @@ def rename_session(
         created_at=session["created_at"],
         message_count=session["message_count"],
     )
+
+
+@router.post("/sessions/{session_id}/compact")
+async def compact_session(
+    session_id: str,
+    current_user: Optional[dict] = Depends(get_optional_user),
+):
+    """Summarize the older half of a session's conversation history in place.
+
+    The session_id is preserved — the conversation continues with the same
+    context but a reduced message count. Useful when approaching context limits.
+    """
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    messages = conversation_store.load_conversation(session_id) or []
+    original_count = len(messages)
+
+    if original_count < 4:
+        return {
+            "success": False,
+            "message": "Not enough messages to compact",
+            "original_count": original_count,
+            "new_count": original_count,
+        }
+
+    from backend.agent import UnifiedAgent
+    agent = UnifiedAgent(
+        session_id=session_id,
+        username=session.get("username", "guest"),
+    )
+    compacted = await agent._summarize_and_compact_msgs(messages)
+
+    if not compacted:
+        return {
+            "success": False,
+            "message": "Nothing left to compact",
+            "original_count": original_count,
+            "new_count": original_count,
+        }
+
+    conversation_store.save_conversation(session_id, messages)
+    return {
+        "success": True,
+        "message": f"Compacted {original_count} → {len(messages)} messages",
+        "original_count": original_count,
+        "new_count": len(messages),
+    }
 
 
 @router.get("/history/{session_id}", response_model=ChatHistoryResponse)
