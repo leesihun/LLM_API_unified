@@ -57,6 +57,15 @@ AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
 AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 500
 AGENT_COMPACTION_WARM_WINDOW = 5  # keep this many previous iterations uncompressed
+
+# Auto-compact: triggered when llama.cpp returns a context-overflow error.
+# We summarize the older half of the conversation via a single LLM call and
+# replace it with a compact system message, then retry. Only fires reactively.
+AGENT_AUTOCOMPACT_ENABLED = True
+AGENT_AUTOCOMPACT_MAX_RETRIES = 2          # number of summarize-and-retry attempts per LLM call
+AGENT_AUTOCOMPACT_SUMMARY_MAX_TOKENS = 1500 # cap on the summary the LLM is allowed to emit
+AGENT_AUTOCOMPACT_PER_MSG_CHARS = 1500     # truncate each old message to this before summarizing
+AGENT_AUTOCOMPACT_KEEP_RECENT = 4          # always keep this many most-recent non-system msgs verbatim
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
 AGENT_LOG_ASYNC = True
 AGENT_LOG_PATH = PROMPTS_LOG_PATH

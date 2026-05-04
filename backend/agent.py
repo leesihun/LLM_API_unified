@@ -999,6 +999,154 @@ class AgentLoop:
             print(f"[AGENT] Compressed {masked} old message(s)")
 
     # ------------------------------------------------------------------
+    # Auto-compact: reactive summarization on llama.cpp context overflow
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_context_overflow_error(exc: BaseException) -> bool:
+        """True if exc is an llama.cpp HTTP error caused by context-window overflow."""
+        import httpx
+        if not isinstance(exc, httpx.HTTPStatusError):
+            return False
+        msg = str(exc).lower()
+        needles = (
+            "context", "exceed", "too large", "too long",
+            "n_ctx", "slot unavailable", "input is too large",
+        )
+        return any(n in msg for n in needles)
+
+    async def _summarize_and_compact_msgs(self, msgs: List[Dict[str, Any]]) -> bool:
+        """Summarize the older half of msgs into one system message. Mutates msgs in place.
+        Returns True if compaction happened, False if there isn't enough to compact."""
+        system_end = 0
+        for i, m in enumerate(msgs):
+            if m.get("role") == "system":
+                system_end = i + 1
+            else:
+                break
+
+        keep_recent = max(0, getattr(config, "AGENT_AUTOCOMPACT_KEEP_RECENT", 4))
+        middle_start = system_end
+        middle_end = max(system_end, len(msgs) - keep_recent)
+        middle_count = middle_end - middle_start
+        if middle_count < 4:
+            return False
+
+        half = middle_count // 2
+        to_compact = msgs[middle_start:middle_start + half]
+
+        per_msg_cap = max(200, getattr(config, "AGENT_AUTOCOMPACT_PER_MSG_CHARS", 1500))
+        summary_max_tokens = max(100, getattr(config, "AGENT_AUTOCOMPACT_SUMMARY_MAX_TOKENS", 1500))
+
+        lines = []
+        for i, m in enumerate(to_compact):
+            role = m.get("role", "unknown")
+            content = m.get("content")
+            if content is None:
+                content = ""
+            elif not isinstance(content, str):
+                try:
+                    content = json.dumps(content, ensure_ascii=False, default=str)
+                except Exception:
+                    content = str(content)
+            if len(content) > per_msg_cap:
+                content = content[:per_msg_cap] + f"...[+{len(content) - per_msg_cap} chars]"
+            tc_summary = ""
+            if m.get("tool_calls"):
+                names = ", ".join(
+                    tc.get("function", {}).get("name", "?") for tc in m["tool_calls"]
+                )
+                tc_summary = f" [tool_calls: {names}]"
+            name_label = f" ({m['name']})" if m.get("name") else ""
+            lines.append(f"[{i}] {role.upper()}{name_label}{tc_summary}\n{content}")
+        convo_text = "\n\n".join(lines)
+
+        summary_prompt = (
+            "Summarize the following conversation segment for use as compressed "
+            "context. Preserve: file paths, decisions made, tool names and key "
+            "results, user intent, and any open questions. Output a brief factual "
+            "summary with no preamble or meta-commentary.\n\n"
+            f"--- BEGIN CONVERSATION ---\n{convo_text}\n--- END CONVERSATION ---"
+        )
+
+        total_chars = sum(len(str(m.get("content") or "")) for m in to_compact)
+        self._log(f"  [AUTOCOMPACT] Summarizing {len(to_compact)} messages ({total_chars} chars)")
+
+        summary_text = ""
+        try:
+            resp = await self.llm.chat(
+                messages=[{"role": "user", "content": summary_prompt}],
+                model=self.model,
+                temperature=0.0,
+                session_id=self.session_id,
+                agent_type="agent:autocompact",
+                max_tokens=summary_max_tokens,
+            )
+            summary_text = (resp.content or "").strip()
+        except Exception as e:
+            self._log(f"  [AUTOCOMPACT] Summarizer call failed ({e}); dropping without summary")
+
+        if summary_text:
+            notice = f"[Earlier conversation summary]\n{summary_text}"
+        else:
+            notice = (f"[Earlier conversation auto-compacted: dropped {len(to_compact)} "
+                      f"older messages without summary]")
+
+        msgs[middle_start:middle_start + half] = [{"role": "system", "content": notice}]
+        self._log(f"  [AUTOCOMPACT] Replaced {len(to_compact)} msgs with 1 system summary "
+                  f"({len(notice)} chars). Total msgs now: {len(msgs)}")
+        return True
+
+    async def _stream_with_autocompact(
+        self,
+        msgs: List[Dict[str, Any]],
+        model: str,
+        temperature: float,
+        *,
+        iteration: int,
+        use_compressed_view: bool = True,
+        **chat_kwargs,
+    ) -> AsyncIterator[StreamEvent]:
+        """Wraps self.llm.chat_stream with reactive auto-compaction.
+
+        On a llama.cpp context-overflow error, summarizes the older half of msgs
+        (mutating in place) and retries from scratch. Safe because llama.cpp
+        rejects context overflow BEFORE streaming any tokens — we re-raise
+        immediately if any events were yielded prior to the error.
+        """
+        enabled = getattr(config, "AGENT_AUTOCOMPACT_ENABLED", True)
+        max_retries = max(0, getattr(config, "AGENT_AUTOCOMPACT_MAX_RETRIES", 2))
+        attempt = 0
+        while True:
+            events_yielded = False
+            view = self._compress_old_iterations(msgs, iteration) if use_compressed_view else msgs
+            try:
+                async for event in self.llm.chat_stream(view, model, temperature, **chat_kwargs):
+                    events_yielded = True
+                    yield event
+                return
+            except Exception as e:
+                if not enabled or events_yielded or attempt >= max_retries:
+                    raise
+                if not self._is_context_overflow_error(e):
+                    raise
+                attempt += 1
+                self._log(f"  [AUTOCOMPACT] Context-overflow error caught "
+                          f"(attempt {attempt}/{max_retries}): {str(e)[:200]}")
+                compacted = await self._summarize_and_compact_msgs(msgs)
+                if not compacted:
+                    self._log("  [AUTOCOMPACT] Nothing left to compact; propagating error")
+                    raise
+                if attempt == 1:
+                    yield ToolStatusEvent(
+                        tool_name="autocompact",
+                        tool_call_id="autocompact",
+                        status="started",
+                        activity="Auto-compacting context",
+                        user_name="System",
+                    )
+
+    # ------------------------------------------------------------------
     # Non-streaming run — thin accumulator over run_stream().
     # The entire loop is streaming under the hood; this method just
     # collects text events into a final string for callers that don't
@@ -1053,11 +1201,11 @@ class AgentLoop:
             streamed_text_parts: list[str] = []
             log_start = len(self.tool_calls_log)
 
-            # Build compressed view for the LLM call — msgs itself is never mutated
-            # so the KV-cache prefix stays byte-stable across iterations.
-            llm_msgs = self._compress_old_iterations(msgs, iteration)
-            async for event in self.llm.chat_stream(
-                llm_msgs, self.model, self.temperature,
+            # Compressed view is rebuilt per attempt inside the wrapper. msgs
+            # is the source-of-truth list; auto-compact mutates it on overflow.
+            async for event in self._stream_with_autocompact(
+                msgs, self.model, self.temperature,
+                iteration=iteration,
                 tools=tool_schemas,
                 session_id=self.session_id,
                 agent_type="agent:stream",
@@ -1090,9 +1238,9 @@ class AgentLoop:
                 # with tools disabled to force a final text answer.
                 if not streamed_text_parts and iteration > 0:
                     self._log("[AGENT] Empty LLM response after tool result — retrying without tools")
-                    async for event in self.llm.chat_stream(
-                        self._compress_old_iterations(msgs, iteration),
-                        self.model, self.temperature,
+                    async for event in self._stream_with_autocompact(
+                        msgs, self.model, self.temperature,
+                        iteration=iteration,
                         session_id=self.session_id,
                         agent_type="agent:stream:empty-retry",
                         **self._sampling_kwargs(final_response=True),
@@ -1162,8 +1310,10 @@ class AgentLoop:
         # Max iterations — final answer without tools
         print(f"[AGENT-STREAM] Max iterations ({self.max_iterations}) reached, requesting final answer")
         self._log_agent_complete(f"Max iterations ({self.max_iterations}) reached (stream)", self.max_iterations)
-        async for event in self.llm.chat_stream(
+        async for event in self._stream_with_autocompact(
             msgs, self.model, self.temperature,
+            iteration=self.max_iterations,
+            use_compressed_view=False,
             session_id=self.session_id,
             agent_type="agent:stream:final",
             **self._sampling_kwargs(final_response=True),
