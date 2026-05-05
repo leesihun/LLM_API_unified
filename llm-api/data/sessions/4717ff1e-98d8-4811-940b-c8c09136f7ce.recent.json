@@ -1,0 +1,14 @@
+{
+  "session_id": "4717ff1e-98d8-4811-940b-c8c09136f7ce",
+  "updated_at": "2026-05-05T17:55:28.784825",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Reply exactly with: text-ok"
+    },
+    {
+      "role": "assistant",
+      "content": "text-ok"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "session_id": "6b2f71b8-2820-43e4-8824-108eb7584b20",
+  "updated_at": "2026-05-05T17:56:57.347746",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Describe this image in one short sentence."
+    },
+    {
+      "role": "assistant",
+      "content": "A blue-to-purple gradient speech bubble icon containing a white smiley face, likely representing a messaging or communication app."
+    }
+  ]
+}

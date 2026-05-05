@@ -1,0 +1,14 @@
+{
+  "session_id": "a638ce6f-3476-423a-8440-60931b7c8faf",
+  "updated_at": "2026-05-05T17:56:17.229920",
+  "messages": [
+    {
+      "role": "user",
+      "content": "What is the value for ticket in the attached file? Reply with only the value."
+    },
+    {
+      "role": "assistant",
+      "content": "ZX-41872-BETA"
+    }
+  ]
+}

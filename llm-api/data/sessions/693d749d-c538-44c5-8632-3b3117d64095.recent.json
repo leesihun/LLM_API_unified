@@ -1,0 +1,14 @@
+{
+  "session_id": "693d749d-c538-44c5-8632-3b3117d64095",
+  "updated_at": "2026-05-05T17:47:57.205489",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Describe this image in one short sentence."
+    },
+    {
+      "role": "assistant",
+      "content": "A blue-to-purple gradient speech bubble containing a white smiley face, set within a rounded square frame on a transparent background."
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "session_id": "1f2eb11d-ef03-46dc-bd16-9939e3b8bc71",
+  "updated_at": "2026-05-05T19:55:55.031924",
+  "messages": [
+    {
+      "role": "user",
+      "content": "You are a helpful AI assistant.\n\n---\n\n## Session Variables\n\nUse these directly — do not read them from disk.\n\n- `messenger_url`: `http://localhost:10006`\n- `messenger_api_key`: `huni_0394a3fd983b3ad32362c540a6ce9a14a1ca9bcecbb8cd8c`\n- `bot_user_id`: `1`\n- `bot_name`: `Bot`\n- `home_room_id`: `-1`\n- `data_dir`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\data`\n- `memory_file`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\data\\memory.md`\n- `skills_dir`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\skills`\n\n\n## Current Memory\n\n(No memory saved yet)\n\n---\n\n[Room: Bot (id:1, DM) | From: 이시훈]\nㅗㅑ"
+    },
+    {
+      "role": "assistant",
+      "content": "안녕하세요! 무엇을 도와드릴까요? 😊"
+    },
+    {
+      "role": "user",
+      "content": "You are a helpful AI assistant.\n\n---\n\n## Session Variables\n\nUse these directly — do not read them from disk.\n\n- `messenger_url`: `http://localhost:10006`\n- `messenger_api_key`: `huni_0394a3fd983b3ad32362c540a6ce9a14a1ca9bcecbb8cd8c`\n- `bot_user_id`: `1`\n- `bot_name`: `Bot`\n- `home_room_id`: `-1`\n- `data_dir`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\data`\n- `memory_file`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\data\\memory.md`\n- `skills_dir`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\skills`\n\n\n## Current Memory\n\n(No memory saved yet)\n\n---\n\n[Room: Bot (id:1, DM) | From: 이시훈]\nwhat do you think this is"
+    },
+    {
+      "role": "assistant",
+      "content": "You sent \"ㅗㅑ\" earlier - that's the Korean keyboard input for \"hi\" when typing with an English layout! 😄\n\nAre you asking about that, or about something else?"
+    },
+    {
+      "role": "user",
+      "content": "You are a helpful AI assistant.\n\n---\n\n## Session Variables\n\nUse these directly — do not read them from disk.\n\n- `messenger_url`: `http://localhost:10006`\n- `messenger_api_key`: `huni_0394a3fd983b3ad32362c540a6ce9a14a1ca9bcecbb8cd8c`\n- `bot_user_id`: `1`\n- `bot_name`: `Bot`\n- `home_room_id`: `-1`\n- `data_dir`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\data`\n- `memory_file`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\data\\memory.md`\n- `skills_dir`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\skills`\n\n\n## Current Memory\n\n(No memory saved yet)\n\n---\n\n[Room: Bot (id:1, DM) | From: 이시훈]\nhi bot"
+    },
+    {
+      "role": "assistant",
+      "content": "Hi! How can I help you today?"
+    },
+    {
+      "role": "user",
+      "content": "You are a helpful AI assistant.\n\n---\n\n## Session Variables\n\nUse these directly — do not read them from disk.\n\n- `messenger_url`: `http://localhost:10006`\n- `messenger_api_key`: `huni_0394a3fd983b3ad32362c540a6ce9a14a1ca9bcecbb8cd8c`\n- `bot_user_id`: `1`\n- `bot_name`: `Bot`\n- `home_room_id`: `-1`\n- `data_dir`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\data`\n- `memory_file`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\data\\memory.md`\n- `skills_dir`: `C:\\Users\\Lee\\Desktop\\Huni\\LLM_API_fast\\hoonbot\\skills`\n\n\n## Current Memory\n\n(No memory saved yet)\n\n---\n\n[Room: Bot (id:1, DM) | From: 이시훈]\nhi"
+    },
+    {
+      "role": "assistant",
+      "content": "Hi! What's on your mind?"
+    }
+  ]
+}
