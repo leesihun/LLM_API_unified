@@ -943,36 +943,6 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
         </div>
       )}
 
-      {/* Clipboard Preview */}
-      {false && (
-        <div className="px-6 py-3 bg-gray-50 border-t border-gray-200">
-          <div className="flex items-center gap-3">
-            <img
-              src=""
-              alt="clipboard preview"
-              className="w-20 h-20 object-cover rounded border"
-            />
-            <div className="flex-1">
-              <p className="text-sm text-gray-600">클립보드 이미지를 전송하시겠습니까?</p>
-              <div className="flex gap-2 mt-2">
-                <button
-                  onClick={() => {}}
-                  className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
-                >
-                  전송
-                </button>
-                <button
-                  onClick={() => {}}
-                  className="px-3 py-1 bg-gray-300 text-gray-700 text-sm rounded hover:bg-gray-400"
-                >
-                  취소
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Upload progress bar */}
       {uploadProgress !== null && (
         <div className="px-6 pt-2 bg-white border-t border-gray-100">
