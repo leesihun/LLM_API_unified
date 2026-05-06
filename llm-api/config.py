@@ -19,6 +19,7 @@ LOG_LEVEL = "INFO"
 # llama.cpp Backend
 # ============================================================================
 LLAMACPP_HOST = os.environ.get("LLAMACPP_HOST", "http://localhost:5905")
+LLAMACPP_BACKUP_HOST = os.environ.get("LLAMACPP_BACKUP_HOST", "http://localhost:10000")
 LLAMACPP_MODEL = "default"
 OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "llama.cpp/default", "opencode/minimax-m2.5-free")
 

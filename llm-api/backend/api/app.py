@@ -254,10 +254,14 @@ async def startup_event():
 
     from backend.core.llm_backend import llm_backend
     available = await llm_backend.is_available()
+    active_host = getattr(llm_backend.backend, "host", config.LLAMACPP_HOST)
     if available:
-        print(f"[Startup] llama.cpp backend available at {config.LLAMACPP_HOST}")
+        print(f"[Startup] llama.cpp backend available at {active_host}")
     else:
-        print(f"[Startup] WARNING: llama.cpp backend NOT available at {config.LLAMACPP_HOST}")
+        print(
+            "[Startup] WARNING: llama.cpp backend NOT available at "
+            f"{config.LLAMACPP_HOST} or {getattr(config, 'LLAMACPP_BACKUP_HOST', '')}"
+        )
 
     if config.PYTHON_EXECUTOR_MODE == "opencode":
         from tools.python_coder.opencode_server import start_opencode_server
@@ -290,13 +294,16 @@ async def shutdown_event():
 
 @app.get("/")
 def root():
+    from backend.core.llm_backend import llm_backend
     return {
         "status": "online",
         "service": "LLM API",
         "version": "2.0.0",
         "backend": {
             "type": "llamacpp",
-            "host": config.LLAMACPP_HOST,
+            "host": getattr(llm_backend.backend, "host", config.LLAMACPP_HOST),
+            "primary_host": config.LLAMACPP_HOST,
+            "backup_host": getattr(config, "LLAMACPP_BACKUP_HOST", ""),
         },
     }
 
@@ -304,6 +311,7 @@ def root():
 async def _get_health_data() -> dict:
     from backend.core.llm_backend import llm_backend
     llamacpp_ok = await llm_backend.is_available()
+    active_host = getattr(llm_backend.backend, "host", config.LLAMACPP_HOST)
     disk = shutil.disk_usage(".")
     opencode_enabled = config.PYTHON_EXECUTOR_MODE == "opencode"
     return {
@@ -311,7 +319,9 @@ async def _get_health_data() -> dict:
         "uptime_s": round(time.time() - _START_TIME),
         "llamacpp": {
             "available": llamacpp_ok,
-            "host": config.LLAMACPP_HOST,
+            "host": active_host,
+            "primary_host": config.LLAMACPP_HOST,
+            "backup_host": getattr(config, "LLAMACPP_BACKUP_HOST", ""),
         },
         "opencode": {
             "enabled": opencode_enabled,

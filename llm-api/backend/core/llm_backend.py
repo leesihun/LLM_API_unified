@@ -70,7 +70,11 @@ class LlamaCppBackend:
     """llama.cpp backend: fully async, OpenAI-compatible, native tool calling."""
 
     def __init__(self, host: str = None):
-        self.host = (host or config.LLAMACPP_HOST).rstrip("/")
+        primary_host = (host or config.LLAMACPP_HOST).rstrip("/")
+        backup_host = str(getattr(config, "LLAMACPP_BACKUP_HOST", "") or "").strip().rstrip("/")
+        self.primary_host = primary_host
+        self.backup_host = backup_host if backup_host and backup_host != primary_host else ""
+        self.host = primary_host
         self._ssl_verify = self._resolve_ssl()
         # Persistent connection pool — reuses TCP connections across requests
         pool_size = getattr(config, 'LLAMACPP_CONNECTION_POOL_SIZE', 20)
@@ -90,21 +94,42 @@ class LlamaCppBackend:
             return str(cert_path)
         return True
 
+    def _candidate_hosts(self, prefer_active: bool = False) -> list[str]:
+        hosts = [self.primary_host]
+        if self.backup_host:
+            hosts.append(self.backup_host)
+        if prefer_active and self.host in hosts:
+            return [self.host] + [host for host in hosts if host != self.host]
+        return hosts
+
+    def _activate_host(self, host: str) -> None:
+        if host != self.host:
+            print(f"[LLM] Switching llama.cpp host: {self.host} -> {host}")
+            self.host = host
+
+    async def _select_available_host(self, *, prefer_active: bool = False) -> bool:
+        for host in self._candidate_hosts(prefer_active=prefer_active):
+            try:
+                resp = await self._client.get(
+                    f"{host}/v1/models",
+                    timeout=httpx.Timeout(3.0),
+                )
+                if resp.status_code == 200:
+                    self._activate_host(host)
+                    return True
+            except Exception:
+                continue
+        return False
+
     async def close(self):
         """Shut down the persistent HTTP client."""
         await self._client.aclose()
 
     async def is_available(self) -> bool:
-        try:
-            resp = await self._client.get(
-                f"{self.host}/v1/models",
-                timeout=httpx.Timeout(3.0),
-            )
-            return resp.status_code == 200
-        except Exception:
-            return False
+        return await self._select_available_host()
 
     async def list_models(self) -> List[str]:
+        await self._select_available_host(prefer_active=True)
         resp = await self._client.get(
             f"{self.host}/v1/models",
             timeout=httpx.Timeout(5.0),
@@ -179,6 +204,7 @@ class LlamaCppBackend:
         repeat_penalty: Optional[float] = None,
         id_slot: Optional[int] = None,
     ) -> AsyncIterator[StreamEvent]:
+        await self._select_available_host(prefer_active=True)
         payload = self._build_payload(
             messages, model, temperature,
             tools=tools, top_p=top_p, top_k=top_k, min_p=min_p,

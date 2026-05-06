@@ -12,7 +12,7 @@ Hoonbot is a tool-driven personal AI assistant that bridges Huni Messenger (chat
            │ webhooks + REST API
            │
 ┌──────────▼──────────┐
-│     Hoonbot         │ (FastAPI on port 3939)
+│     Hoonbot         │ (FastAPI on port 10001)
 │    (Python)         │
 │                     │
 │  • Webhook handler  │
@@ -132,7 +132,7 @@ All settings: env var > `settings.txt` > hardcoded default. Key settings:
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
-| `HOONBOT_PORT` | 3939 | Bot server port |
+| `HOONBOT_PORT` | 10001 | Bot server port |
 | `HOONBOT_BOT_NAME` | Hoonbot | Display name |
 | `HOONBOT_HOME_ROOM_ID` | 1 | Room for heartbeat output |
 | `HOONBOT_STREAMING` | true | Stream LLM responses |

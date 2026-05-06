@@ -28,8 +28,9 @@ if [[ ! -f "config.py" ]]; then
     exit 1
 fi
 
-# Extract LLAMACPP_HOST from config.py for connectivity check
+# Extract llama.cpp hosts from config.py for connectivity check
 LLAMACPP_HOST=$(python3 -c "import config; print(getattr(config,'LLAMACPP_HOST','http://localhost:5905'))" 2>/dev/null || echo "http://localhost:5905")
+LLAMACPP_BACKUP_HOST=$(python3 -c "import config; print(getattr(config,'LLAMACPP_BACKUP_HOST','http://localhost:10000'))" 2>/dev/null || echo "http://localhost:10000")
 SERVER_PORT=$(python3 -c "import config; print(getattr(config,'SERVER_PORT',10007))" 2>/dev/null || echo "10007")
 
 echo "[*] Checking llama.cpp at $LLAMACPP_HOST..."
@@ -37,7 +38,11 @@ if curl -fsS "${LLAMACPP_HOST}/health" >/dev/null 2>&1; then
     echo "[OK] llama.cpp is reachable."
 else
     echo "[WARN] llama.cpp not reachable at ${LLAMACPP_HOST}."
-    echo "       The API will start but inference calls will fail until llama.cpp is running."
+    if [[ -n "$LLAMACPP_BACKUP_HOST" ]] && curl -fsS "${LLAMACPP_BACKUP_HOST}/health" >/dev/null 2>&1; then
+        echo "[OK] backup llama.cpp is reachable at ${LLAMACPP_BACKUP_HOST}."
+    else
+        echo "       The API will start but inference calls will fail until llama.cpp is running."
+    fi
 fi
 echo
 

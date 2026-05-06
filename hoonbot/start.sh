@@ -20,7 +20,7 @@ echo
 # --- Read config values ---
 MESSENGER_URL=$(python3 -c "import config; print(config.MESSENGER_URL)" 2>/dev/null || echo "http://localhost:10006")
 LLM_API_URL=$(python3 -c "import config; print(config.LLM_API_URL)" 2>/dev/null || echo "http://localhost:10007")
-HOONBOT_PORT=$(python3 -c "import config; print(config.HOONBOT_PORT)" 2>/dev/null || echo "3939")
+HOONBOT_PORT=$(python3 -c "import config; print(config.HOONBOT_PORT)" 2>/dev/null || echo "10001")
 
 # --- Preflight: credentials ---
 if [[ ! -f "data/.llm_key" || ! -f "data/.llm_model" ]]; then

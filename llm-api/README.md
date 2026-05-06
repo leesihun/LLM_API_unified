@@ -13,6 +13,7 @@ nano config.py
 
 # 3. Start llama.cpp separately (example — adjust model path)
 llama-server --model /path/to/model.gguf --port 5905 --parallel 4
+# Optional backup llama.cpp: use --port 10000
 
 # 4. Start the API
 ./start.sh
@@ -28,6 +29,7 @@ llama-server --model /path/to/model.gguf --port 5905 --parallel 4
 |---|---|---|
 | `SERVER_PORT` | `10007` | API listen port |
 | `LLAMACPP_HOST` | `http://localhost:5905` | llama.cpp server URL |
+| `LLAMACPP_BACKUP_HOST` | `http://localhost:10000` | fallback llama.cpp server URL |
 | `AVAILABLE_TOOLS` | (list) | Tools exposed to the LLM |
 | `AGENT_MAX_ITERATIONS` | `30` | Max tool-call iterations per request |
 | `JWT_SECRET_KEY` | env or hardcoded | Set via `JWT_SECRET_KEY` env var in prod |

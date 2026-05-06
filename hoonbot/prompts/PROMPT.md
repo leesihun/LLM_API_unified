@@ -106,7 +106,7 @@ After completing a skill, follow its **Response Format** exactly.
 
 ## Incoming Webhooks
 
-External services post to `http://localhost:3939/webhook/incoming/<source>`.
+External services post to `http://localhost:10001/webhook/incoming/<source>`.
 Messages arrive as `[Webhook from <source>] <payload>`. Understand the event, take action if needed, update memory if important, report clearly.
 
 ## Guidelines

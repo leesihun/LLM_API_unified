@@ -10,8 +10,8 @@ A Python/FastAPI AI bot that bridges **Huni Messenger** and the **LLM API**, giv
 
 # 2. Start (Messenger + LLM API must already be running)
 ./start.sh
-# → http://localhost:3939
-# → Health: http://localhost:3939/health
+# → http://localhost:10001
+# → Health: http://localhost:10001/health
 ```
 
 ## Prerequisites
@@ -27,7 +27,7 @@ A Python/FastAPI AI bot that bridges **Huni Messenger** and the **LLM API**, giv
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `HOONBOT_PORT` | `3939` | Bot webhook listener port |
+| `HOONBOT_PORT` | `10001` | Bot webhook listener port |
 | `MESSENGER_URL` | `http://localhost:10006` | Messenger server URL |
 | `LLM_API_URL` | `http://localhost:10007` | LLM API URL (`LLM_API_URL` env var overrides) |
 | `LLM_API_USERNAME` | `admin` | Used by setup to obtain a token |

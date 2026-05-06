@@ -47,7 +47,7 @@
           ▲                                          ▲
           │ HTTP                                     │ HTTP / SSE
 ┌─────────┴───────┐                       ┌─────────┴──────────┐
-│  Browser/Client │                       │  Hoonbot (port 3939)│
+│  Browser/Client │                       │  Hoonbot (port 10001)│
 │  (frontend)     │                       │  ↕ Messenger        │
 └─────────────────┘                       └────────────────────┘
 ```
@@ -144,7 +144,7 @@ Key difference from non-streaming:
 ### 2.6 Hoonbot Webhook Message Flow
 
 ```
-Messenger ──POST /webhook──▶ hoonbot:3939
+Messenger ──POST /webhook──▶ hoonbot:10001
   ↓
 _schedule_debounced(room_id, content)
   ↓ (debounce window: 1.5s, combined if rapid messages)
@@ -601,7 +601,7 @@ data/
 ### 8.1 Architecture
 
 ```
-Messenger (port 3000) ◄──► Hoonbot (port 3939) ◄──► LLM API (port 10007)
+Messenger (port 3000) ◄──► Hoonbot (port 10001) ◄──► LLM API (port 10007)
 ```
 
 Hoonbot is a standalone FastAPI app that:
