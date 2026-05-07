@@ -18,10 +18,13 @@ from fastapi import APIRouter, HTTPException, Request
 
 import config
 from core import messenger
+from core.cluster_client import try_submit_from_message
 from core.context import build_llm_context
 from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
+
+_MEMORY_FLUSH_HINT = config.read_prompt("webhook/memory_flush_hint.txt")
 router = APIRouter()
 
 # Per-room debounce state
@@ -347,6 +350,17 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             logger.error(f"{log_prefix} @compact failed: {e}")
         return
 
+    try:
+        delegation = await try_submit_from_message(content, sender_name, room_id)
+        if delegation:
+            await messenger.send_message(room_id, delegation["message"], reply_to_id=reply_to_id)
+            logger.info(f"{log_prefix} Delegated cluster task: {delegation}")
+            return
+    except Exception as exc:
+        logger.warning(f"{log_prefix} Cluster delegation failed: {exc}")
+        await messenger.send_message(room_id, f"Cluster delegation failed: {exc}", reply_to_id=reply_to_id)
+        return
+
     await messenger.send_typing(room_id, status_text=_STATUS_GENERATING)
 
     try:
@@ -387,11 +401,7 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             _room_msg_count[room_id] = count
 
             if count == config.MEMORY_FLUSH_THRESHOLD:
-                user_content += (
-                    "\n\n[System: This session is getting long. "
-                    "Please save any important unsaved information from this conversation "
-                    "to your memory file now, before context compaction loses it.]"
-                )
+                user_content += f"\n\n{_MEMORY_FLUSH_HINT}"
                 logger.info(f"{log_prefix} Memory flush hint injected at message #{count}")
 
             messages = [{"role": "user", "content": user_content}]

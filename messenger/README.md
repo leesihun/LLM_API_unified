@@ -7,7 +7,7 @@ A self-hosted real-time team chat platform with bot integration, file sharing, a
 ```bash
 # Build/install dependencies, build web client, and start
 ./start.sh --build
-# → http://localhost:10006
+# -> http://127.0.0.1:10006
 ```
 
 On Windows:
@@ -111,6 +111,6 @@ npm run build
 ## Gotchas
 
 - **sql.js is in-memory** — DB lives in RAM, auto-saved to disk every 5 seconds. Unclean shutdown can lose up to 5 seconds of data.
-- **No TLS built-in** — expects a reverse proxy (Cloudflare Tunnel, nginx). The terminal `SECRET_TOKEN` provides access control.
+- **No TLS built-in** — expects a LAN/VPN reverse proxy if exposed beyond the node. The terminal `SECRET_TOKEN` provides access control.
 - **ClaudeWrapper references removed** — `WRAPPER_ENV_PATH` in `terminal.ts` gracefully no-ops if the file is absent.
 - **Electron build** — requires Windows to build Windows `.exe`; use `--linux` flag for AppImage.

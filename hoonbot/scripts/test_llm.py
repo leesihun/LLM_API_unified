@@ -32,7 +32,7 @@ async def test_llm_connection():
     messages = [
         {
             "role": "system",
-            "content": "You are a helpful assistant. When updating memory, embed: [UPDATE_MEMORY: new memory content]"
+            "content": config.read_prompt("scripts/test_llm_system.txt"),
         },
         {
             "role": "user",

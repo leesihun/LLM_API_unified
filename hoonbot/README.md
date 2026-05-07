@@ -7,8 +7,8 @@ A Python/FastAPI AI bot that bridges **Huni Messenger** and the **LLM API**, giv
 ```bash
 # Build/install dependencies and start (Messenger + LLM API must already be running)
 ./start.sh --build
-# → http://localhost:10001
-# → Health: http://localhost:10001/health
+# -> http://127.0.0.1:10001
+# -> Health: http://127.0.0.1:10001/health
 ```
 
 On Windows:
@@ -28,11 +28,15 @@ On Windows:
 
 **All settings live in `config.py`** — edit it directly.
 
+Prompt files are app-local under `prompts/`: the default files are
+`prompts/PROMPT.md` and `prompts/HEARTBEAT.md`, and cluster role profiles live
+in `prompts/master/` and `prompts/slave/`.
+
 | Setting | Default | Purpose |
 |---|---|---|
 | `HOONBOT_PORT` | `10001` | Bot webhook listener port |
-| `MESSENGER_URL` | `http://localhost:10006` | Messenger server URL |
-| `LLM_API_URL` | `http://localhost:10007` | LLM API URL (`LLM_API_URL` env var overrides) |
+| `MESSENGER_URL` | `http://127.0.0.1:10006` | Messenger server URL |
+| `LLM_API_URL` | `http://127.0.0.1:10007` | LLM API URL (`LLM_API_URL` env var overrides) |
 | `LLM_API_USERNAME` | `admin` | Used by setup to obtain a token |
 | `LLM_API_PASSWORD` | `administrator` | Used by setup to obtain a token |
 | `MESSENGER_BOT_NAME` | `Bot` | Display name in Messenger |
@@ -73,7 +77,9 @@ hoonbot/
 │   └── webhook.py          POST /webhook (message processing pipeline)
 ├── prompts/
 │   ├── PROMPT.md           System prompt (bot identity + memory instructions)
-│   └── HEARTBEAT.md        Proactive task checklist (edit to customise)
+│   ├── HEARTBEAT.md        Proactive task checklist (edit to customise)
+│   ├── master/             Master prompt + heartbeat profile
+│   └── slave/              Slave prompt + heartbeat profile
 ├── skills/                 Markdown docs for LLM-executed skills
 ├── scripts/
 │   ├── setup_credentials.py  One-time LLM token + model setup

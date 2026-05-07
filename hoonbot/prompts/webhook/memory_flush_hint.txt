@@ -1,0 +1,1 @@
+[System: This session is getting long. Review the conversation for durable facts, decisions, preferences, reminders, or project state that should survive context compaction. If there is important unsaved information, update the memory file now by reading it, merging carefully, and writing the full updated content. Do not save secrets or transient chat noise.]

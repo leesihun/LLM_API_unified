@@ -3,6 +3,7 @@ LLM API Configuration
 All settings are configurable here.
 Single server, llama.cpp backend, native tool calling.
 """
+import importlib.util
 import os
 from pathlib import Path
 from typing import Literal
@@ -14,21 +15,60 @@ APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
 PROMPTS_DIR = APP_DIR / "prompts"
 
+
+def prompt_path(relative_path: str) -> Path:
+    return PROMPTS_DIR / relative_path
+
+
+def read_prompt(relative_path: str) -> str:
+    return prompt_path(relative_path).read_text(encoding="utf-8")
+
+
+def _load_cluster_config():
+    path = APP_DIR.parent / "cluster_config.py"
+    if not path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("_llm_api_cluster_config", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_CLUSTER = _load_cluster_config()
+
 # ============================================================================
 # Server Settings
 # ============================================================================
-SERVER_HOST = "0.0.0.0"
-SERVER_PORT = 10007
+SERVER_HOST = getattr(_CLUSTER, "LLM_API_BIND_HOST", "0.0.0.0")
+SERVER_PORT = int(getattr(_CLUSTER, "LLM_API_PORT", 10007))
 SERVER_WORKERS = 2
 LOG_LEVEL = "INFO"
 
 # ============================================================================
 # llama.cpp Backend
 # ============================================================================
-LLAMACPP_HOST = os.environ.get("LLAMACPP_HOST", "http://localhost:5905")
-LLAMACPP_BACKUP_HOST = os.environ.get("LLAMACPP_BACKUP_HOST", "http://localhost:10000")
+LLAMACPP_HOST = os.environ.get("LLAMACPP_HOST", getattr(_CLUSTER, "LOCAL_LLAMACPP_URL", "http://127.0.0.1:5905"))
+LLAMACPP_BACKUP_HOST = os.environ.get("LLAMACPP_BACKUP_HOST", getattr(_CLUSTER, "LOCAL_LLAMACPP_BACKUP_URL", "http://127.0.0.1:10000"))
 LLAMACPP_MODEL = "default"
 OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "llama.cpp/default", "opencode/minimax-m2.5-free")
+
+# ============================================================================
+# Cluster Settings
+# ============================================================================
+CLUSTER_ENABLED = bool(getattr(_CLUSTER, "CLUSTER_ENABLED", True))
+CLUSTER_ROLE = getattr(_CLUSTER, "NODE_ROLE", "master")
+NODE_NAME = getattr(_CLUSTER, "NODE_NAME", "master")
+NODE_IP = getattr(_CLUSTER, "NODE_IP", "127.0.0.1")
+NODE_CAPABILITIES = list(getattr(_CLUSTER, "NODE_CAPABILITIES", []))
+NODE_TAGS = list(getattr(_CLUSTER, "NODE_TAGS", []))
+CLUSTER_TOKEN = getattr(_CLUSTER, "CLUSTER_TOKEN", "")
+CLUSTER_MASTER_API_URL = getattr(_CLUSTER, "CLUSTER_MASTER_API_URL", f"http://127.0.0.1:{SERVER_PORT}")
+ADVERTISED_LLM_API_URL = getattr(_CLUSTER, "ADVERTISED_LLM_API_URL", f"http://127.0.0.1:{SERVER_PORT}")
+CLUSTER_NODE_STALE_SECONDS = int(getattr(_CLUSTER, "CLUSTER_NODE_STALE_SECONDS", 90))
+CLUSTER_TASK_LEASE_SECONDS = int(getattr(_CLUSTER, "CLUSTER_TASK_LEASE_SECONDS", 900))
+CLUSTER_DIR = DATA_DIR / "cluster"
 
 # ============================================================================
 # Model Parameters (Default LLM Inference Settings)
@@ -291,7 +331,6 @@ STREAM_TIMEOUT = 600
 # CORS Settings
 # ============================================================================
 CORS_ORIGINS = [
-    "http://localhost:10007",
     "http://127.0.0.1:10007",
     "*",
 ]
@@ -312,3 +351,4 @@ TOOL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 MEMO_DIR.mkdir(parents=True, exist_ok=True)
 JOBS_DIR.mkdir(parents=True, exist_ok=True)
 LLM_GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+CLUSTER_DIR.mkdir(parents=True, exist_ok=True)

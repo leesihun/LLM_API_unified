@@ -221,12 +221,8 @@ class CompactionMixin:
             lines.append(f"[{i}] {role.upper()}{name_label}{tc_summary}\n{content}")
         convo_text = "\n\n".join(lines)
 
-        summary_prompt = (
-            "Summarize the following conversation segment for use as compressed "
-            "context. Preserve: file paths, decisions made, tool names and key "
-            "results, user intent, and any open questions. Output a brief factual "
-            "summary with no preamble or meta-commentary.\n\n"
-            f"--- BEGIN CONVERSATION ---\n{convo_text}\n--- END CONVERSATION ---"
+        summary_prompt = config.read_prompt("agent/autocompact_summary.txt").format(
+            convo_text=convo_text,
         )
 
         total_chars = sum(len(str(m.get("content") or "")) for m in to_compact)

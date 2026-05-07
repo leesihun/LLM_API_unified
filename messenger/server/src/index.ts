@@ -111,7 +111,7 @@ export async function main() {
 
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Messenger Server running on port ${PORT}`);
-    console.log(`  Local:   http://localhost:${PORT}`);
+    console.log(`  Local:   http://127.0.0.1:${PORT}`);
     console.log(`  Network: http://0.0.0.0:${PORT}`);
   });
 }

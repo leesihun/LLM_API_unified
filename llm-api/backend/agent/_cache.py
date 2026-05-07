@@ -5,11 +5,7 @@ import config
 
 
 def _load_system_prompt() -> str:
-    prompt_path = config.PROMPTS_DIR / config.AGENT_SYSTEM_PROMPT
-    if prompt_path.exists():
-        with open(prompt_path, 'r', encoding='utf-8') as f:
-            return f.read()
-    return "You are a helpful assistant with access to tools."
+    return config.read_prompt(config.AGENT_SYSTEM_PROMPT)
 
 
 def _build_tool_schemas() -> List[Dict[str, Any]]:

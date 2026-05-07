@@ -1,0 +1,38 @@
+The previous script failed. Diagnose the actual root cause and fix it with the
+smallest correct change. Do not restructure code that is unrelated to the
+failure.
+
+## Failed script
+```python
+{prev_code}
+```
+
+## Error output
+```text
+{prev_stderr}
+```
+
+## Original task
+{instruction}
+{context_block}
+
+Diagnostic checklist before you write the fix:
+- Is the error a missing/wrong import? Add or correct it.
+- Is it `NameError`/`UnboundLocalError`? Check definition order, scope, and
+  conditional branches.
+- Is it `FileNotFoundError`/`PermissionError`? Inspect the actual workspace,
+  use the correct relative path, create parent directories with
+  `Path(...).parent.mkdir(parents=True, exist_ok=True)`.
+- Is it `ModuleNotFoundError`? Add the import hint comment, or fall back to a
+  stdlib equivalent if the task allows.
+- Is it `UnicodeDecodeError`/`UnicodeEncodeError`? Add `encoding="utf-8"`,
+  consider `errors="replace"` only if data loss is acceptable.
+- Is it `JSONDecodeError`/`csv.Error`/`ParseError`? Validate input shape and
+  print the offending excerpt before exiting.
+- Is the script blocking on input or display? Remove the blocking call.
+- Did the script exit zero but produce wrong output? Tighten the logic and
+  add a confirming `print()` that exposes the actual result.
+
+Output the corrected complete script. Preserve task intent. Output only the
+fenced Python code block, OR the line `NEEDS_CLARIFICATION: ...` if the
+failure cannot be fixed without one missing fact.

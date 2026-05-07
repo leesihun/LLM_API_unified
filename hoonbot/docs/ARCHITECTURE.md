@@ -42,9 +42,12 @@ Hoonbot is a tool-driven personal AI assistant that bridges Huni Messenger (chat
 ```
 Hoonbot/
 ├── hoonbot.py              # Entry point, FastAPI server + lifespan startup
-├── config.py               # All config (env > settings.txt > defaults)
-├── PROMPT.md               # System prompt (identity, memory, skills, tools)
-├── HEARTBEAT.md            # Proactive task checklist run every heartbeat
+├── config.py               # Single Hoonbot runtime config surface
+├── prompts/
+│   ├── PROMPT.md           # Default system prompt
+│   ├── HEARTBEAT.md        # Default proactive checklist
+│   ├── master/             # Master prompt + heartbeat profile
+│   └── slave/              # Slave prompt + heartbeat profile
 ├── ARCHITECTURE.md         # This file
 ├── setup.py                # One-time: configure LLM API credentials
 ├── reset.py                # Utility: clear/view memory
@@ -94,7 +97,7 @@ FastAPI app with async lifespan startup:
 4. `process_message()` — builds context and calls LLM
 
 **New session context injection:**
-- PROMPT.md content
+- `config.PROMPT_FILE` content from `prompts/`
 - Memory file absolute path
 - Skills directory absolute path
 - Current memory content
@@ -107,7 +110,7 @@ FastAPI app with async lifespan startup:
 
 ### 3. Heartbeat: `core/heartbeat.py`
 
-Background loop that reads `HEARTBEAT.md`, builds full context (same as new session), and runs through the agent non-streaming. Posts results to home room. Features:
+Background loop that reads `config.HEARTBEAT_FILE` from `prompts/`, builds full context (same as new session), and runs through the agent non-streaming. Posts results to home room. Features:
 - Active-hours window (configurable start/end times)
 - LLM cooldown on connection errors (avoids hammering dead server)
 - First tick after one full interval (never immediate)
@@ -128,7 +131,7 @@ Persistent `httpx.AsyncClient` wrapping the Messenger REST API. Auto-splits long
 
 ## Configuration
 
-All settings: env var > `settings.txt` > hardcoded default. Key settings:
+All Hoonbot runtime settings live in `config.py`. Key settings:
 
 | Setting | Default | Purpose |
 |---------|---------|---------|

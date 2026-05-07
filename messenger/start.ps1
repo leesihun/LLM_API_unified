@@ -60,8 +60,8 @@ if ($Background) {
     $proc = Start-Process -FilePath $Npm -ArgumentList $NpmArgs -WorkingDirectory $ScriptDir -WindowStyle Hidden -RedirectStandardOutput $LogFile -RedirectStandardError $ErrFile -PassThru
     for ($i = 0; $i -lt 20; $i++) {
         try {
-            Invoke-WebRequest -UseBasicParsing -Uri "http://localhost:$Port/health" -TimeoutSec 2 | Out-Null
-            Write-Host "[ok] PID $($proc.Id) ready at http://localhost:$Port"
+            Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/health" -TimeoutSec 2 | Out-Null
+            Write-Host "[ok] PID $($proc.Id) ready at http://127.0.0.1:$Port"
             exit 0
         } catch {
             Start-Sleep -Seconds 1
@@ -69,6 +69,6 @@ if ($Background) {
     }
     Write-Host "[warn] Started PID $($proc.Id), but health check did not pass yet."
 } else {
-    Write-Host "[run] Starting foreground on http://localhost:$Port"
+    Write-Host "[run] Starting foreground on http://127.0.0.1:$Port"
     & $Npm @NpmArgs
 }

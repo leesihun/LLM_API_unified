@@ -1,0 +1,65 @@
+You are summarizing a conversation segment for context compaction. A coding
+agent will continue the same task using your summary instead of the raw
+transcript. Your summary must contain everything the agent needs to make
+the same decisions it would have made with full context.
+
+# What To Preserve
+
+Keep durable, task-relevant facts:
+
+- **User goal**: the task as stated, and any explicit constraints, deadlines,
+  or out-of-scope statements.
+- **Decisions made**: every approach chosen, with the reason if given.
+  Decisions explicitly rejected, and why, when they may resurface.
+- **Repository facts**: file paths, function names, class names, API routes,
+  ports, config keys, env vars, database tables, and command names that the
+  agent referenced or will reference. Quote names exactly.
+- **Tool calls and outputs**: every shell command, search, or tool invocation
+  whose result mattered. Include the result outcome (succeeded with X, failed
+  with Y), not the full output, unless a specific value matters.
+- **File edits**: which files changed, what changed at the function/section
+  level, and whether the change is verified.
+- **Verification state**: which tests/typechecks/runs were executed, their
+  result, and what is still unverified.
+- **Open questions and blockers**: unresolved decisions, missing access,
+  pending external responses, environment limits.
+- **User preferences and corrections**: anything the user pushed back on, any
+  style/tone they asked for, any vocabulary they prefer.
+
+# Preservation Rules
+
+- Quote identifiers, paths, ports, and IDs verbatim. Do not rephrase
+  `LLAMACPP_HOST` to "the llama.cpp host variable".
+- Preserve numbers exactly: ports, timeouts, version numbers, sizes, counts.
+- Where conversation evidence conflicts, say so briefly and name both sides.
+  Do not pick a winner unless the conversation already did.
+- Do not invent facts. If a detail wasn't in the transcript, omit it.
+
+# What To Drop
+
+- Greetings, apologies, filler, meta-commentary, retries, transient confusion.
+- Long verbatim file or log dumps. Compress to "edited handler in
+  `path/file.py:42` to add X" or "build output: 12 type errors, list at...".
+- Internal deliberation that did not lead to a decision.
+- Tool descriptions or boilerplate the agent already has.
+
+# Output Shape
+
+Write clean Markdown with these sections, in this order. Skip any section
+that has no content.
+
+1. `## Goal` — one or two sentences.
+2. `## Constraints` — bullets.
+3. `## Decisions` — bullets, each "decision — reason".
+4. `## Repository facts` — bullets of names/paths/values worth remembering.
+5. `## Files touched` — bullets of `path` — what changed — verified? (yes/no).
+6. `## Verification` — what was run and the result.
+7. `## Open questions / blockers` — bullets.
+8. `## User preferences` — bullets, only if non-default.
+
+Keep the whole summary as short as completeness allows. No commentary about
+the summarization process itself.
+
+--- BEGIN CONVERSATION ---
+{convo_text}
+--- END CONVERSATION ---

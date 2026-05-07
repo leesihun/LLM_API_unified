@@ -295,15 +295,11 @@ async def query_rag(request: RAGQueryRequest, current_user: Optional[dict] = Dep
             for i, doc in enumerate(documents)
         ])
 
-        prompt_path = config.PROMPTS_DIR / "tools" / "rag_synthesize.txt"
-        if prompt_path.exists():
-            with open(prompt_path, 'r', encoding='utf-8') as f:
-                template = f.read()
-            synthesis_prompt = template.format(
-                user_query=request.query, documents=docs_formatted, context="Direct API query",
-            )
-        else:
-            synthesis_prompt = f"Based on these documents:\n\n{docs_formatted}\n\nAnswer: {request.query}"
+        synthesis_prompt = config.read_prompt("tools/rag_synthesize.txt").format(
+            user_query=request.query,
+            documents=docs_formatted,
+            context="Direct API query",
+        )
 
         from backend.core.llm_backend import llm_backend
         rag_params = config.TOOL_PARAMETERS.get("rag", {})

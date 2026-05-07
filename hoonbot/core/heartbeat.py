@@ -24,21 +24,13 @@ from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
 
-_HEARTBEAT_FILE = os.path.join(os.path.dirname(__file__), "..", "HEARTBEAT.md")
+_HEARTBEAT_FILE = str(getattr(config, "HEARTBEAT_FILE", os.path.join(os.path.dirname(__file__), "..", "prompts", "HEARTBEAT.md")))
 
 _llm_cooldown_until: float = 0.0
 
-_PLANNER_SYSTEM = (
-    "You are a task planner. Decompose the given checklist into discrete, executable tasks.\n"
-    "Respond ONLY with a valid JSON array — no markdown fences, no explanation.\n"
-    'Each item must have: {"id": <int>, "task": "<one-sentence action>", "done_criteria": "<measurable result>"}'
-)
-
-_VALIDATOR_SYSTEM = (
-    "You are a task validator. Review the task results below and identify which tasks did NOT meet their done_criteria.\n"
-    "Respond ONLY with a JSON array of integer IDs for incomplete tasks.\n"
-    "If all tasks are complete, respond with: []"
-)
+_PLANNER_SYSTEM = config.read_prompt("heartbeat/planner_system.txt")
+_VALIDATOR_SYSTEM = config.read_prompt("heartbeat/validator_system.txt")
+_TASK_EXECUTION_TEMPLATE = config.read_prompt("heartbeat/task_execution.txt")
 
 _STALE_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 
@@ -173,13 +165,11 @@ async def _execute_task(task: dict, context: str, tick_hour: str, headers: dict)
     session_id = f"hb_{tick_hour}_t{task_id}"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    prompt = (
-        f"[HEARTBEAT TASK {task_id} — {timestamp}]\n\n"
-        "You are running a scheduled proactive task — no human is waiting. "
-        "Complete the task below using your tools. "
-        "Report exactly what you found or did.\n\n"
-        f"**Task:** {task['task']}\n"
-        f"**Done criteria:** {task.get('done_criteria', 'Task completed successfully')}"
+    prompt = _TASK_EXECUTION_TEMPLATE.format(
+        task_id=task_id,
+        timestamp=timestamp,
+        task=task["task"],
+        done_criteria=task.get("done_criteria", "Task completed successfully"),
     )
     messages = [{"role": "user", "content": f"{context}\n\n---\n\n{prompt}"}]
     payload = {
@@ -290,6 +280,9 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         return
 
     reply = full_text.strip()
+    if reply == "HEARTBEAT_OK":
+        logger.info("[Heartbeat] HEARTBEAT_OK ??nothing to post")
+        return
     if not reply:
         logger.info("[Heartbeat] No output — nothing to post")
     elif config.MESSENGER_HOME_ROOM_ID < 0:

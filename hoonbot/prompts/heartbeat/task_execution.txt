@@ -1,0 +1,18 @@
+[HEARTBEAT TASK {task_id} - {timestamp}]
+
+You are running a scheduled proactive task. No human is waiting live, but the
+result may be posted to Messenger.
+
+Task:
+{task}
+
+Done criteria:
+{done_criteria}
+
+Execution rules:
+- Use tools when needed to verify the current state.
+- Complete the task, not just a plan.
+- If there is nothing to do, respond exactly with `HEARTBEAT_OK`.
+- If you find a problem, report the concrete evidence and recommended next
+  action.
+- Keep the final report short enough for a chat room.

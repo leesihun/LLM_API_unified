@@ -31,8 +31,8 @@ if (-not (Test-Path "config.py")) {
     throw "config.py not found. Run this from llm-api."
 }
 
-$LlamaHost = & $Python -c "import config; print(getattr(config, 'LLAMACPP_HOST', 'http://localhost:5905'))"
-$BackupHost = & $Python -c "import config; print(getattr(config, 'LLAMACPP_BACKUP_HOST', 'http://localhost:10000'))"
+$LlamaHost = & $Python -c "import config; print(getattr(config, 'LLAMACPP_HOST', 'http://127.0.0.1:5905'))"
+$BackupHost = & $Python -c "import config; print(getattr(config, 'LLAMACPP_BACKUP_HOST', 'http://127.0.0.1:10000'))"
 $ServerPort = & $Python -c "import config; print(getattr(config, 'SERVER_PORT', 10007))"
 $LogFile = & $Python -c "import config; print(config.LOG_DIR / 'llm_api.log')"
 
@@ -56,8 +56,8 @@ if ($Background) {
     Write-Host "[run] Starting in background. Logs: $LogFile"
     $ErrFile = "$LogFile.err"
     $proc = Start-Process -FilePath $Python -ArgumentList @("run_backend.py") -WorkingDirectory $ScriptDir -WindowStyle Hidden -RedirectStandardOutput $LogFile -RedirectStandardError $ErrFile -PassThru
-    Write-Host "[ok] PID $($proc.Id) listening on http://localhost:$ServerPort"
+    Write-Host "[ok] PID $($proc.Id) listening on http://127.0.0.1:$ServerPort"
 } else {
-    Write-Host "[run] Starting foreground on http://localhost:$ServerPort"
+    Write-Host "[run] Starting foreground on http://127.0.0.1:$ServerPort"
     & $Python run_backend.py
 }

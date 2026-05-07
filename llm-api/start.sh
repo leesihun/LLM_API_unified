@@ -40,8 +40,8 @@ if [[ ! -f "config.py" ]]; then
     exit 1
 fi
 
-LLAMACPP_HOST=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'LLAMACPP_HOST', 'http://localhost:5905'))")
-LLAMACPP_BACKUP_HOST=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'LLAMACPP_BACKUP_HOST', 'http://localhost:10000'))")
+LLAMACPP_HOST=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'LLAMACPP_HOST', 'http://127.0.0.1:5905'))")
+LLAMACPP_BACKUP_HOST=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'LLAMACPP_BACKUP_HOST', 'http://127.0.0.1:10000'))")
 SERVER_PORT=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'SERVER_PORT', 10007))")
 LOG_FILE=$("$PYTHON_BIN" -c "import config; print(config.LOG_DIR / 'llm_api.log')")
 
@@ -62,8 +62,8 @@ mkdir -p "$(dirname "$LOG_FILE")"
 if $BACKGROUND; then
     echo "[run] Starting in background. Logs: $LOG_FILE"
     nohup "$PYTHON_BIN" run_backend.py > "$LOG_FILE" 2>&1 &
-    echo "[ok] PID $! listening on http://localhost:${SERVER_PORT}"
+    echo "[ok] PID $! listening on http://127.0.0.1:${SERVER_PORT}"
 else
-    echo "[run] Starting foreground on http://localhost:${SERVER_PORT}"
+    echo "[run] Starting foreground on http://127.0.0.1:${SERVER_PORT}"
     "$PYTHON_BIN" run_backend.py
 fi

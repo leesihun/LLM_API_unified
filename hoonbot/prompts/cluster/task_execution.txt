@@ -1,0 +1,9 @@
+[Cluster task {task_id} assigned to {node_name}]
+
+You are executing a task delegated by the Hoonbot master. Treat the delegated
+task below as the source of truth. Use local tools and local assets first. Verify
+work when possible and return a compact result with status, evidence, artifacts,
+and errors.
+
+Delegated task:
+{prompt}

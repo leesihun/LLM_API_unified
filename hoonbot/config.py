@@ -17,6 +17,7 @@ Conventions:
       to all read sites or simply not done.
 """
 
+import importlib.util
 import os
 from pathlib import Path
 
@@ -26,6 +27,30 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 _BASE_DIR = Path(__file__).parent
 DATA_DIR = str(_BASE_DIR / "data")
+PROMPTS_DIR = _BASE_DIR / "prompts"
+
+
+def prompt_path(relative_path: str) -> Path:
+    return PROMPTS_DIR / relative_path
+
+
+def read_prompt(relative_path: str) -> str:
+    return prompt_path(relative_path).read_text(encoding="utf-8")
+
+
+def _load_cluster_config():
+    path = _BASE_DIR.parent / "cluster_config.py"
+    if not path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("_hoonbot_cluster_config", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_CLUSTER = _load_cluster_config()
 
 
 def _read_credential_file(name: str) -> str:
@@ -45,21 +70,20 @@ def _read_credential_file(name: str) -> str:
 # ---------------------------------------------------------------------------
 # Ports
 # ---------------------------------------------------------------------------
-HOONBOT_PORT = 10001
-HOONBOT_HOST = "0.0.0.0"
-MESSENGER_PORT = 10006
-LLM_API_PORT = 10007
+HOONBOT_PORT = int(getattr(_CLUSTER, "HOONBOT_PORT", 10001))
+HOONBOT_HOST = getattr(_CLUSTER, "HOONBOT_BIND_HOST", "0.0.0.0")
+MESSENGER_PORT = int(getattr(_CLUSTER, "MESSENGER_PORT", 10006))
+LLM_API_PORT = int(getattr(_CLUSTER, "LLM_API_PORT", 10007))
 
-# Cloudflare branching has been removed. This flag is kept as a constant
-# (defaulting to False) only because external modules still reference it.
-# Do not re-introduce conditional URL logic here.
-USE_CLOUDFLARE = False
 
 
 # ---------------------------------------------------------------------------
 # External Services — Messenger
 # ---------------------------------------------------------------------------
-MESSENGER_URL = f"http://localhost:{MESSENGER_PORT}"
+MESSENGER_URL = os.environ.get(
+    "MESSENGER_URL",
+    getattr(_CLUSTER, "MESSENGER_URL", f"http://127.0.0.1:{MESSENGER_PORT}"),
+).rstrip("/")
 MESSENGER_API_KEY = ""  # populated at runtime after bot registration
 
 
@@ -69,7 +93,7 @@ MESSENGER_API_KEY = ""  # populated at runtime after bot registration
 # LLM_API_URL is the one legitimate runtime override: it lets ops point
 # Hoonbot at a remote LLM API host without editing this file.
 _LLM_API_URL_OVERRIDE = os.environ.get("LLM_API_URL", "").strip().rstrip("/")
-_LLM_API_LOCAL_URL = f"http://localhost:{LLM_API_PORT}"
+_LLM_API_LOCAL_URL = getattr(_CLUSTER, "HOONBOT_LLM_API_URL", f"http://127.0.0.1:{LLM_API_PORT}").rstrip("/")
 
 LLM_API_URL = _LLM_API_URL_OVERRIDE or _LLM_API_LOCAL_URL
 
@@ -146,3 +170,39 @@ STREAMING_ENABLED = True
 # Optional shared secret for the inbound /webhook endpoint. Empty disables
 # the check.
 WEBHOOK_INCOMING_SECRET = ""
+
+
+# ---------------------------------------------------------------------------
+# Cluster
+# ---------------------------------------------------------------------------
+CLUSTER_ENABLED = bool(getattr(_CLUSTER, "CLUSTER_ENABLED", True))
+CLUSTER_ROLE = getattr(_CLUSTER, "NODE_ROLE", "master")
+NODE_NAME = getattr(_CLUSTER, "NODE_NAME", "master")
+NODE_IP = getattr(_CLUSTER, "NODE_IP", "127.0.0.1")
+NODE_CAPABILITIES = list(getattr(_CLUSTER, "NODE_CAPABILITIES", []))
+NODE_TAGS = list(getattr(_CLUSTER, "NODE_TAGS", []))
+CLUSTER_TOKEN = getattr(_CLUSTER, "CLUSTER_TOKEN", "")
+CLUSTER_MASTER_API_URL = getattr(_CLUSTER, "CLUSTER_MASTER_API_URL", f"http://127.0.0.1:{LLM_API_PORT}").rstrip("/")
+CLUSTER_SLAVE_POLL_INTERVAL_SECONDS = float(getattr(_CLUSTER, "CLUSTER_SLAVE_POLL_INTERVAL_SECONDS", 3.0))
+CLUSTER_ENABLE_DELEGATION = CLUSTER_ENABLED and CLUSTER_ROLE == "master"
+HOONBOT_WEBHOOK_URL = os.environ.get(
+    "HOONBOT_WEBHOOK_URL",
+    getattr(_CLUSTER, "HOONBOT_WEBHOOK_URL", f"http://127.0.0.1:{HOONBOT_PORT}/webhook"),
+).rstrip("/")
+
+
+# ---------------------------------------------------------------------------
+# Prompt, heartbeat, and skill profiles
+# ---------------------------------------------------------------------------
+_DEFAULT_PROMPT = _BASE_DIR / "prompts" / "PROMPT.md"
+_DEFAULT_HEARTBEAT = _BASE_DIR / "prompts" / "HEARTBEAT.md"
+_PROFILE_PROMPT = Path(getattr(_CLUSTER, "PROMPT_FILE", _DEFAULT_PROMPT))
+_PROFILE_HEARTBEAT = Path(getattr(_CLUSTER, "HEARTBEAT_FILE", _DEFAULT_HEARTBEAT))
+_PROFILE_SKILLS = Path(getattr(_CLUSTER, "SKILLS_DIR", _BASE_DIR / "skills"))
+
+PROMPT_FILE = str(_PROFILE_PROMPT if _PROFILE_PROMPT.exists() else _DEFAULT_PROMPT)
+HEARTBEAT_FILE = str(_PROFILE_HEARTBEAT if _PROFILE_HEARTBEAT.exists() else _DEFAULT_HEARTBEAT)
+SKILLS_DIR = str(_PROFILE_SKILLS if _PROFILE_SKILLS.exists() else _BASE_DIR / "skills")
+PROMPT_PROFILE = getattr(_CLUSTER, "PROMPT_PROFILE", CLUSTER_ROLE)
+HEARTBEAT_PROFILE = getattr(_CLUSTER, "HEARTBEAT_PROFILE", CLUSTER_ROLE)
+SKILLS_PROFILE = getattr(_CLUSTER, "SKILLS_PROFILE", CLUSTER_ROLE)

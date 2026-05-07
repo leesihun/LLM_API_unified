@@ -60,8 +60,8 @@ if ($Background) {
     Write-Host "[run] Starting in background. Logs: $LogFile"
     $ErrFile = "$LogFile.err"
     $proc = Start-Process -FilePath $Python -ArgumentList @("hoonbot.py") -WorkingDirectory $ScriptDir -WindowStyle Hidden -RedirectStandardOutput $LogFile -RedirectStandardError $ErrFile -PassThru
-    Write-Host "[ok] PID $($proc.Id) listening on http://localhost:$HoonbotPort"
+    Write-Host "[ok] PID $($proc.Id) listening on http://127.0.0.1:$HoonbotPort"
 } else {
-    Write-Host "[run] Starting foreground on http://localhost:$HoonbotPort"
+    Write-Host "[run] Starting foreground on http://127.0.0.1:$HoonbotPort"
     & $Python hoonbot.py
 }

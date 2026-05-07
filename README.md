@@ -1,25 +1,43 @@
-# Huni — Self-Hosted AI Stack
+# Huni Self-Hosted AI Stack
 
-Three independent, self-contained services. Each has one config file and one build-and-launch script per OS.
+Three independent, self-contained services plus an optional master/slave cluster
+control plane. App folders keep their own config adapter, while cluster-wide
+role, node name, IP URLs, prompt profile, heartbeat profile, and skill profile
+are controlled from `cluster_config.py`.
+Hoonbot prompt and heartbeat profile files live under `hoonbot/prompts/`.
+LLM API runtime prompt templates live under `llm-api/prompts/`.
 
 ## Services
 
 | Folder | Port | Description |
-|---|---|---|
-| [`llm-api/`](llm-api/) | 10007 | OpenAI-compatible LLM API wrapping llama.cpp — full agentic loop, JWT auth, RAG, 10 tools |
-| [`hoonbot/`](hoonbot/) | 10001 | Python bot bridging Messenger ↔ LLM API with tool access and persistent memory |
-| [`messenger/`](messenger/) | 10006 | Node.js real-time team chat (React UI, Socket.IO, file sharing, Claude/OpenCode terminals) |
+|---|---:|---|
+| `llm-api/` | 10007 | OpenAI-compatible LLM API wrapping llama.cpp, agent loop, auth, RAG, and tools |
+| `hoonbot/` | 10001 | Python bot bridging Messenger, LLM API, cluster delegation, and persistent memory |
+| `messenger/` | 10006 | Node.js real-time team chat with React UI, Socket.IO, files, and terminals |
 
 ## Quick Start
 
 ```bash
-# 1. LLM API (start llama.cpp first — see llm-api/README.md)
+./start-master.sh --build
+```
+
+```powershell
+.\start-master.ps1 -Build
+```
+
+Single-click Windows wrappers are available at `Start-Master.cmd` and
+`Start-Slave.cmd`.
+
+Manual service startup still works:
+
+```bash
+# 1. LLM API (start llama.cpp first; see llm-api/README.md)
 cd llm-api && ./start.sh --build
 
 # 2. Messenger
 cd messenger && ./start.sh --build
 
-# 3. Hoonbot (Messenger + LLM API must be running)
+# 3. Hoonbot
 cd hoonbot && ./start.sh --build
 ```
 
@@ -31,10 +49,20 @@ cd ..\messenger; .\start.ps1 -Build
 cd ..\hoonbot; .\start.ps1 -Build
 ```
 
+## Cluster Notes
+
+- Use one `NODE_NAME` per machine; this is the routing name, log name, and
+  Messenger mention name.
+- Master runs Messenger, master Hoonbot, and master LLM API.
+- Slaves run Hoonbot in worker mode plus their local LLM API/model runtime.
+- Inter-node URLs should be IP-style, for example `http://192.168.0.10:10007`.
+  Loopback URLs are only for same-machine service calls.
+- Master cluster APIs live under `/api/cluster/*` on the master LLM API.
+- Messenger can delegate with `@node-name task`, `@tag:name task`,
+  `@role:name task`, or `@all-slaves task`.
+
 ## Dependencies
 
-- `llm-api` requires a running **llama.cpp** server (`llama-server --model ... --port 5905`), with optional backup at `10000`
-- `hoonbot` requires `llm-api` (10007) and `messenger` (10006) to be reachable
-- `messenger` is fully standalone
-
-Each folder contains a `README.md` with full configuration details.
+- `llm-api` requires a running llama.cpp server, default `http://127.0.0.1:5905`.
+- `hoonbot` requires LLM API credentials created by `hoonbot/scripts/setup_credentials.py`.
+- `messenger` is master-only in v1; slaves do not run Messenger.

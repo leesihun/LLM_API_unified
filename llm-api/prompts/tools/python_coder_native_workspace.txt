@@ -1,0 +1,22 @@
+## Task
+{instruction}
+{context_block}
+
+## Existing workspace files
+{files_context}
+
+Write one complete executable Python script that performs the task end-to-end.
+
+Requirements:
+- Reuse the existing workspace files when relevant. Do not reimplement logic
+  they already provide unless the task requires a change.
+- Keep imports, naming, file layout, and styling consistent with the shown
+  files.
+- If the existing files expose helper functions or classes, import and call
+  them rather than copying their bodies.
+- Read and write text with `encoding="utf-8"`. Use relative paths.
+- Print the result, output file path, or clear success message.
+- Validate inputs at boundaries; on failure print a concrete error and
+  `sys.exit(1)`.
+- Output exactly one fenced Python code block, OR the line
+  `NEEDS_CLARIFICATION: ...` if one missing detail blocks a safe script.

@@ -9,6 +9,7 @@ running npm commands. Runtime environment variables can override these defaults.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shlex
@@ -19,7 +20,22 @@ APP_DIR = Path(__file__).resolve().parent
 SERVER_DIR = APP_DIR / "server"
 CLIENT_DIR = APP_DIR / "client"
 
-PORT = int(os.environ.get("PORT", "10006"))
+
+def _load_cluster_config():
+    path = APP_DIR.parent / "cluster_config.py"
+    if not path.exists():
+        return None
+    spec = importlib.util.spec_from_file_location("_messenger_cluster_config", path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+_CLUSTER = _load_cluster_config()
+
+PORT = int(os.environ.get("PORT", str(getattr(_CLUSTER, "MESSENGER_PORT", 10006))))
 
 def _path_setting(name: str, default: Path) -> Path:
     raw = os.environ.get(name)
@@ -41,7 +57,7 @@ WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", str(APP_DIR.parent))
 CLAUDE_CMD = os.environ.get("CLAUDE_CMD", "claude")
 OPENCODE_CMD = os.environ.get("OPENCODE_CMD", "opencode")
 MESSENGER_EMBEDDED = os.environ.get("MESSENGER_EMBEDDED", "")
-VITE_BACKEND_URL = os.environ.get("VITE_BACKEND_URL", f"http://localhost:{PORT}")
+VITE_BACKEND_URL = os.environ.get("VITE_BACKEND_URL", getattr(_CLUSTER, "MESSENGER_URL", f"http://127.0.0.1:{PORT}"))
 
 MESSENGER_LOG_FILE = _path_setting("MESSENGER_LOG_FILE", MESSENGER_DATA_DIR / "messenger.log")
 

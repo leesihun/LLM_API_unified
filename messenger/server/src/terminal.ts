@@ -394,7 +394,7 @@ connect();
 // Pre-render HTML pages
 export const CLAUDE_HTML = makeTerminalHTML({
   title: 'Claude Code',
-  subtitle: 'aihoonbot.com 원격 터미널',
+  subtitle: 'Huni remote terminal',
   accentColor: '#6366f1',
   accentHover: '#818cf8',
   storageKey: 'cc_token',
@@ -403,7 +403,7 @@ export const CLAUDE_HTML = makeTerminalHTML({
 
 export const OPENCODE_HTML = makeTerminalHTML({
   title: 'OpenCode',
-  subtitle: 'aihoonbot.com 원격 터미널',
+  subtitle: 'Huni remote terminal',
   accentColor: '#10b981',
   accentHover: '#34d399',
   storageKey: 'oc_token',

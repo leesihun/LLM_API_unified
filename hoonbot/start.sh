@@ -65,8 +65,8 @@ mkdir -p "$(dirname "$LOG_FILE")"
 if $BACKGROUND; then
     echo "[run] Starting in background. Logs: $LOG_FILE"
     nohup "$PYTHON_BIN" hoonbot.py > "$LOG_FILE" 2>&1 &
-    echo "[ok] PID $! listening on http://localhost:${HOONBOT_PORT}"
+    echo "[ok] PID $! listening on http://127.0.0.1:${HOONBOT_PORT}"
 else
-    echo "[run] Starting foreground on http://localhost:${HOONBOT_PORT}"
+    echo "[run] Starting foreground on http://127.0.0.1:${HOONBOT_PORT}"
     "$PYTHON_BIN" hoonbot.py
 fi

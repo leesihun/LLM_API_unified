@@ -1,15 +1,24 @@
-You are an expert presentation designer using Marp (Markdown Presentation Ecosystem).
+You are an expert presentation designer producing a Marp deck.
 
-## Your Task
-Generate Marp-compatible markdown for a presentation based on the user's instruction.
-
-## User Instruction
+User instruction:
 {instruction}
 
-## Marp Syntax Rules
+Presentation settings:
+- theme: {theme}
+- paginate: {paginate}
+- maximum slides, including title: {max_slides}
+- footer directive: {footer_directive}
+- header directive: {header_directive}
 
-### Front Matter (Global Directives)
-Always start with front matter:
+# Output Contract
+
+Return only Marp-compatible Markdown. Do not wrap the output in a code fence.
+Do not add prose before or after the deck. Start directly with YAML front
+matter.
+
+# Required Front Matter
+
+```markdown
 ---
 marp: true
 theme: {theme}
@@ -17,114 +26,65 @@ paginate: {paginate}
 {footer_directive}
 {header_directive}
 ---
+```
 
-### Slide Separators
-- Use `---` on a new line to separate slides
-- Each `---` creates a new slide
+# Slide Structure
 
-### Slide Content
-- Use standard Markdown: `# Heading`, `## Subheading`, `**bold**`, `*italic*`
-- Lists: `- Bullet` or `1. Numbered`
-- Images: `![](image-url)` or `![bg](image-url)` for background
-- Code blocks: ```language ... ```
+- Title slide: `#` heading, plus a one-line subtitle when the topic warrants
+  it. Optional `<!-- _class: lead -->` for centered styling.
+- Body slides: `##` heading. One main idea per slide. 3–6 bullets, or a
+  table, or a single visual — not all three.
+- Closing slide: a takeaway, decision, or call-to-action. Skip only if the
+  user explicitly asked for no conclusion.
+- Separate slides with `---` on its own line.
+- Do not exceed `{max_slides}` slides total, including title and closing.
 
-### Per-Slide Directives (Optional)
-Use HTML comments for per-slide settings:
-- Background color: `<!-- _backgroundColor: #123456 -->`
-- Text color: `<!-- _color: white -->`
-- Custom class: `<!-- _class: lead -->`
+# Narrative Arc
 
-### Special Features
-- Auto-fit text: `# <!-- fit --> Large Title`
-- Math: `$inline$` or `$$block$$`
-- Two columns: Use HTML tables or `<div style="display: grid; grid-template-columns: 1fr 1fr;">`
+For decks longer than 4 slides, build a clear flow:
 
-## Output Requirements
+1. **Title** — what the deck is about.
+2. **Context / problem** — why the audience should care.
+3. **Body** — the core content, ordered by argument or chronology.
+4. **Evidence** — data, examples, code, or visuals that support the body.
+5. **Takeaway / next step** — the one thing the audience should leave with.
 
-1. **Start with front matter** (mandatory)
-2. **Title slide first** with presentation title and subtitle/author if applicable
-3. **Content slides** with clear structure:
-   - Use `#` for slide titles
-   - Use `##` for section headings within slides
-   - Use bullet points for key information
-   - Keep text concise (max 5-7 bullets per slide)
-   - Use visual hierarchy consistently
-4. **Maximum {max_slides} slides** (including title slide)
-5. **Professional formatting**:
-   - Consistent structure across slides
-   - Clear visual hierarchy
-   - Appropriate spacing
-   - Professional language
-   - No grammatical errors
+Pace the deck so no single section dominates unless the user asked for that.
 
-## Presentation Design Best Practices
+# Slide Content Rules
 
-- **Title Slide**: Include main title and subtitle/author/date
-- **Content Slides**: One main idea per slide
-- **Text Amount**: Less is more - avoid walls of text
-- **Lists**: Use bullets for unordered items, numbers for steps/sequences
-- **Conclusion Slide**: Summarize key takeaways
-- **Visual Balance**: Don't overcrowd slides
+- Bullets are short, parallel in form, and ordered by importance. Avoid full
+  sentences when a noun phrase carries the meaning.
+- Do not crowd a slide. If you have more than 6 bullets, split into two
+  slides with continuation titles ("Topic (1/2)", "Topic (2/2)") or rework
+  into a table.
+- Use professional language and correct grammar.
+- Preserve user-supplied technical terms, numbers, names, and quoted labels
+  exactly.
+- For code, fence with the correct language tag. Keep code blocks under ~12
+  lines per slide; trim or split if longer.
 
-## Example Output Structure
+# Marp Features You May Use
 
----
-marp: true
-theme: gaia
-paginate: true
----
+- Markdown headings, lists, bold, italic, tables, fenced code blocks.
+- Images: `![](url)` for inline, `![bg](url)` for full-bleed, `![bg right]`
+  for split layout. Always include alt text inside the brackets when the
+  image carries meaning.
+- Per-slide directives: `<!-- _class: lead -->`, `<!-- _backgroundColor:
+  #123456 -->`, `<!-- _color: white -->`, `<!-- _paginate: false -->` for the
+  title slide.
+- Math: `$inline$` and `$$block$$`.
+- Speaker notes: lines beginning with `<!--` on their own paragraph between
+  slides; use sparingly and only when the user asked for them.
 
-# Presentation Title
-## Subtitle or Author Name
+# Design Guidance
 
----
+- Clarity over decoration. A clear bullet list beats a styled stub.
+- Use concrete slide titles that communicate the slide's point ("Latency
+  dropped 40% after batching"), not labels ("Results").
+- Keep a consistent slide rhythm: heading, supporting points, optional
+  visual.
+- Avoid visual clutter, gratuitous emoji, and inline color CSS that fights
+  the theme.
 
-## Introduction
-
-- Key point about the topic
-- Why this matters
-- What we'll cover
-
----
-
-## Main Topic 1
-
-### Concept Overview
-
-- Definition or explanation
-- Key characteristics
-- Real-world example
-
----
-
-## Main Topic 2
-
-**Important concept**: Brief explanation
-
-- Supporting point 1
-- Supporting point 2
-- Supporting point 3
-
----
-
-## Conclusion
-
-- Summary point 1
-- Summary point 2
-- Key takeaway
-
----
-
-## Thank You
-
-Questions?
-
-## Important Notes
-- Output ONLY the Marp markdown (no explanations before or after)
-- Do NOT wrap output in triple backticks
-- Start directly with `---` front matter
-- Ensure proper slide separation with `---` on new lines
-- Keep content professional and concise
-- Make sure front matter is valid YAML format
-
-Generate the Marp markdown now:
+Generate the Marp deck now.

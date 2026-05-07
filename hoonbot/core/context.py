@@ -15,8 +15,8 @@ import config
 # ---------------------------------------------------------------------------
 
 MEMORY_FILE = os.path.join(config.DATA_DIR, "memory.md")
-SKILLS_DIR = os.path.join(os.path.dirname(__file__), "..", "skills")
-_PROMPT_FILE = os.path.join(os.path.dirname(__file__), "..", "PROMPT.md")
+SKILLS_DIR = str(getattr(config, "SKILLS_DIR", os.path.join(os.path.dirname(__file__), "..", "skills")))
+_PROMPT_FILE = str(getattr(config, "PROMPT_FILE", os.path.join(os.path.dirname(__file__), "..", "prompts", "PROMPT.md")))
 
 # ---------------------------------------------------------------------------
 # Loaders
@@ -38,9 +38,10 @@ def load_system_prompt() -> str:
         with open(_PROMPT_FILE, "r", encoding="utf-8") as f:
             _system_prompt_cache = f.read()
         _system_prompt_mtime = mtime
-    except FileNotFoundError:
-        _system_prompt_cache = "You are a helpful AI assistant."
+    except FileNotFoundError as exc:
+        _system_prompt_cache = ""
         _system_prompt_mtime = None
+        raise FileNotFoundError(f"Hoonbot prompt file is missing: {_PROMPT_FILE}") from exc
     return _system_prompt_cache
 
 
@@ -94,6 +95,9 @@ def _build_session_variables() -> str:
         f"- `messenger_api_key`: `{config.MESSENGER_API_KEY}`\n"
         f"- `bot_user_id`: `{config.BOT_USER_ID}`\n"
         f"- `bot_name`: `{config.MESSENGER_BOT_NAME}`\n"
+        f"- `node_name`: `{getattr(config, 'NODE_NAME', 'master')}`\n"
+        f"- `cluster_role`: `{getattr(config, 'CLUSTER_ROLE', 'master')}`\n"
+        f"- `hoonbot_webhook_url`: `{getattr(config, 'HOONBOT_WEBHOOK_URL', '')}`\n"
         f"- `home_room_id`: `{config.MESSENGER_HOME_ROOM_ID}`\n"
         f"- `data_dir`: `{os.path.abspath(config.DATA_DIR)}`\n"
         f"- `memory_file`: `{os.path.abspath(MEMORY_FILE)}`\n"

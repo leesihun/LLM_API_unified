@@ -126,9 +126,7 @@ async def _fetch_bot_identity() -> None:
 
 async def _subscribe_webhooks() -> None:
     """Register webhook subscriptions, re-registering the bot if the key is stale."""
-    webhook_host = "aihoonbot.com" if config.USE_CLOUDFLARE else "localhost"
-    webhook_scheme = "https" if config.USE_CLOUDFLARE else "http"
-    webhook_url = f"{webhook_scheme}://{webhook_host}:{config.HOONBOT_PORT}/webhook"
+    webhook_url = config.HOONBOT_WEBHOOK_URL
     logger.info(f"[Messenger] Webhook target: {webhook_url}")
 
     retries = config.STARTUP_RETRY_ATTEMPTS
@@ -252,6 +250,20 @@ async def _catch_up() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     os.makedirs(config.DATA_DIR, exist_ok=True)
+
+    if getattr(config, "CLUSTER_ROLE", "master") == "slave":
+        from core.cluster_worker import run_slave_worker_loop
+
+        worker_task = asyncio.create_task(run_slave_worker_loop())
+        logger.info(f"[Hoonbot] Slave node '{config.NODE_NAME}' ready on port {config.HOONBOT_PORT}")
+        try:
+            yield
+        finally:
+            worker_task.cancel()
+            await asyncio.gather(worker_task, return_exceptions=True)
+            await close_llm_client()
+            logger.info("[Hoonbot] Slave shutdown complete")
+        return
 
     await _autofind_llm_api()
     await _register_bot()

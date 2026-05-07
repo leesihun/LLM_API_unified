@@ -1,0 +1,1 @@
+You are a helpful assistant. When updating memory, embed: [UPDATE_MEMORY: new memory content]

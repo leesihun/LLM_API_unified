@@ -14,8 +14,8 @@ llama-server --model /path/to/model.gguf --port 5905 --parallel 4
 
 # 3. Build/install dependencies and start the API
 ./start.sh --build
-# → http://localhost:10007
-# → Swagger UI: http://localhost:10007/docs
+# -> http://127.0.0.1:10007
+# -> Swagger UI: http://127.0.0.1:10007/docs
 ```
 
 On Windows:
@@ -28,11 +28,14 @@ On Windows:
 
 **All settings live in `config.py`** — edit it directly. Key values:
 
+Runtime prompt templates live under `prompts/`: `system.txt`, agent templates
+under `prompts/agent/`, and tool templates under `prompts/tools/`.
+
 | Setting | Default | Purpose |
 |---|---|---|
 | `SERVER_PORT` | `10007` | API listen port |
-| `LLAMACPP_HOST` | `http://localhost:5905` | llama.cpp server URL |
-| `LLAMACPP_BACKUP_HOST` | `http://localhost:10000` | fallback llama.cpp server URL |
+| `LLAMACPP_HOST` | `http://127.0.0.1:5905` | llama.cpp server URL |
+| `LLAMACPP_BACKUP_HOST` | `http://127.0.0.1:10000` | fallback llama.cpp server URL |
 | `AVAILABLE_TOOLS` | (list) | Tools exposed to the LLM |
 | `AGENT_MAX_ITERATIONS` | `30` | Max tool-call iterations per request |
 | `JWT_SECRET_KEY` | env or hardcoded | Set via `JWT_SECRET_KEY` env var in prod |
@@ -56,7 +59,7 @@ llm-api/
 │   ├── models/        Pydantic schemas
 │   └── utils/         Auth (JWT), file handler, logging helpers
 ├── tools/             10 built-in tools (websearch, RAG, code_exec, shell, ...)
-├── prompts/           system.txt + per-tool prompt fragments
+├── prompts/           system.txt + agent/tool prompt templates
 ├── scripts/           Dev helpers (clear_data.py, create_users.py, etc.)
 ├── docs/              API docs, RAG guides, feature notes
 └── data/              Runtime data (SQLite, uploads, sessions, logs) — gitignored

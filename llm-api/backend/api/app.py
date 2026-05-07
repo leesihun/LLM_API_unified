@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import config
-from backend.api.routes import auth, models, admin, chat, sessions, tools, jobs, rag_upload_async
+from backend.api.routes import auth, models, admin, chat, sessions, tools, jobs, rag_upload_async, cluster
 
 _START_TIME = time.time()
 
@@ -299,6 +299,12 @@ def root():
         "status": "online",
         "service": "LLM API",
         "version": "2.0.0",
+        "cluster": {
+            "enabled": config.CLUSTER_ENABLED,
+            "role": config.CLUSTER_ROLE,
+            "node_name": config.NODE_NAME,
+            "advertised_url": config.ADVERTISED_LLM_API_URL,
+        },
         "backend": {
             "type": "llamacpp",
             "host": getattr(llm_backend.backend, "host", config.LLAMACPP_HOST),
@@ -333,6 +339,8 @@ async def _get_health_data() -> dict:
             "total_gb": round(disk.total / 1e9, 1),
         },
         "config": {
+            "cluster_role": config.CLUSTER_ROLE,
+            "node_name": config.NODE_NAME,
             "agent_max_iterations": config.AGENT_MAX_ITERATIONS,
             "available_tools": config.AVAILABLE_TOOLS,
             "python_executor_mode": config.PYTHON_EXECUTOR_MODE,
@@ -359,6 +367,7 @@ app.include_router(sessions.router)  # /api/chat/sessions, /api/chat/history
 app.include_router(tools.router)           # /api/tools/*
 app.include_router(jobs.router)            # /api/jobs/*
 app.include_router(rag_upload_async.router)  # /api/rag/upload/stream (SSE progress)
+app.include_router(cluster.router)         # /api/cluster/*
 
 
 @app.exception_handler(Exception)

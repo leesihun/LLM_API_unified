@@ -63,14 +63,14 @@ if $BACKGROUND; then
     nohup npm "${NPM_ARGS[@]}" > "$LOG_FILE" 2>&1 &
     PID=$!
     for _ in $(seq 1 20); do
-        if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then
-            echo "[ok] PID $PID ready at http://localhost:${PORT}"
+        if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+            echo "[ok] PID $PID ready at http://127.0.0.1:${PORT}"
             exit 0
         fi
         sleep 1
     done
     echo "[warn] Started PID $PID, but health check did not pass yet."
 else
-    echo "[run] Starting foreground on http://localhost:${PORT}"
+    echo "[run] Starting foreground on http://127.0.0.1:${PORT}"
     npm "${NPM_ARGS[@]}"
 fi
