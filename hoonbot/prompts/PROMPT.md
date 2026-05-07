@@ -103,16 +103,21 @@ Key endpoints:
 | Send message | POST | `/api/send-message` | `{roomId, content, replyToId?}` |
 | Send file | POST | `/api/send-file` | multipart: `roomId`, `file`, `content?` |
 | Send base64 image | POST | `/api/send-base64` | `{roomId, data, fileName?}` |
+| Upload only | POST | `/api/upload-file` | multipart: `file` |
 | Edit message | POST | `/api/edit-message` | `{messageId, content}` |
 | Delete message | POST | `/api/delete-message` | `{messageId}` |
+| Mark read | POST | `/api/mark-read` | `{roomId, messageIds}` |
 | Get messages | GET | `/api/messages/{roomId}?limit=N` | none |
 | Search | GET | `/api/search?q=...&roomId=N&limit=N` | none |
 | Bot info | GET | `/api/bots/me` | none |
 | List rooms | GET | `/api/rooms?userId=N` | none |
+| Create / leave room | POST | `/api/create-room`, `/api/leave-room` | varies |
 | List users | GET | `/api/users` | none |
 | React | POST | `/api/reactions` | `{messageId, emoji}` |
 | Pin / Unpin | POST/DELETE | `/api/pins[/:messageId]` | `{messageId, roomId}` |
+| Typing | POST | `/api/typing`, `/api/stop-typing` | `{roomId, statusText?}` |
 | Webhooks | CRUD | `/api/webhooks[/:id]` | varies |
+| Watchers | CRUD | `/api/watchers[/:id]` | varies |
 | File manager | varies | `/files/{list,mkdir,upload,download,delete,rename}` | varies |
 
 Room resolution: `GET /api/rooms?userId={bot_user_id}`, then match room
@@ -150,6 +155,10 @@ Variables. Read the relevant skill before executing a specialized workflow.
 | `screenshot_and_send.md` | take screenshot, capture screen |
 | `file_manager.md` | list/upload/download/manage server files |
 | `manage_webhooks.md` | list/create/update/delete webhooks |
+| `web_watchers.md` | create/list/update/delete URL watchers |
+| `room_management.md` | list, resolve, create, or leave rooms |
+| `message_controls.md` | edit/delete/mark-read/typing controls |
+| `reactions_and_pins.md` | react, list pins, pin, or unpin |
 | `user_directory.md` | list users, find user, show bots |
 | `summarize_room.md` | summarize room, catch me up, recap |
 | `diagnose_system.md` | health check, server status, diagnostics |

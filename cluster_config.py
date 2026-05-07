@@ -161,6 +161,7 @@ NODE_TAGS = _csv("NODE_TAGS", _default_tags)
 # ---------------------------------------------------------------------------
 
 HOONBOT_PROMPTS_DIR = ROOT_DIR / "hoonbot" / "prompts"
+HOONBOT_SKILLS_DIR = ROOT_DIR / "hoonbot" / "skills"
 HOONBOT_SKILL_PROFILES_DIR = ROOT_DIR / "hoonbot" / "profiles"
 PROMPT_PROFILE = _env("PROMPT_PROFILE", NODE_ROLE)
 HEARTBEAT_PROFILE = _env("HEARTBEAT_PROFILE", NODE_ROLE)
@@ -168,7 +169,12 @@ SKILLS_PROFILE = _env("SKILLS_PROFILE", NODE_ROLE)
 
 PROMPT_FILE = HOONBOT_PROMPTS_DIR / PROMPT_PROFILE / "PROMPT.md"
 HEARTBEAT_FILE = HOONBOT_PROMPTS_DIR / HEARTBEAT_PROFILE / "HEARTBEAT.md"
-SKILLS_DIR = HOONBOT_SKILL_PROFILES_DIR / SKILLS_PROFILE / "skills"
+_PROFILE_SKILLS_DIR = HOONBOT_SKILL_PROFILES_DIR / SKILLS_PROFILE / "skills"
+_PROFILE_SKILL_FILES = [
+    path for path in _PROFILE_SKILLS_DIR.glob("*.md")
+    if path.name.lower() != "readme.md"
+] if _PROFILE_SKILLS_DIR.exists() else []
+SKILLS_DIR = _PROFILE_SKILLS_DIR if _PROFILE_SKILL_FILES else HOONBOT_SKILLS_DIR
 
 
 def node_payload() -> dict:

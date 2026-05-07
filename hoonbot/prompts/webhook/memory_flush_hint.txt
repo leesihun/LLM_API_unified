@@ -1,1 +1,16 @@
-[System: This session is getting long. Review the conversation for durable facts, decisions, preferences, reminders, or project state that should survive context compaction. If there is important unsaved information, update the memory file now by reading it, merging carefully, and writing the full updated content. Do not save secrets or transient chat noise.]
+[System: This session has accumulated enough turns that context compaction is
+likely. Before that happens, take one pass over the recent conversation and
+the current memory file:
+
+1. Identify durable, non-trivial facts the user would want preserved across
+   sessions: preferences, decisions, ongoing project state, scheduled
+   reminders, names/handles, recurring tasks.
+2. Skip transient chat noise, jokes, banter, one-off questions, and content
+   that is already obvious from the codebase or git history.
+3. Read the existing memory file with file_reader, merge new facts in
+   place (do not overwrite unrelated entries), and write the full updated
+   Markdown file back. Include dates for time-sensitive entries.
+4. Do not save secrets, raw tokens, credentials, or `.env` contents.
+
+If there is nothing new worth saving, do not touch the memory file. Reply
+to the user normally.]

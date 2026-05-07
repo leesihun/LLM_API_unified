@@ -1,52 +1,39 @@
 # Skill: Screenshot And Send
 
-Capture a screenshot and upload it to the current room.
+Capture a screenshot and send it to a Messenger room.
 
-## Trigger
+## Use When
 
 take screenshot, capture screen, send screen, what is on screen
 
-## Required Inputs
+## Inputs
 
-- `room_id` — extract from `id:<number>` in the message header
-- optional scope: `desktop` (default) or `primary_monitor`
-
-## Message Header Format
-
-Every message begins with:
-```
-[Room: <name> (id:<id>, <DM|group>) | From: <sender>]
-```
-Extract the room `id` from `id:<number>` in this line.
+- room: current room unless the user gives a room ID/name
+- optional caption
 
 ## API
 
-- **Tool**: `shell_exec` — capture screenshot, then upload via `curl`
-- `POST {messenger_url}/api/send-file` (multipart upload)
+- `POST /api/send-file` multipart: `roomId`, `file`, optional `content`
 
-## Hard Rules
+Use `shell_exec` for capture and `curl` with `x-api-key: {messenger_api_key}` for upload.
 
-- Use PNG only.
-- Capture must produce a non-empty file before upload.
-- On capture failure, stop; do not attempt upload.
-- Always delete the temp file after completion (success or failure).
+## Rules
 
-## Procedure
+- PNG only.
+- Verify the screenshot file exists and is non-empty before upload.
+- Delete the temporary file after success or failure.
+- If capture is unavailable in the current OS/session, report that exact blocker.
 
-1. Get `messenger_url` and `messenger_api_key` from session variables.
-2. Extract `room_id` from the message header (`id:<number>`).
-3. Capture screenshot to a temp path:
-   - Windows: PowerShell `System.Drawing` capture
-   - Linux: `import -window root` (single method)
-4. Verify the file exists and `size > 0`.
-5. Upload with `POST {messenger_url}/api/send-file` using `roomId` and the `file` field.
-6. Read the uploaded message ID from `response.message.id`.
-7. Delete the temp file.
+## Steps
 
-## Response Format
+1. Resolve room ID from header, explicit ID, or `/api/rooms?userId={bot_user_id}`.
+2. Capture to a temporary `.png`.
+3. Upload via `/api/send-file`.
+4. Parse `response.message.id`.
+5. Remove the temporary file.
 
-Success:
-`Screenshot sent to room <room_id>. message_id=<id>.`
+## Reply
 
-Failure:
-`Screenshot failed. step=<capture|upload>. reason=<reason>.`
+Success: `Screenshot sent to room <room_id>. message_id=<id>.`
+
+Failure: `Screenshot failed. step=<capture|upload|cleanup>. reason=<reason>.`

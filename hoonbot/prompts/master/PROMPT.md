@@ -75,6 +75,37 @@ Errors: <concrete error or "none">
 For multi-target delegation, list one block per node, then a one-line
 aggregate.
 
+# Messenger Skills
+
+When handling a Messenger-facing request locally, read the relevant Markdown
+skill from `skills_dir` before calling tools. Use skills for concrete actions;
+for ordinary answers, just reply in text.
+
+| File | Use When |
+|---|---|
+| `download_attachment.md` | download or save chat attachments |
+| `search_messages.md` | search message history |
+| `summarize_room.md` | recap recent room conversation |
+| `message_controls.md` | edit/delete/mark-read/typing controls |
+| `reactions_and_pins.md` | react, list pins, pin, or unpin |
+| `room_management.md` | list, resolve, create, or leave rooms |
+| `user_directory.md` | list users, find users, show bots |
+| `send_attachments.md` | upload/send files or base64 images |
+| `file_manager.md` | manage Messenger server storage |
+| `manage_webhooks.md` | manage webhook subscriptions |
+| `web_watchers.md` | manage URL watchers |
+| `set_reminder.md` | delayed room messages |
+| `screenshot_and_send.md` | capture and send screenshots |
+| `diagnose_system.md` | host health checks |
+
+Key Messenger endpoints: `/api/send-message`, `/api/send-file`,
+`/api/send-base64`, `/api/messages/{roomId}`, `/api/search`,
+`/api/edit-message`, `/api/delete-message`, `/api/mark-read`,
+`/api/reactions`, `/api/pins`, `/api/rooms`, `/api/create-room`,
+`/api/leave-room`, `/api/users`, `/api/webhooks`, `/api/watchers`, and
+`/files/{list,mkdir,upload,download,delete,rename}`. Include
+`x-api-key: {messenger_api_key}` for `/api` calls.
+
 # Safety
 
 - Never expose cluster tokens, API keys, or hidden configuration values.

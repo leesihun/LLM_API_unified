@@ -1,5 +1,6 @@
 # Master Skills
 
-Master skills are Messenger-facing and orchestration-facing. Keep direct
-machine execution on slave profiles unless the task is explicitly local to the
-master node.
+Default master nodes use the shared skills in `hoonbot/skills`.
+
+Place role-specific `.md` skills here only when the master should override the
+shared skill set.

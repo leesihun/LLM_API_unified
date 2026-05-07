@@ -1,59 +1,36 @@
 # Skill: Send Attachments
 
-Send local files or base64 images to a Messenger room.
+Send files or base64 images to Messenger.
 
-## Trigger
+## Use When
 
 attach, upload, send file, send image, share document
 
-## Required Inputs
+## Inputs
 
-- target room — use current room from message header unless an explicit room name or ID is given
-- one or more file paths, or one base64 image data URL
-
-## Message Header Format
-
-Every message begins with:
-```
-[Room: <name> (id:<id>, <DM|group>) | From: <sender>]
-```
-Extract `id` from `id:<number>` in this line to get the current room ID.
+- target room: current room unless explicit room ID/name is given
+- one or more local file paths, or one image data URL
+- optional caption
 
 ## API
 
-- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
-- `POST {messenger_url}/api/send-file` for local files (multipart)
-- `POST {messenger_url}/api/send-base64` for base64 image payloads
+- `POST /api/send-file` multipart: `roomId`, `file`, optional `content`
+- `POST /api/send-base64` JSON: `{roomId, data, fileName?, content?}`
+- `POST /api/send-message` JSON supports `attachments[]` only when files were already uploaded
 
-## Hard Rules
+Use `shell_exec` with `curl` and `x-api-key: {messenger_api_key}`.
 
-- Validate all paths before the first upload; if any path is invalid, stop with no uploads.
-- No glob expansion, no fuzzy path matching, no room fallback.
-- On `401` or `403`, stop immediately.
-- Upload files sequentially and stop at the first failed upload.
+## Rules
 
-## Procedure
+- Validate every local path before the first upload. If any path is invalid, upload nothing.
+- No glob expansion or fuzzy path matching.
+- Stop immediately on `401` or `403`.
+- Upload sequentially and stop at the first failure.
 
-1. Get `messenger_url`, `messenger_api_key`, and `bot_user_id` from session variables.
-2. Resolve the target room:
-   - **Explicit room ID**: use it directly.
-   - **Explicit room name**: call `GET {messenger_url}/api/rooms?userId={bot_user_id}` and match the name case-insensitively; stop if no match or multiple matches.
-   - **No explicit target**: extract `id` from the message header.
-3. Validate attachment input:
-   - File mode: every path exists and is a file.
-   - Base64 mode: input starts with `data:image/` and contains `;base64,`.
-4. Send attachments:
-   - File mode → `POST {messenger_url}/api/send-file` with `roomId`, optional `content`, and `file`.
-   - Base64 mode → `POST {messenger_url}/api/send-base64` with `roomId`, `data`, optional `fileName`, optional `content`.
-5. Parse the message ID as `response.message.id`. If missing, stop and report an invalid API response.
+## Reply
 
-## Response Format
+Success: `Uploaded <n> attachment(s) to room <room_id>: <file> -> <message_id>, ...`
 
-Success:
-`Uploaded <n> attachment(s) to room <room_id>: <file> -> <message_id>, ...`
+Aborted: `Upload aborted. reason=<reason>. fix=<required correction>.`
 
-Failure before upload:
-`Upload aborted. reason=<reason>. fix=<required user correction>.`
-
-Failure during upload:
-`Partial upload to room <room_id>. uploaded=<list>. failed=<file>. status=<code>. error=<message>.`
+Partial: `Partial upload to room <room_id>. uploaded=<list>. failed=<file>. status=<code>. error=<message>.`

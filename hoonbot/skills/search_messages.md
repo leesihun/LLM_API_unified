@@ -1,54 +1,34 @@
 # Skill: Search Messages
 
-Search Messenger messages globally or in one room.
+Search Messenger message history.
 
-## Trigger
+## Use When
 
 search messages, find message, when did we discuss, find conversation
 
-## Required Inputs
+## Inputs
 
-- `query` (required)
-- optional `room_id` or exact `room_name`
-- optional `limit` (default `20`, max `100`)
-
-## Message Header Format
-
-Every message begins with:
-```
-[Room: <name> (id:<id>, <DM|group>) | From: <sender>]
-```
-When the user says "search this room" or similar, extract `id` and `name` directly from this line — no API call needed.
+- `query` required
+- optional room scope: current room, room ID, or exact room name
+- optional `limit`, default 20, max 100
 
 ## API
 
-- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
-- `GET {messenger_url}/api/search?q=<query>&limit=<limit>`
-- `GET {messenger_url}/api/search?q=<query>&roomId=<room_id>&limit=<limit>`
+- `GET /api/search?q=<query>&limit=<limit>`
+- `GET /api/search?q=<query>&roomId=<room_id>&limit=<limit>`
 
-## Hard Rules
+Use `shell_exec` with `curl` and `x-api-key: {messenger_api_key}`.
 
-- If query is missing, stop and ask.
-- If a room name is given and does not resolve to exactly one room, stop.
-- Use `/api/search` endpoint only for consistency.
+## Rules
 
-## Procedure
+- If query is missing, ask one question.
+- Resolve named rooms through `/api/rooms?userId={bot_user_id}` and require exactly one match.
+- Do not search deleted messages; `/api/search` already excludes them.
 
-1. Get `messenger_url`, `messenger_api_key`, and `bot_user_id` from session variables.
-2. Parse query, room scope, and limit.
-3. Resolve the room when a scope is specified:
-   - **Current room** ("this room", "here", or no scope): extract `id` from the message header.
-   - **Named room**: call `GET {messenger_url}/api/rooms?userId={bot_user_id}` and match case-insensitively; stop if no match.
-4. Execute the search request with the API key.
-5. Return a compact result list: message ID, room, sender, timestamp, and content preview.
+## Reply
 
-## Response Format
+Found: `Found <count> message(s) for "<query>": 1. [<room>] <sender> <time> "<preview>" (id=<id>) ...`
 
-Found:
-`Found <count> message(s) for "<query>": 1) [<room>] <sender> <time> "<preview>" (id=<id>) ...`
+No results: `No messages found for "<query>".`
 
-No results:
-`No messages found for "<query>".`
-
-Failure:
-`Search failed. status=<code>. error=<message>.`
+Failure: `Search failed. status=<code>. error=<message>.`

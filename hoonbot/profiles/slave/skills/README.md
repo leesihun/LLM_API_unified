@@ -1,5 +1,6 @@
 # Slave Skills
 
-Slave skills are execution-facing. Enable only the tools this node is allowed
-to run, then advertise matching `NODE_CAPABILITIES` and `NODE_TAGS` in the root
-cluster config or environment.
+Default slave nodes use the shared skills in `hoonbot/skills`.
+
+Place role-specific `.md` skills here only when the slave should override the
+shared skill set. Keep advertised `NODE_CAPABILITIES` and `NODE_TAGS` aligned.

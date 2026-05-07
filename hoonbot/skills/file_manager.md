@@ -1,59 +1,47 @@
 # Skill: File Manager
 
-Manage Messenger server files: list, mkdir, upload, download, delete, rename.
+Manage Messenger server storage.
 
-## Trigger
+## Use When
 
-list server files, upload to server, download from server, rename file, delete file
+list server files, upload to server, download from server, rename file, delete file, create folder
 
-## Required Inputs
+## Inputs
 
-- operation: `list|mkdir|upload|download|delete|rename`
-- operation-specific paths
+- operation: `list`, `mkdir`, `upload`, `download`, `delete`, or `rename`
+- server path rooted at `/`
+- local path for upload/download when needed
 
 ## API
 
-- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
-- `GET {messenger_url}/files/list?path=...`
-- `POST {messenger_url}/files/mkdir`
-- `POST {messenger_url}/files/upload`
-- `GET {messenger_url}/files/download?path=...`
-- `POST {messenger_url}/files/delete`
-- `POST {messenger_url}/files/rename`
+- `GET /files/list?path=...`
+- `POST /files/mkdir` with `{path, name}`
+- `POST /files/upload?path=...` multipart field `files`
+- `GET /files/download?path=...`
+- `POST /files/delete` with `{path}`
+- `POST /files/rename` with `{path, newName}`
 
-## Hard Rules
+Use `shell_exec` with `curl`. These `/files` routes do not require the Messenger API key unless the server later adds auth.
 
-- Use server paths with `/` root only.
+## Rules
+
+- Use virtual server paths only, beginning with `/`.
 - No recursive listing unless explicitly requested.
-- For `delete`, require explicit user confirmation in the same turn.
-- For `upload`, the local source file must exist before making the request.
+- For `delete`, require explicit confirmation in the same user turn.
+- Validate local upload source paths before calling the API.
 
-## Procedure
+## Reply
 
-1. Get `messenger_url` and `messenger_api_key` from session variables.
-2. Parse the requested operation and validate required arguments.
-3. Execute exactly one endpoint for the operation.
-4. Return a compact result with the target path and status.
+List: `<path>: <n> item(s). [DIR] ... [FILE] ...`
 
-## Response Format
+Create: `Created directory: <path>.`
 
-List:
-`<path>: <n> item(s). [DIR] ... [FILE] ...`
+Upload: `Uploaded <n> file(s) to <server_path>.`
 
-Create:
-`Created directory: <path>.`
+Download: `Downloaded <server_path> to <local_path>.`
 
-Upload:
-`Uploaded <filename> to <server_path>.`
+Delete: `Deleted: <path>.`
 
-Download:
-`Downloaded <server_path> to <local_path>.`
+Rename: `Renamed: <old_path> -> <new_path>.`
 
-Delete:
-`Deleted: <path>.`
-
-Rename:
-`Renamed: <old_path> -> <new_path>.`
-
-Failure:
-`File operation failed. op=<operation>. status=<code>. error=<message>.`
+Failure: `File operation failed. op=<operation>. status=<code>. error=<message>.`

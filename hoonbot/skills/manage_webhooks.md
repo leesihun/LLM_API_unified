@@ -1,52 +1,41 @@
 # Skill: Manage Webhooks
 
-List, create, update, or delete Messenger webhook subscriptions.
+List, create, update, or delete Messenger webhooks.
 
-## Trigger
+## Use When
 
-list webhooks, create webhook, update webhook, delete webhook
+list webhooks, create webhook, update webhook, delete webhook, enable webhook, disable webhook
 
-## Required Inputs
+## Inputs
 
-- operation: `list|create|update|delete`
-- for create: `url`, `events`
-- for update: `webhook_id` plus `url` and/or `events`
-- for delete: `webhook_id`
+- operation: `list`, `create`, `update`, or `delete`
+- create: `url`, optional `roomId`, optional `events`, optional `secret`
+- update: `webhook_id`, plus any of `url`, `events`, `isActive`, `secret`
+- delete: `webhook_id` and explicit confirmation
 
 ## API
 
-- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
-- `GET {messenger_url}/api/webhooks`
-- `POST {messenger_url}/api/webhooks`
-- `PATCH {messenger_url}/api/webhooks/{id}`
-- `DELETE {messenger_url}/api/webhooks/{id}`
+- `GET /api/webhooks`
+- `POST /api/webhooks`
+- `PATCH /api/webhooks/{id}`
+- `DELETE /api/webhooks/{id}`
 
-## Hard Rules
+Use `shell_exec` with `curl` and `x-api-key: {messenger_api_key}`.
 
-- If required fields are missing, stop and ask.
-- For delete, require explicit confirmation in the same turn.
-- Events allowed: `new_message`, `message_edited`, `message_deleted`, `message_read`.
+## Rules
 
-## Procedure
+- Allowed events: `new_message`, `message_edited`, `message_deleted`, `message_read`.
+- Do not echo webhook secrets.
+- For delete, require explicit confirmation in the same user turn.
 
-1. Get `messenger_url` and `messenger_api_key` from session variables.
-2. Validate operation and required fields.
-3. Call the corresponding webhook endpoint.
-4. Return compact result with webhook ID.
+## Reply
 
-## Response Format
+List: `Webhooks (<count>): id=<id> url=<url> room=<roomId|all> events=<events> active=<true|false>; ...`
 
-List:
-`Webhooks (<count>): id=<id> url=<url> events=<events>; ...`
+Create: `Webhook created. id=<id> url=<url> room=<roomId|all> events=<events>.`
 
-Create:
-`Webhook created. id=<id> url=<url> events=<events>.`
+Update: `Webhook updated. id=<id> active=<true|false> events=<events>.`
 
-Update:
-`Webhook updated. id=<id> url=<url> events=<events>.`
+Delete: `Webhook deleted. id=<id>.`
 
-Delete:
-`Webhook deleted. id=<id>.`
-
-Failure:
-`Webhook operation failed. op=<operation>. status=<code>. error=<message>.`
+Failure: `Webhook operation failed. op=<operation>. status=<code>. error=<message>.`

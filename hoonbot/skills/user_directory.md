@@ -1,44 +1,35 @@
 # Skill: User Directory
 
-List users or find users by name in Messenger.
+List or find Messenger users.
 
-## Trigger
+## Use When
 
 list users, who is on messenger, find user, show bots, show humans
 
-## Required Inputs
+## Inputs
 
-- optional `query` for name match
-- optional filter: `all|humans|bots` (default `all`)
+- optional name query
+- optional filter: `all`, `humans`, or `bots`
 
 ## API
 
-- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
-- `GET {messenger_url}/api/users`
+- `GET /api/users`
+- `GET /api/bots/me` when the user asks "who am I as the bot?"
 
-## Hard Rules
+Use `shell_exec` with `curl` and `x-api-key: {messenger_api_key}`.
 
-- Use `/api/users` only.
+## Rules
+
 - Name search is case-insensitive substring match.
 - Treat missing `isBot` as `false`.
+- Never print API keys.
 
-## Procedure
+## Reply
 
-1. Get `messenger_url` and `messenger_api_key` from session variables.
-2. Fetch users with `GET {messenger_url}/api/users`.
-3. Apply filter and optional name query.
-4. Return sorted by name.
+List: `Users (<count>): <name>(id=<id>, type=<human|bot>), ...`
 
-## Response Format
+Search: `Matches for "<query>" (<count>): <name>(id=<id>, type=<human|bot>), ...`
 
-List:
-`Users (<count>): <name>(id=<id>, type=<human|bot>), ...`
+No results: `No users found for "<query>".`
 
-Search:
-`Matches for "<query>" (<count>): <name>(id=<id>, type=<human|bot>), ...`
-
-No results:
-`No users found for "<query>".`
-
-Failure:
-`User lookup failed. status=<code>. error=<message>.`
+Failure: `User lookup failed. status=<code>. error=<message>.`

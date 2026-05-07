@@ -1,57 +1,37 @@
 # Skill: Summarize Room
 
-Summarize recent human conversation in a room.
+Summarize recent conversation in one room.
 
-## Trigger
+## Use When
 
 summarize room, catch me up, recap chat, what did I miss
 
-## Required Inputs
+## Inputs
 
-- target room (default: current room from message header)
-- optional message count (default `50`, max `100`)
-
-## Message Header Format
-
-Every message begins with:
-```
-[Room: <name> (id:<id>, <DM|group>) | From: <sender>]
-```
-Extract `name` and `id` from this line for the current room.
+- room: current room unless the user names another
+- optional count, default 50, max 100
 
 ## API
 
-- **Tool**: `shell_exec` — run `curl` with the `x-api-key` header
-- `GET {messenger_url}/api/messages/{roomId}?limit=<count>`
+- `GET /api/messages/{roomId}?limit=<count>`
 
-## Hard Rules
+Use `shell_exec` with `curl` and `x-api-key: {messenger_api_key}`.
 
-- Exclude bot-authored messages from summary points.
-- Exclude deleted messages (`isDeleted: true`).
-- If fewer than 2 human messages remain, return "not enough messages".
-- Keep summary to 3–8 bullet points.
+## Rules
 
-## Procedure
+- Exclude bot-authored and deleted messages.
+- Keep the summary to 3-6 bullets.
+- Include decisions, files shared, action items, and open questions when present.
+- If fewer than two human messages remain, say there is not enough to summarize.
 
-1. Get `messenger_url`, `messenger_api_key`, and `bot_user_id` from session variables.
-2. Resolve the target room:
-   - **Current room** (no explicit target given): extract `id` and `name` directly from the message header.
-   - **Named room**: call `GET {messenger_url}/api/rooms?userId={bot_user_id}` and match the room name case-insensitively; stop if no match.
-3. Fetch messages for the resolved room ID; reverse to chronological order.
-4. Filter out bot messages and deleted messages.
-5. Summarize: topics discussed, decisions made, files shared, open questions.
-
-## Response Format
+## Reply
 
 ```
 Summary of <room_name> (last <count> messages): Participants=<names>.
-- <point1>
-- <point2>
-...
+- <point>
+- <point>
 ```
 
-Not enough:
-`Not enough human messages to summarize in <room_name>.`
+Not enough: `Not enough human messages to summarize in <room_name>.`
 
-Failure:
-`Room summary failed. status=<code>. error=<message>.`
+Failure: `Room summary failed. status=<code>. error=<message>.`
