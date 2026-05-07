@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as cp from 'child_process';
 import { WebSocketServer, WebSocket } from 'ws';
-import { getMessengerEnv, loadEnvFile } from './env.js';
+import { getMessengerEnv } from './env.js';
 
 let pty: typeof import('node-pty') | null = null;
 try {
@@ -12,14 +12,8 @@ try {
   console.warn('[terminal] node-pty not available — terminal features disabled');
 }
 
-// Config priority: process.env > messenger/.env > legacy messenger/server/.env
-// > ClaudeCodeWrapper/.env > default.
-const WRAPPER_ENV_PATH = path.join(__dirname, '..', '..', '..', 'ClaudeCodeWrapper', '.env');
-const wrapperEnv = loadEnvFile(WRAPPER_ENV_PATH);
-
 function getConfig(key: string, fallback: string): string {
-  const messengerValue = getMessengerEnv(key, '');
-  return messengerValue || wrapperEnv[key] || fallback;
+  return getMessengerEnv(key, fallback);
 }
 
 export const SECRET_TOKEN = getConfig('SECRET_TOKEN', 'leesihun');

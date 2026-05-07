@@ -5,20 +5,23 @@ A self-hosted, OpenAI-compatible LLM API server that wraps **llama.cpp** with a 
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
-./install.sh
-
-# 2. Edit config (point at your llama.cpp server and model)
+# 1. Edit config (point at your llama.cpp server and model)
 nano config.py
 
-# 3. Start llama.cpp separately (example — adjust model path)
+# 2. Start llama.cpp separately (example: adjust model path)
 llama-server --model /path/to/model.gguf --port 5905 --parallel 4
 # Optional backup llama.cpp: use --port 10000
 
-# 4. Start the API
-./start.sh
+# 3. Build/install dependencies and start the API
+./start.sh --build
 # → http://localhost:10007
 # → Swagger UI: http://localhost:10007/docs
+```
+
+On Windows:
+
+```powershell
+.\start.ps1 -Build
 ```
 
 ## Configuration
@@ -42,8 +45,8 @@ llama-server --model /path/to/model.gguf --port 5905 --parallel 4
 llm-api/
 ├── config.py          All settings — edit this, not env vars
 ├── run_backend.py     Entry point (uvicorn)
-├── install.sh         Installer
-├── start.sh           Start script
+├── start.sh           Linux build-and-launch script
+├── start.ps1          Windows build-and-launch script
 ├── deps/
 │   └── requirements.txt
 ├── backend/

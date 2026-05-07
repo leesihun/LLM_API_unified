@@ -25,8 +25,9 @@ export function getServerUrl() {
 /**
  * Returns the base URL to use for file uploads.
  *
- * In Vite dev mode, VITE_BACKEND_URL is injected from .env.development so
- * uploads bypass the Vite dev proxy and go directly to Express.
+ * In Vite dev mode, VITE_BACKEND_URL can be exported from messenger/config.py
+ * by the launch scripts so uploads bypass the Vite dev proxy and go directly
+ * to Express.
  * The Vite proxy has known issues stalling large multipart/form-data requests.
  *
  * In production (built app) VITE_BACKEND_URL is undefined so this falls back

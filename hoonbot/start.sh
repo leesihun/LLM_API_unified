@@ -1,63 +1,72 @@
 #!/usr/bin/env bash
-# =============================================================
-#  Hoonbot — Start Script
-#  Usage: ./start.sh [--background]
-# =============================================================
+# Hoonbot Linux build-and-launch script.
+# Usage: ./start.sh [--build] [--background]
 set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+BUILD=false
 BACKGROUND=false
 for arg in "$@"; do
-    [[ "$arg" == "--background" ]] && BACKGROUND=true
+    case "$arg" in
+        --build) BUILD=true ;;
+        --background) BACKGROUND=true ;;
+        *)
+            echo "[ERROR] Unknown option: $arg"
+            echo "Usage: ./start.sh [--build] [--background]"
+            exit 1
+            ;;
+    esac
 done
 
-echo "=================================================="
-echo "  Hoonbot — Starting"
-echo "=================================================="
-echo
+PYTHON_BIN="${PYTHON:-python3}"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "[ERROR] python3 not found. Install Python >= 3.10 first."
+    exit 1
+fi
 
-# --- Read config values ---
-MESSENGER_URL=$(python3 -c "import config; print(config.MESSENGER_URL)" 2>/dev/null || echo "http://localhost:10006")
-LLM_API_URL=$(python3 -c "import config; print(config.LLM_API_URL)" 2>/dev/null || echo "http://localhost:10007")
-HOONBOT_PORT=$(python3 -c "import config; print(config.HOONBOT_PORT)" 2>/dev/null || echo "10001")
+echo "=================================================="
+echo "  Hoonbot"
+echo "=================================================="
 
-# --- Preflight: credentials ---
+if $BUILD; then
+    echo "[build] Installing Python dependencies..."
+    "$PYTHON_BIN" -m pip install -r "deps/requirements.txt"
+fi
+
+MESSENGER_URL=$("$PYTHON_BIN" -c "import config; print(config.MESSENGER_URL)")
+LLM_API_URL=$("$PYTHON_BIN" -c "import config; print(config.LLM_API_URL)")
+HOONBOT_PORT=$("$PYTHON_BIN" -c "import config; print(config.HOONBOT_PORT)")
+LOG_FILE=$("$PYTHON_BIN" -c "import config; from pathlib import Path; print(Path(config.DATA_DIR) / 'hoonbot.log')")
+
 if [[ ! -f "data/.llm_key" || ! -f "data/.llm_model" ]]; then
-    echo "[WARN] LLM credentials not found. Running setup..."
+    echo "[setup] LLM credentials not found. Running setup..."
     mkdir -p data
-    python3 scripts/setup_credentials.py
+    "$PYTHON_BIN" scripts/setup_credentials.py
 fi
 
-# --- Preflight: service reachability ---
-echo "[*] Checking Messenger at $MESSENGER_URL..."
+echo "[check] Messenger: $MESSENGER_URL"
 if curl -fsS "${MESSENGER_URL}/health" >/dev/null 2>&1; then
-    echo "[OK] Messenger reachable."
+    echo "[ok] Messenger reachable."
 else
-    echo "[WARN] Messenger not reachable at ${MESSENGER_URL}."
-    echo "       Hoonbot will retry registration on startup."
+    echo "[warn] Messenger not reachable. Hoonbot will retry on startup."
 fi
 
-echo "[*] Checking LLM API at $LLM_API_URL..."
+echo "[check] LLM API: $LLM_API_URL"
 if curl -fsS "${LLM_API_URL}/health" >/dev/null 2>&1; then
-    echo "[OK] LLM API reachable."
+    echo "[ok] LLM API reachable."
 else
-    echo "[WARN] LLM API not reachable at ${LLM_API_URL}."
+    echo "[warn] LLM API not reachable."
 fi
-echo
 
-# --- Launch ---
-LOG_FILE="data/hoonbot.log"
-mkdir -p data
+mkdir -p "$(dirname "$LOG_FILE")"
 
 if $BACKGROUND; then
-    echo "[*] Starting Hoonbot in background (logs → $LOG_FILE)..."
-    nohup python3 hoonbot.py > "$LOG_FILE" 2>&1 &
-    echo "[OK] PID $! — Hoonbot listening on http://0.0.0.0:${HOONBOT_PORT}"
-    echo "     Health: http://localhost:${HOONBOT_PORT}/health"
+    echo "[run] Starting in background. Logs: $LOG_FILE"
+    nohup "$PYTHON_BIN" hoonbot.py > "$LOG_FILE" 2>&1 &
+    echo "[ok] PID $! listening on http://localhost:${HOONBOT_PORT}"
 else
-    echo "[*] Starting Hoonbot (foreground, Ctrl+C to stop)..."
-    echo "    Port: ${HOONBOT_PORT} | Health: http://localhost:${HOONBOT_PORT}/health"
-    echo
-    python3 hoonbot.py
+    echo "[run] Starting foreground on http://localhost:${HOONBOT_PORT}"
+    "$PYTHON_BIN" hoonbot.py
 fi

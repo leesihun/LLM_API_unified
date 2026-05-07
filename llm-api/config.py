@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import Literal
 
 # ============================================================================
+# Paths
+# ============================================================================
+APP_DIR = Path(__file__).resolve().parent
+DATA_DIR = APP_DIR / "data"
+PROMPTS_DIR = APP_DIR / "prompts"
+
+# ============================================================================
 # Server Settings
 # ============================================================================
 SERVER_HOST = "0.0.0.0"
@@ -43,7 +50,7 @@ LLAMACPP_SLOTS = 2
 # ============================================================================
 # Logging Settings (before Agent — agent log target references PROMPTS_LOG_PATH)
 # ============================================================================
-LOG_DIR = Path("data/logs")
+LOG_DIR = DATA_DIR / "logs"
 PROMPTS_LOG_PATH = LOG_DIR / "prompts.log"
 PROMPTS_LOG_MAX_LINES = 10_000
 
@@ -74,7 +81,7 @@ AGENT_LOG_PATH = PROMPTS_LOG_PATH
 # ============================================================================
 # Database Settings
 # ============================================================================
-DATABASE_PATH = "data/app.db"
+DATABASE_PATH = str(DATA_DIR / "app.db")
 
 # ============================================================================
 # Authentication Settings
@@ -89,22 +96,17 @@ DEFAULT_ADMIN_PASSWORD = "administrator"
 # ============================================================================
 # File Storage Settings
 # ============================================================================
-UPLOAD_DIR = Path("data/uploads")
-SCRATCH_DIR = Path("data/scratch")
+UPLOAD_DIR = DATA_DIR / "uploads"
+SCRATCH_DIR = DATA_DIR / "scratch"
 MAX_FILE_SIZE_MB = 100
 IMAGE_SUPPORTED_FORMATS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
 IMAGE_MAX_SIZE_MB = 20
 IMAGE_MAX_DIMENSION = 4096  # resize if either side exceeds this (saves context tokens)
 
 # ============================================================================
-# Prompts Settings
-# ============================================================================
-PROMPTS_DIR = Path("prompts")
-
-# ============================================================================
 # Stop Signal Settings
 # ============================================================================
-STOP_FILE = Path("data/STOP")
+STOP_FILE = DATA_DIR / "STOP"
 
 # ============================================================================
 # Tools Settings
@@ -163,7 +165,7 @@ TOOL_RESULT_BUDGET = {
     "agent": 6000,
 }
 TOOL_RESULT_DEFAULT_BUDGET = 3000
-TOOL_RESULTS_DIR = Path("data/tool_results")
+TOOL_RESULTS_DIR = DATA_DIR / "tool_results"
 
 # ============================================================================
 # Web Search Tool Settings
@@ -201,9 +203,9 @@ OPENCODE_LOG_VERBOSITY: Literal["summary", "debug"] = "summary"
 # ============================================================================
 # RAG Tool Settings
 # ============================================================================
-RAG_DOCUMENTS_DIR = Path("data/rag_documents")
-RAG_INDEX_DIR = Path("data/rag_indices")
-RAG_METADATA_DIR = Path("data/rag_metadata")
+RAG_DOCUMENTS_DIR = DATA_DIR / "rag_documents"
+RAG_INDEX_DIR = DATA_DIR / "rag_indices"
+RAG_METADATA_DIR = DATA_DIR / "rag_metadata"
 
 RAG_EMBEDDING_MODEL = "/scratch0/LLM_models/offline_models/bge-m3"
 RAG_EMBEDDING_DEVICE = "cuda"
@@ -249,20 +251,21 @@ SHELL_EXEC_KILL_ON_TIMEOUT = True
 # ============================================================================
 # Memo Tool Settings
 # ============================================================================
-MEMO_DIR = Path("data/memory")
+MEMO_DIR = DATA_DIR / "memory"
 MEMO_MAX_ENTRIES = 100
 MEMO_MAX_VALUE_LENGTH = 1000
 
 # ============================================================================
 # Background Jobs Settings
 # ============================================================================
-JOBS_DIR = Path("data/jobs")
+JOBS_DIR = DATA_DIR / "jobs"
 JOBS_CLEANUP_DAYS = 30
 
 # ============================================================================
 # Session Settings
 # ============================================================================
 MAX_CONVERSATION_HISTORY = 200
+SESSIONS_DIR = DATA_DIR / "sessions"
 SESSION_CLEANUP_DAYS = 7
 
 # ============================================================================
@@ -275,7 +278,7 @@ LOG_ROTATION_DAYS = 14          # rotate data/logs/prompts.log after N days
 # ============================================================================
 # LLM File Write Policy
 # ============================================================================
-LLM_GENERATED_DIR = Path("data/llm_generated")   # dedicated dir for LLM absolute-path writes
+LLM_GENERATED_DIR = DATA_DIR / "llm_generated"   # dedicated dir for LLM absolute-path writes
 LLM_FILE_RETENTION_DAYS = 3                        # auto-delete files older than N days (0 = disabled)
 ALLOWED_WRITE_DIRS: list[Path] = []  # empty = allow all absolute paths
 
@@ -301,6 +304,7 @@ SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
 Path(DATABASE_PATH).parent.mkdir(parents=True, exist_ok=True)
 PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
 LOG_DIR.mkdir(parents=True, exist_ok=True)
+SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
 RAG_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 RAG_INDEX_DIR.mkdir(parents=True, exist_ok=True)
 RAG_METADATA_DIR.mkdir(parents=True, exist_ok=True)

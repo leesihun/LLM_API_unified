@@ -2,8 +2,12 @@ import cron from 'node-cron';
 import { queryAll, run } from '../db/index.js';
 import fs from 'fs';
 import path from 'path';
+import { getMessengerEnv, resolveMessengerPath } from '../env.js';
 
-const UPLOADS_DIR = process.env.MESSENGER_UPLOADS_DIR || path.join(__dirname, '..', '..', 'uploads');
+const UPLOADS_DIR = resolveMessengerPath(
+  getMessengerEnv('MESSENGER_UPLOADS_DIR', ''),
+  path.join(__dirname, '..', '..', 'uploads'),
+);
 const MAX_AGE_DAYS = 30;
 
 function collectFileUrls(message: any): string[] {

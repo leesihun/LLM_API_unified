@@ -1,6 +1,6 @@
 # Huni — Self-Hosted AI Stack
 
-Three independent, self-contained services. Each has its own config, installer, and start script.
+Three independent, self-contained services. Each has one config file and one build-and-launch script per OS.
 
 ## Services
 
@@ -14,13 +14,21 @@ Three independent, self-contained services. Each has its own config, installer, 
 
 ```bash
 # 1. LLM API (start llama.cpp first — see llm-api/README.md)
-cd llm-api && ./install.sh && ./start.sh
+cd llm-api && ./start.sh --build
 
 # 2. Messenger
-cd messenger && ./install.sh && ./start.sh
+cd messenger && ./start.sh --build
 
 # 3. Hoonbot (Messenger + LLM API must be running)
-cd hoonbot && ./install.sh && ./start.sh
+cd hoonbot && ./start.sh --build
+```
+
+Windows uses the same shape:
+
+```powershell
+cd llm-api; .\start.ps1 -Build
+cd ..\messenger; .\start.ps1 -Build
+cd ..\hoonbot; .\start.ps1 -Build
 ```
 
 ## Dependencies

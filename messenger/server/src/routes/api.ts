@@ -11,6 +11,7 @@ import { dispatchWebhooks } from '../services/webhook.js';
 import { startWatcher, stopWatcher } from '../services/web-poller.js';
 import { buildRoomResponse } from './rooms.js';
 import { emitToUser } from '../socket/handler.js';
+import { getMessengerEnv, resolveMessengerPath } from '../env.js';
 import type { MessageAttachment } from '../../../shared/types.js';
 
 const router = Router();
@@ -26,7 +27,10 @@ export function setIoInstance(io: any) {
 // FILE UPLOAD SETUP
 // ===========================================================================
 
-const UPLOADS_DIR = process.env.MESSENGER_UPLOADS_DIR || path.join(__dirname, '..', '..', 'uploads');
+const UPLOADS_DIR = resolveMessengerPath(
+  getMessengerEnv('MESSENGER_UPLOADS_DIR', ''),
+  path.join(__dirname, '..', '..', 'uploads'),
+);
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }

@@ -5,13 +5,16 @@ A Python/FastAPI AI bot that bridges **Huni Messenger** and the **LLM API**, giv
 ## Quick Start
 
 ```bash
-# 1. Install dependencies + configure LLM credentials
-./install.sh
-
-# 2. Start (Messenger + LLM API must already be running)
-./start.sh
+# Build/install dependencies and start (Messenger + LLM API must already be running)
+./start.sh --build
 # → http://localhost:10001
 # → Health: http://localhost:10001/health
+```
+
+On Windows:
+
+```powershell
+.\start.ps1 -Build
 ```
 
 ## Prerequisites
@@ -55,8 +58,8 @@ Runtime credentials are stored in `data/` (never commit these):
 hoonbot/
 ├── config.py               All settings — single source of truth
 ├── hoonbot.py              Entry point (FastAPI + startup sequence)
-├── install.sh              Installer
-├── start.sh                Start script
+├── start.sh                Linux build-and-launch script
+├── start.ps1               Windows build-and-launch script
 ├── deps/
 │   └── requirements.txt
 ├── core/

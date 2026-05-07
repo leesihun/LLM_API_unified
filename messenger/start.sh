@@ -1,83 +1,76 @@
 #!/usr/bin/env bash
-# =============================================================
-#  Huni Messenger — Start Script
-#  Usage: ./start.sh [--background] [--prod]
-# =============================================================
+# Messenger Linux build-and-launch script.
+# Usage: ./start.sh [--build] [--background] [--prod]
 set -euo pipefail
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+BUILD=false
 BACKGROUND=false
 PROD=false
 for arg in "$@"; do
-    [[ "$arg" == "--background" ]] && BACKGROUND=true
-    [[ "$arg" == "--prod" ]] && PROD=true
+    case "$arg" in
+        --build) BUILD=true ;;
+        --background) BACKGROUND=true ;;
+        --prod) PROD=true ;;
+        *)
+            echo "[ERROR] Unknown option: $arg"
+            echo "Usage: ./start.sh [--build] [--background] [--prod]"
+            exit 1
+            ;;
+    esac
 done
 
-echo "=================================================="
-echo "  Huni Messenger — Starting"
-echo "=================================================="
-echo
-
-# --- Preflight: .env ---
-if [[ ! -f ".env" ]]; then
-    if [[ -f ".env.example" ]]; then
-        echo "[*] No .env found. Copying from .env.example..."
-        cp ".env.example" ".env"
-    else
-        echo "[ERROR] Neither .env nor .env.example found."
-        exit 1
-    fi
+PYTHON_BIN="${PYTHON:-python3}"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    echo "[ERROR] python3 not found. Messenger config is config.py, so Python is required."
+    exit 1
+fi
+if ! command -v npm >/dev/null 2>&1; then
+    echo "[ERROR] npm not found. Install Node/npm first."
+    exit 1
 fi
 
-# Source .env so PORT etc are available in this script
-set -a; source ".env"; set +a
+eval "$("$PYTHON_BIN" config.py --ensure-dirs --export bash)"
+PORT="$("$PYTHON_BIN" config.py --get PORT)"
+LOG_FILE="$("$PYTHON_BIN" config.py --get MESSENGER_LOG_FILE)"
 
-PORT="${PORT:-10006}"
+echo "=================================================="
+echo "  Huni Messenger"
+echo "=================================================="
 
-# --- Preflight: built client ---
-if [[ ! -f "client/dist-web/index.html" ]]; then
-    echo "[*] Web client not built. Running npm run build:web..."
-    npm run build:web
-fi
-
-# --- Preflight: node_modules ---
-if [[ ! -d "node_modules" ]]; then
-    echo "[*] node_modules missing. Running npm install..."
+if $BUILD || [[ ! -d "node_modules" ]]; then
+    echo "[build] Installing npm dependencies..."
     npm install
 fi
 
-echo "[*] Messenger port: $PORT"
-echo
+if $BUILD || [[ ! -f "client/dist-web/index.html" ]]; then
+    echo "[build] Building web client..."
+    npm run build:web
+fi
 
-# --- Launch ---
-LOG_FILE="data/messenger.log"
-mkdir -p data
+mkdir -p "$(dirname "$LOG_FILE")"
+
+if $PROD; then
+    NPM_ARGS=(run start --workspace=server)
+else
+    NPM_ARGS=(run dev:server)
+fi
 
 if $BACKGROUND; then
-    echo "[*] Starting Messenger in background (logs → $LOG_FILE)..."
-    if $PROD; then
-        nohup npm start > "$LOG_FILE" 2>&1 &
-    else
-        nohup npm run dev:server > "$LOG_FILE" 2>&1 &
-    fi
+    echo "[run] Starting in background. Logs: $LOG_FILE"
+    nohup npm "${NPM_ARGS[@]}" > "$LOG_FILE" 2>&1 &
     PID=$!
-    # Wait for health endpoint
-    echo "[*] Waiting for Messenger to be ready..."
-    for i in $(seq 1 20); do
+    for _ in $(seq 1 20); do
         if curl -fsS "http://localhost:${PORT}/health" >/dev/null 2>&1; then
-            echo "[OK] PID $PID — Messenger ready at http://localhost:${PORT}"
-            break
+            echo "[ok] PID $PID ready at http://localhost:${PORT}"
+            exit 0
         fi
         sleep 1
     done
+    echo "[warn] Started PID $PID, but health check did not pass yet."
 else
-    echo "[*] Starting Messenger (foreground, Ctrl+C to stop)..."
-    echo "    URL: http://localhost:${PORT}"
-    echo
-    if $PROD; then
-        npm start
-    else
-        npm run dev:server
-    fi
+    echo "[run] Starting foreground on http://localhost:${PORT}"
+    npm "${NPM_ARGS[@]}"
 fi

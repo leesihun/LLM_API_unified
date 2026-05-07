@@ -212,8 +212,8 @@ class ConversationStore:
     Legacy sessions stored as data/sessions/{session_id}.json are migrated on first access.
     """
 
-    def __init__(self, sessions_dir: str = "data/sessions"):
-        self.sessions_dir = Path(sessions_dir)
+    def __init__(self, sessions_dir: str | Path | None = None):
+        self.sessions_dir = Path(sessions_dir or config.SESSIONS_DIR)
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_session_log_file(self, session_id: str) -> Path:

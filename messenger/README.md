@@ -5,22 +5,22 @@ A self-hosted real-time team chat platform with bot integration, file sharing, a
 ## Quick Start
 
 ```bash
-# 1. Install dependencies + build web client
-./install.sh
-
-# 2. Edit configuration
-nano .env        # copy from .env.example if needed
-
-# 3. Start
-./start.sh
+# Build/install dependencies, build web client, and start
+./start.sh --build
 # → http://localhost:10006
+```
+
+On Windows:
+
+```powershell
+.\start.ps1 -Build
 ```
 
 ## Configuration
 
-**All runtime settings live in `.env`** (copied from `.env.example` at install time).
+**All runtime settings live in `config.py`**. Edit it directly.
 
-| Variable | Default | Purpose |
+| Setting | Default | Purpose |
 |---|---|---|
 | `PORT` | `10006` | HTTP/Socket.IO listen port |
 | `MESSENGER_DATA_DIR` | auto | SQLite DB directory |
@@ -38,10 +38,9 @@ nano .env        # copy from .env.example if needed
 messenger/
 ├── package.json            npm workspaces root (server, client, shared)
 ├── package-lock.json
-├── .env.example            Template — copy to .env and edit
-├── .env                    Runtime config (gitignored)
-├── install.sh              Installer
-├── start.sh                Start script (dev: npm run dev:server, prod: npm start)
+├── config.py               Runtime config
+├── start.sh                Linux build-and-launch script
+├── start.ps1               Windows build-and-launch script
 ├── deps/
 │   └── build-portable.mjs  Electron portable-build helper
 ├── server/                 Express + Socket.IO backend

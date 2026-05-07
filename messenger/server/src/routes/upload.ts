@@ -4,9 +4,16 @@ import path from 'path';
 import fs from 'fs';
 import { pipeline } from 'stream/promises';
 import { v4 as uuidv4 } from 'uuid';
+import { getMessengerEnv, resolveMessengerPath } from '../env.js';
 
-const UPLOADS_DIR = process.env.MESSENGER_UPLOADS_DIR || path.join(__dirname, '..', '..', 'uploads');
-const CHUNKS_DIR = process.env.MESSENGER_CHUNKS_DIR || path.join(__dirname, '..', '..', 'chunks');
+const UPLOADS_DIR = resolveMessengerPath(
+  getMessengerEnv('MESSENGER_UPLOADS_DIR', ''),
+  path.join(__dirname, '..', '..', 'uploads'),
+);
+const CHUNKS_DIR = resolveMessengerPath(
+  getMessengerEnv('MESSENGER_CHUNKS_DIR', ''),
+  path.join(__dirname, '..', '..', 'chunks'),
+);
 
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });

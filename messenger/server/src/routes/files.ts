@@ -2,8 +2,12 @@ import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import { getMessengerEnv, resolveMessengerPath } from '../env.js';
 
-const STORAGE_ROOT = process.env.MESSENGER_STORAGE_DIR || path.join(__dirname, '..', '..', 'storage');
+const STORAGE_ROOT = resolveMessengerPath(
+  getMessengerEnv('MESSENGER_STORAGE_DIR', ''),
+  path.join(__dirname, '..', '..', 'storage'),
+);
 
 if (!fs.existsSync(STORAGE_ROOT)) {
   fs.mkdirSync(STORAGE_ROOT, { recursive: true });

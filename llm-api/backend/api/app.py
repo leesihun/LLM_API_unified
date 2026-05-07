@@ -69,7 +69,7 @@ def _cleanup_old_sessions():
     if config.SESSION_CLEANUP_DAYS <= 0:
         return
 
-    sessions_dir = Path("data/sessions")
+    sessions_dir = config.SESSIONS_DIR
     if not sessions_dir.exists():
         return
 
@@ -133,7 +133,7 @@ def _cleanup_old_tool_results():
     tool_results_dir = config.TOOL_RESULTS_DIR
     if not tool_results_dir.exists():
         return
-    sessions_dir = Path("data/sessions")
+    sessions_dir = config.SESSIONS_DIR
     cutoff = datetime.now() - timedelta(days=config.TOOL_RESULTS_CLEANUP_DAYS)
     removed = 0
     for d in tool_results_dir.iterdir():
@@ -159,7 +159,7 @@ def _cleanup_old_scratch():
     scratch_dir = config.SCRATCH_DIR
     if not scratch_dir.exists():
         return
-    sessions_dir = Path("data/sessions")
+    sessions_dir = config.SESSIONS_DIR
     cutoff = datetime.now() - timedelta(days=config.SCRATCH_CLEANUP_DAYS)
     removed = 0
     for d in scratch_dir.iterdir():

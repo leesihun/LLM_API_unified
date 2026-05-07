@@ -1,8 +1,12 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs';
+import { getMessengerEnv, resolveMessengerPath } from '../env.js';
 
-const DATA_DIR = process.env.MESSENGER_DATA_DIR || path.join(__dirname, '..', '..', 'data');
+const DATA_DIR = resolveMessengerPath(
+  getMessengerEnv('MESSENGER_DATA_DIR', ''),
+  path.join(__dirname, '..', '..', 'data'),
+);
 const DB_PATH = path.join(DATA_DIR, 'messenger.db');
 
 let db: SqlJsDatabase;
