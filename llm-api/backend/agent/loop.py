@@ -27,7 +27,7 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
     feeds results back until the LLM responds with plain text.
 
     Features:
-    - Parallel tool execution (asyncio.gather)
+    - Parallel read-only tool execution
     - Microcompaction (save large results to disk, compress old iterations)
     - Prompt caching (byte-stable prefix for llama.cpp KV reuse)
     - Tool status events (streaming visibility)
@@ -84,6 +84,13 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
             kwargs["id_slot"] = self._slot_id()
         return kwargs
 
+    def _can_start_tool_immediately(self, tool_name: str, deferred_seen: bool) -> bool:
+        """Only start read-only concurrency-safe tools during model streaming."""
+        if deferred_seen:
+            return False
+        meta = TOOL_METADATA.get(tool_name, {})
+        return bool(meta.get("is_read_only") and meta.get("is_concurrency_safe"))
+
     # ------------------------------------------------------------------
     # Non-streaming run — thin accumulator over run_stream().
     # The entire loop is streaming under the hood; this method just
@@ -128,11 +135,12 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
 
             self._iteration_boundaries.append(len(msgs))
 
-            # Collect all tool calls and start executing them as soon as their
-            # args are complete (is_partial=True events arrive mid-stream).
+            # Collect all tool calls. Read-only safe tools may start during
+            # streaming; mutating/stateful tools run serially after.
             all_tool_calls: list[ToolCall] = []
-            # (tc, asyncio.Task) pairs — tasks may already be running by stream end
-            pending_tasks: list[tuple[ToolCall, asyncio.Task]] = []
+            # (tc, task_or_none) pairs; None means deferred serial execution.
+            pending_tasks: list[tuple[ToolCall, Optional[asyncio.Task]]] = []
+            deferred_seen = False
             # Accumulate any text the model streams alongside tool calls so the
             # assistant turn we record back into msgs preserves it. Without this,
             # the model sees content=None next iteration and may emit empty replies.
@@ -155,19 +163,23 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
                 elif isinstance(event, ToolCallDeltaEvent):
                     for tc in event.tool_calls:
                         all_tool_calls.append(tc)
-                        # Start execution immediately — don't wait for the full stream
-                        task = asyncio.create_task(
-                            self.execute_tool(tc.function.name, tc.function.arguments, tc.id)
-                        )
+                        task = None
+                        if self._can_start_tool_immediately(tc.function.name, deferred_seen):
+                            task = asyncio.create_task(
+                                self.execute_tool(tc.function.name, tc.function.arguments, tc.id)
+                            )
+                        else:
+                            deferred_seen = True
                         pending_tasks.append((tc, task))
                         _meta = TOOL_METADATA.get(tc.function.name, {})
-                        yield ToolStatusEvent(
-                            tool_name=tc.function.name,
-                            tool_call_id=tc.id,
-                            status="started",
-                            activity=_meta.get("activity", ""),
-                            user_name=_meta.get("user_name", ""),
-                        )
+                        if task is not None:
+                            yield ToolStatusEvent(
+                                tool_name=tc.function.name,
+                                tool_call_id=tc.id,
+                                status="started",
+                                activity=_meta.get("activity", ""),
+                                user_name=_meta.get("user_name", ""),
+                            )
 
             if not all_tool_calls:
                 # Empty stream after tool results: model produced no text and no
@@ -197,8 +209,22 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
                 content="".join(streamed_text_parts).strip() or None,
             ))
 
-            # Gather results — many tasks may already be done since they started mid-stream
-            results = await asyncio.gather(*[t for _, t in pending_tasks])
+            # Resolve results in model order.
+            results = []
+            for tc, task in pending_tasks:
+                _meta = TOOL_METADATA.get(tc.function.name, {})
+                if task is None:
+                    yield ToolStatusEvent(
+                        tool_name=tc.function.name,
+                        tool_call_id=tc.id,
+                        status="started",
+                        activity=_meta.get("activity", ""),
+                        user_name=_meta.get("user_name", ""),
+                    )
+                    result = await self.execute_tool(tc.function.name, tc.function.arguments, tc.id)
+                else:
+                    result = await task
+                results.append(result)
 
             new_entries = self.tool_calls_log[log_start:]
             duration_by_call_id = {

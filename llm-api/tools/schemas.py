@@ -16,15 +16,17 @@ TOOL_SCHEMAS: dict = {
         "name": "shell_exec",
         "description": (
             "Executes a given shell command and returns its output.\n\n"
-            "The working directory persists between commands, but shell state does not.\n\n"
+            "Each shell_exec call is isolated. Shell state and cd commands do not persist; "
+            "always pass working_directory for commands that depend on cwd.\n\n"
             "IMPORTANT: Avoid using this tool to run find, grep, cat, head, tail, sed, or awk "
             "unless explicitly instructed. Instead use the dedicated tools:\n"
             "  - file_reader   for reading files (not cat/head/tail)\n"
             "  - file_edit     for in-place edits (not sed/awk)\n"
             "  - grep          for content search (not grep/rg)\n"
             "  - file_navigator for listing directories (not find/ls)\n\n"
-            "When issuing multiple independent commands, make multiple shell_exec calls in a "
-            "single turn — they run concurrently. Chain dependent commands with && in one call.\n\n"
+            "When issuing multiple independent read/search operations, use dedicated read-only "
+            "tools instead. shell_exec calls run in request order to avoid state races. "
+            "Chain tightly dependent shell commands with && in one call.\n\n"
             "When using curl for HTTP APIs, always include -sS --fail-with-body so HTTP 4xx/5xx "
             "responses surface as failures instead of silent exit-code-0 successes.\n\n"
             "For long-running commands set a large timeout (600-3600). "
@@ -45,7 +47,7 @@ TOOL_SCHEMAS: dict = {
                 },
                 "working_directory": {
                     "type": "string",
-                    "description": "Working directory for the command. Defaults to session scratch workspace.",
+                    "description": "Working directory for the command. Relative paths resolve from the repository root. Defaults to repository root.",
                 },
                 "description": {
                     "type": "string",
@@ -141,6 +143,32 @@ TOOL_SCHEMAS: dict = {
                 },
             },
             "required": ["path", "old_string", "new_string"],
+        },
+    },
+
+    "file_patch": {
+        "name": "file_patch",
+        "description": (
+            "Applies a contextual unified-diff patch to existing text files.\n\n"
+            "Usage:\n"
+            "- Prefer this for multi-line code or shell-script edits. It is safer than "
+            "rewriting an entire file and less brittle than exact string replacement.\n"
+            "- The patch must be a standard unified diff with ---/+++ file headers and @@ hunks.\n"
+            "- Use repo-relative paths such as a/llm-api/config.py and b/llm-api/config.py.\n"
+            "- The tool rejects stale hunks when context does not match the current file.\n"
+            "- The tool rejects generated/runtime directories, binary files, deletes, and "
+            "paths outside the repository/write policy.\n"
+            "- After changing shell scripts, run bash -n on the changed files before final reply."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "patch": {
+                    "type": "string",
+                    "description": "Unified diff patch text to apply.",
+                },
+            },
+            "required": ["patch"],
         },
     },
 
@@ -669,6 +697,7 @@ TOOL_METADATA: dict = {
     "shell_exec":      {"is_read_only": False, "is_destructive": True,  "is_concurrency_safe": False, "activity": "Running shell command",   "user_name": "Shell"},
     "file_reader":     {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Reading file",            "user_name": "File Reader"},
     "file_edit":       {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Editing file",            "user_name": "File Editor"},
+    "file_patch":      {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Applying patch",          "user_name": "File Patch"},
     "file_writer":     {"is_read_only": False, "is_destructive": True,  "is_concurrency_safe": False, "activity": "Writing file",            "user_name": "File Writer"},
     "file_navigator":  {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Navigating files",        "user_name": "File Navigator"},
     "grep":            {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Searching files",         "user_name": "Grep"},

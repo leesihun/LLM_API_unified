@@ -71,6 +71,7 @@ class ShellExecTool:
 
     def __init__(self, session_id: str):
         self.session_id = session_id or "default"
+        self.repo_root = config.APP_DIR.parent.resolve()
         self.workspace = config.SCRATCH_DIR / self.session_id
         if self.session_id not in _created_dirs:
             self.workspace.mkdir(parents=True, exist_ok=True)
@@ -81,16 +82,16 @@ class ShellExecTool:
         Resolve working directory for command execution.
 
         Absolute paths are used directly.
-        Relative paths are resolved from the session scratch workspace.
-        If unset, default to session workspace for compatibility.
+        Relative paths are resolved from the repository root.
+        If unset, default to the repository root.
         """
         if not working_directory:
-            return self.workspace.resolve()
+            return self.repo_root
 
         cwd = Path(working_directory).expanduser()
         if cwd.is_absolute():
             return cwd.resolve()
-        return (self.workspace / cwd).resolve()
+        return (self.repo_root / cwd).resolve()
 
     async def execute(
         self,
@@ -107,7 +108,18 @@ class ShellExecTool:
         - False: leave the process running, return partial output + live PID.
         """
         cwd = self._resolve_working_directory(working_directory)
-        cwd.mkdir(parents=True, exist_ok=True)
+        if not cwd.exists():
+            return {
+                "success": False,
+                "error": f"Working directory does not exist: {cwd}",
+                "command": command,
+            }
+        if not cwd.is_dir():
+            return {
+                "success": False,
+                "error": f"Working directory is not a directory: {cwd}",
+                "command": command,
+            }
 
         start = time.time()
         if _needs_curl_fail_flag(command):

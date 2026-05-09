@@ -149,6 +149,15 @@ class DispatchMixin:
                 mode=arguments.get("mode", "write"),
             )
 
+        elif name == "file_patch":
+            if "file_patch" not in cache:
+                from tools.file_ops import FilePatchTool
+                cache["file_patch"] = FilePatchTool(session_id=self.session_id, username=self.username)
+            return await asyncio.to_thread(
+                cache["file_patch"].apply,
+                patch=arguments["patch"],
+            )
+
         elif name == "file_navigator":
             if "file_navigator" not in cache:
                 from tools.file_ops import FileNavigatorTool

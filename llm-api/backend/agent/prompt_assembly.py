@@ -1,6 +1,7 @@
 """PromptMixin: system prompt, dynamic context, RAG/memo/file formatting, and tool schema helpers."""
 import json
 import time
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 import config
@@ -24,6 +25,9 @@ class PromptMixin:
         """Return per-request dynamic context (RAG, memo, files). Separate from
         system prompt so the static prefix stays byte-identical for cache_prompt."""
         parts = []
+        repo_docs = self._format_repo_instructions_context()
+        if repo_docs:
+            parts.append(repo_docs)
         rag_ctx = self._format_rag_collections_context()
         if rag_ctx:
             parts.append(rag_ctx)
@@ -45,6 +49,67 @@ class PromptMixin:
         if len(dynamic_ctx) > dynamic_cap:
             dynamic_ctx = dynamic_ctx[:dynamic_cap] + "\n...[dynamic context truncated]"
         return dynamic_ctx
+
+    def _repo_doc_candidates(self) -> List[Path]:
+        """Return repository instruction docs in precedence/read order."""
+        repo_root = config.APP_DIR.parent.resolve()
+        candidates = [
+            repo_root / "AGENTS.md",
+            repo_root / "CLAUDE.md",
+            repo_root / "README.md",
+            config.APP_DIR / "README.md",
+            repo_root / "hoonbot" / "README.md",
+            repo_root / "messenger" / "README.md",
+        ]
+        seen = set()
+        unique = []
+        for path in candidates:
+            resolved = path.resolve()
+            if resolved not in seen:
+                unique.append(resolved)
+                seen.add(resolved)
+        return unique
+
+    def _format_repo_instructions_context(self) -> str:
+        """Inject discovered repo docs before the model plans or edits."""
+        cap = getattr(config, "AGENT_REPO_DOC_CONTEXT_MAX_CHARS", 12000)
+        if cap <= 0:
+            return ""
+
+        sections = []
+        remaining = cap
+        for path in self._repo_doc_candidates():
+            if remaining <= 0 or not path.exists() or not path.is_file():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            if not text.strip():
+                continue
+
+            rel = path.relative_to(config.APP_DIR.parent.resolve())
+            header = f"\n### {rel.as_posix()}\n"
+            budget = remaining - len(header)
+            if budget <= 0:
+                break
+            body = text[:budget]
+            if len(text) > budget:
+                body += "\n...[repo doc truncated]"
+            sections.append(header + body)
+            remaining -= len(header) + len(body)
+
+        if not sections:
+            return ""
+
+        return (
+            "\n\n## REPOSITORY INSTRUCTIONS DISCOVERED BEFORE WORK\n"
+            "Follow these as repository guidance after higher-priority instructions. "
+            "Use them before planning, editing, or verification.\n"
+            + "\n".join(sections)
+        )
 
     def _refresh_available_rag_collections(self):
         """Load available RAG collections for the current user (60s module-level TTL cache)."""

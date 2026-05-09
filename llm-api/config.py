@@ -73,7 +73,7 @@ CLUSTER_DIR = DATA_DIR / "cluster"
 # ============================================================================
 # Model Parameters (Default LLM Inference Settings)
 # ============================================================================
-DEFAULT_TEMPERATURE = 0.7  # 0.7
+DEFAULT_TEMPERATURE = 0.6
 DEFAULT_TOP_P = 0.95
 DEFAULT_TOP_K = 40
 DEFAULT_MIN_P = 0.1
@@ -100,7 +100,8 @@ PROMPTS_LOG_MAX_LINES = 10_000
 AGENT_MAX_ITERATIONS = 100
 AGENT_TOOL_LOOP_MAX_TOKENS = 4096
 AGENT_SYSTEM_PROMPT = "system.txt"
-AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 6000
+AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 18000
+AGENT_REPO_DOC_CONTEXT_MAX_CHARS = 12000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
 AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 500
@@ -157,6 +158,7 @@ AVAILABLE_TOOLS = [
     "rag",              # Unchanged — FAISS vector search over uploaded documents
     "file_reader",      # Read any file (prefer over shell_exec cat/head/tail)
     "file_edit",        # NEW — surgical exact-string replacement in existing files
+    "file_patch",       # Apply contextual unified-diff patches to existing files
     "file_writer",      # Create new files or complete rewrites only
     "file_navigator",   # Discover files by name/glob (prefer over shell_exec find)
     "grep",             # NEW — ripgrep content search (prefer over shell_exec grep)
@@ -195,6 +197,7 @@ TOOL_RESULT_BUDGET = {
     "rag": 3000,
     "file_reader": 4000,
     "file_edit": 500,
+    "file_patch": 1000,
     "file_writer": 500,
     "file_navigator": 2000,
     "grep": 4000,
