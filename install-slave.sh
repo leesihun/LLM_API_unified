@@ -16,9 +16,12 @@ die() {
 }
 
 auto_detect_offline_deps_dir() {
-  [[ -n "${OFFLINE_DEPS_DIR:-}" ]] && return 0
+  if [[ -n "${OFFLINE_DEPS_DIR:-}" && -d "$OFFLINE_DEPS_DIR" ]]; then
+    return 0
+  fi
 
   local candidates=(
+    "${OFFLINE_DEPS_DIR:-}"
     "$ROOT_DIR/llm_api_fast_airgap"
     "$ROOT_DIR/offline_deps"
     "$ROOT_DIR/.offline_deps"
@@ -28,9 +31,23 @@ auto_detect_offline_deps_dir() {
     "$HOME/llm_api_fast_airgap"
   )
 
-  local candidate
+  local candidate ext parent
   for candidate in "${candidates[@]}"; do
-    if [[ -d "$candidate" ]]; then
+    [[ -z "$candidate" || -d "$candidate" ]] && continue
+    for ext in tar.gz tgz tar.xz; do
+      if [[ -f "$candidate.$ext" ]]; then
+        parent="$(dirname "$candidate")"
+        echo "[config] Extracting offline bundle: $candidate.$ext -> $parent/"
+        mkdir -p "$parent"
+        tar -xf "$candidate.$ext" -C "$parent" \
+          || die "Failed to extract $candidate.$ext"
+        break
+      fi
+    done
+  done
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -n "$candidate" && -d "$candidate" ]]; then
       export OFFLINE_DEPS_DIR="$candidate"
       echo "[config] OFFLINE_DEPS_DIR auto-detected: $OFFLINE_DEPS_DIR"
       return 0
