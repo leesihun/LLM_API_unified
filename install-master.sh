@@ -99,9 +99,8 @@ install_messenger_runtime() {
       fi
 
       [[ -d "node_modules" ]] || die "Messenger node_modules missing. Expected messenger/node_modules in OFFLINE_DEPS_DIR or a local messenger/node_modules directory."
-      if [[ ! -f "server/dist/server.cjs" || ! -f "client/dist-web/index.html" ]]; then
-        echo "[info] Messenger production bundles are not fully staged; messenger/start.sh will build them locally if Node/npm are available."
-      fi
+      require_file "server/dist/server.cjs" "Messenger production server bundle"
+      require_file "client/dist-web/index.html" "Messenger web bundle"
     else
       "$NPM_BIN" install
       "$NPM_BIN" run build --workspace=server

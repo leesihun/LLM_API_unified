@@ -5,6 +5,16 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.join(__dirname, 'dist');
+const messengerRoot = path.join(__dirname, '..');
+
+function findExistingPath(...candidates) {
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+}
 
 // Clean dist
 if (fs.existsSync(distDir)) {
@@ -15,7 +25,8 @@ fs.mkdirSync(distDir, { recursive: true });
 console.log('[BUILD] Bundling server with esbuild...');
 
 await build({
-  entryPoints: [path.join(__dirname, 'src', 'index.ts')],
+  absWorkingDir: __dirname,
+  entryPoints: ['src/index.ts'],
   bundle: true,
   platform: 'node',
   target: 'node18',
@@ -23,16 +34,19 @@ await build({
   format: 'cjs',
   sourcemap: false,
   minify: false,
-  // sql.js wasm file must be loaded from disk at runtime
-  external: [],
+  // node-pty is optional at runtime and must stay external for native loading.
+  external: ['node-pty'],
   loader: {
     '.wasm': 'file',
   },
 });
 
 // Copy sql.js wasm file
-const sqlJsWasmSrc = path.join(__dirname, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
-if (fs.existsSync(sqlJsWasmSrc)) {
+const sqlJsWasmSrc = findExistingPath(
+  path.join(__dirname, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+  path.join(messengerRoot, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm'),
+);
+if (sqlJsWasmSrc) {
   fs.copyFileSync(sqlJsWasmSrc, path.join(distDir, 'sql-wasm.wasm'));
   console.log('[BUILD] Copied sql-wasm.wasm');
 }
