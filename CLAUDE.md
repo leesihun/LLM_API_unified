@@ -26,7 +26,7 @@ On Linux, `--build` now means "run install-master.sh / install-slave.sh first, t
 `Start-Master.cmd` / `Start-Slave.cmd` are double-click wrappers.
 
 `install-master.{sh,ps1}` and `install-slave.{sh,ps1}` are install-only (no launch).
-On Linux, `OFFLINE_DEPS_DIR` is the airgap contract for staged Messenger runtime assets. Supported Messenger bundle paths are `messenger/node_modules`, `messenger/server/dist`, `messenger/client/dist-web`, and a Linux Node runtime under `node/` or `node-v*-linux-*`. Linux scripts skip Python package installation entirely and assume the target server's Python environment is already provisioned. If `OFFLINE_DEPS_DIR` is unset, the scripts auto-detect nearby bundle directories such as `./llm_api_fast_airgap`, `./offline_deps`, `../llm_api_fast_airgap`, or `$HOME/llm_api_fast_airgap`.
+On Linux, `OFFLINE_DEPS_DIR` is the airgap contract for staged Messenger runtime assets. Supported Messenger bundle paths are `messenger/node_modules`, `messenger/server/dist`, `messenger/client/dist-web`, and a Linux Node runtime under `node/` or `node-v*-linux-*`. Linux scripts skip Python package installation entirely and assume the target server's Python environment is already provisioned. If `OFFLINE_DEPS_DIR` is unset, the scripts auto-detect nearby bundle directories such as `./llm_api_fast_airgap`, `./offline_deps`, `../llm_api_fast_airgap`, or `$HOME/llm_api_fast_airgap`. They also refuse online npm fallback and fail fast instead of contacting `registry.npmjs.org`.
 
 ### Per-service (run individually)
 

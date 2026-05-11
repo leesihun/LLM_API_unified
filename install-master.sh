@@ -17,6 +17,14 @@ die() {
   exit 1
 }
 
+configure_npm_offline() {
+  export npm_config_offline=true
+  export npm_config_audit=false
+  export npm_config_fund=false
+  export npm_config_update_notifier=false
+  export npm_config_registry="http://127.0.0.1:9"
+}
+
 auto_detect_offline_deps_dir() {
   [[ -n "${OFFLINE_DEPS_DIR:-}" ]] && return 0
 
@@ -46,6 +54,8 @@ ensure_offline_dir() {
   [[ -n "${OFFLINE_DEPS_DIR:-}" ]] || return 1
   [[ -d "$OFFLINE_DEPS_DIR" ]] || die "OFFLINE_DEPS_DIR does not exist: $OFFLINE_DEPS_DIR"
 }
+
+configure_npm_offline
 
 find_first_dir() {
   local candidate
@@ -120,9 +130,7 @@ install_messenger_runtime() {
       require_file "server/dist/server.cjs" "Messenger production server bundle"
       require_file "client/dist-web/index.html" "Messenger web bundle"
     else
-      "$NPM_BIN" install
-      "$NPM_BIN" run build --workspace=server
-      "$NPM_BIN" run build:web
+      die "Offline bundle not found. Refusing to let npm access the internet. Stage llm_api_fast_airgap or set OFFLINE_DEPS_DIR to a staged bundle."
     fi
   )
 }

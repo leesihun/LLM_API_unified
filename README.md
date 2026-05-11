@@ -45,6 +45,9 @@ auto-detect an offline bundle if it is placed in one of these nearby paths:
 
 You can still override with `OFFLINE_DEPS_DIR` if needed.
 
+Linux scripts refuse online npm fallback. If the offline bundle is missing,
+they fail immediately instead of reaching `registry.npmjs.org`.
+
 ```bash
 ./install-master.sh
 ./start-master.sh

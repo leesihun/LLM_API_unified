@@ -34,6 +34,14 @@ die() {
     exit 1
 }
 
+configure_npm_offline() {
+    export npm_config_offline=true
+    export npm_config_audit=false
+    export npm_config_fund=false
+    export npm_config_update_notifier=false
+    export npm_config_registry="http://127.0.0.1:9"
+}
+
 auto_detect_offline_deps_dir() {
     [[ -n "${OFFLINE_DEPS_DIR:-}" ]] && return 0
 
@@ -62,6 +70,8 @@ ensure_offline_dir() {
     [[ -n "${OFFLINE_DEPS_DIR:-}" ]] || return 1
     [[ -d "$OFFLINE_DEPS_DIR" ]] || die "OFFLINE_DEPS_DIR does not exist: $OFFLINE_DEPS_DIR"
 }
+
+configure_npm_offline
 
 find_first_dir() {
     local candidate
@@ -245,14 +255,7 @@ if $BUILD; then
         echo "[build] Airgapped mode: validating staged Messenger runtime assets."
         require_prod_runtime
     else
-        [[ -n "$NODE_BIN" ]] || die "node not found. Install Node.js first."
-        [[ -n "$NPM_BIN" ]] || die "npm not found. Install Node/npm first."
-        echo "[build] Installing npm dependencies..."
-        "$NPM_BIN" install
-        echo "[build] Building Messenger server bundle..."
-        "$NPM_BIN" run build --workspace=server
-        echo "[build] Building Messenger web client..."
-        "$NPM_BIN" run build:web
+        die "Offline bundle not found. Refusing to let npm access the internet. Stage prebuilt messenger/node_modules, server/dist/server.cjs, and client/dist-web first."
     fi
 fi
 
