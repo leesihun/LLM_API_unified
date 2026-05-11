@@ -66,6 +66,31 @@ Expected offline bundle layout:
 Linux scripts skip Python package installation entirely and assume the target
 server's Python environment is already provisioned.
 
+### Building the airgap bundle on Windows (via WSL)
+
+The bundle must be assembled on Linux because `messenger/node-pty` is a native
+module — Windows binaries will not load on the airgapped target. From a WSL
+Ubuntu shell with internet access, run:
+
+```bash
+cd /mnt/c/Users/<you>/Desktop/Huni/LLM_API_fast    # or wherever the repo lives
+bash scripts/build-airgap-bundle.sh
+```
+
+This produces `dist/llm_api_fast_airgap.tar.gz` containing the messenger
+runtime, a Linux Node tarball, and prebuilt server/web bundles. Copy it to the
+airgapped server and extract it next to the repo (or in `$HOME`):
+
+```bash
+scp dist/llm_api_fast_airgap.tar.gz target:~/
+ssh target 'tar -xzf llm_api_fast_airgap.tar.gz'
+ssh target 'cd /path/to/LLM_API_fast && ./start-master.sh --build'
+```
+
+Flags: `--clean` wipes caches before building; `--skip-node` omits the Node
+runtime tarball if the server already has one; `--node-version=X.Y.Z` and
+`--arch=x64|arm64` override the defaults (Node 20.18.0 / x64).
+
 Manual service startup still works:
 
 ```bash
