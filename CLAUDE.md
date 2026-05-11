@@ -27,6 +27,7 @@ On Linux, `--build` now means "run install-master.sh / install-slave.sh first, t
 
 `install-master.{sh,ps1}` and `install-slave.{sh,ps1}` are install-only (no launch).
 On Linux, `OFFLINE_DEPS_DIR` is the airgap contract: Python wheelhouse plus staged Messenger runtime assets. Supported Messenger bundle paths are `messenger/node_modules`, `messenger/server/dist`, `messenger/client/dist-web`, and a Linux Node runtime under `node/` or `node-v*-linux-*`.
+Linux Python installs use separate app venvs (`llm-api/.venv` and `hoonbot/.venv`) to avoid FastAPI/Starlette dependency conflicts between services.
 
 ### Per-service (run individually)
 

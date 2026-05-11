@@ -20,7 +20,12 @@ for arg in "$@"; do
     esac
 done
 
-PYTHON_BIN="${PYTHON:-python3}"
+VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
+PYTHON_BIN="${PYTHON:-}"
+if [[ -z "$PYTHON_BIN" && -x "$VENV_PYTHON" ]]; then
+    PYTHON_BIN="$VENV_PYTHON"
+fi
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     echo "[ERROR] python3 not found. Install Python >= 3.10 first."
     exit 1

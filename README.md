@@ -52,6 +52,13 @@ Expected offline bundle layout:
 - `messenger/client/dist-web/index.html` or `client/dist-web/index.html`
 - `node/` with an unpacked Linux Node runtime, or a `node-v*-linux-*.tar.xz` / `.tar.gz` archive
 
+Linux install now creates one Python virtual environment per app:
+
+- `llm-api/.venv`
+- `hoonbot/.venv`
+
+This avoids cross-service dependency conflicts in shared site-packages.
+
 Manual service startup still works:
 
 ```bash

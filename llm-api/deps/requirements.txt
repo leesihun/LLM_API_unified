@@ -3,10 +3,14 @@
 # ============================================================
 
 # --------------- Web Framework ---------------
-fastapi>=0.100.0
-uvicorn[standard]>=0.23.0
-pydantic>=2.0.0
-sse-starlette>=1.6.0        # Server-Sent Events for streaming responses
+# Pin the FastAPI/Starlette/SSE stack so the airgapped wheelhouse resolves
+# deterministically. FastAPI 0.110.0 conflicts with sse-starlette 3.x because
+# they require incompatible Starlette ranges.
+fastapi==0.136.1
+starlette==1.0.0
+uvicorn[standard]==0.46.0
+pydantic==2.13.3
+sse-starlette==3.4.1        # Server-Sent Events for streaming responses
 
 # --------------- HTTP Client ---------------
 httpx>=0.25.0               # Async HTTP client for llama.cpp backend
