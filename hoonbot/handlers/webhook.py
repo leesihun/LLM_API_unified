@@ -213,10 +213,14 @@ async def handle_webhook(request: Request):
     if not content:
         return {"ok": True}
 
-    # In non-home rooms, only respond when @mentioned
+    # Respond unconditionally in:
+    #   - the configured home room, OR
+    #   - any 1-on-1 DM with the bot (positively confirmed isGroup=False).
+    # Other rooms still require an explicit @mention.
     is_home = room_id == config.MESSENGER_HOME_ROOM_ID
+    is_dm = await messenger.is_dm_room(room_id)
     mention_tag = f"@{config.MESSENGER_BOT_NAME}"
-    if not is_home and mention_tag.lower() not in content.lower():
+    if not is_home and not is_dm and mention_tag.lower() not in content.lower():
         return {"ok": True}
 
     # Strip @mention

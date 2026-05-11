@@ -307,6 +307,21 @@ async def get_room_info(room_id: int) -> dict:
     return _room_cache.get(room_id, {"name": str(room_id), "isGroup": False})
 
 
+async def is_dm_room(room_id: int) -> bool:
+    """Return True only when the room is positively confirmed to be a 1-on-1 DM.
+
+    Unknown rooms (cache miss after lookup attempt — e.g., API unreachable, or a
+    room the bot isn't a member of) return False. This preserves the existing
+    "require @mention in unfamiliar rooms" behavior; the DM bypass only fires
+    when we actually verified the room is not a group.
+    """
+    if room_id not in _room_cache:
+        await get_room_info(room_id)
+    if room_id not in _room_cache:
+        return False
+    return not _room_cache[room_id].get("isGroup", True)
+
+
 async def get_rooms(bot_user_id: int) -> list:
     try:
         client = _get_client()

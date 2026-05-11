@@ -19,9 +19,12 @@ PYTHON_BIN="${PYTHON:-python3}"
 "$PYTHON_BIN" -c "import cluster_config; cluster_config.require_valid_advertised_urls(); print('starting master:', cluster_config.NODE_NAME, cluster_config.MASTER_LLM_API_URL)"
 
 auto_detect_offline_deps_dir() {
-  [[ -n "${OFFLINE_DEPS_DIR:-}" ]] && return 0
+  if [[ -n "${OFFLINE_DEPS_DIR:-}" && -d "$OFFLINE_DEPS_DIR" ]]; then
+    return 0
+  fi
 
   local candidates=(
+    "${OFFLINE_DEPS_DIR:-}"
     "$ROOT_DIR/llm_api_fast_airgap"
     "$ROOT_DIR/offline_deps"
     "$ROOT_DIR/.offline_deps"
@@ -31,9 +34,23 @@ auto_detect_offline_deps_dir() {
     "$HOME/llm_api_fast_airgap"
   )
 
-  local candidate
+  local candidate ext parent
   for candidate in "${candidates[@]}"; do
-    if [[ -d "$candidate" ]]; then
+    [[ -z "$candidate" || -d "$candidate" ]] && continue
+    for ext in tar.gz tgz tar.xz; do
+      if [[ -f "$candidate.$ext" ]]; then
+        parent="$(dirname "$candidate")"
+        echo "[config] Extracting offline bundle: $candidate.$ext -> $parent/"
+        mkdir -p "$parent"
+        tar -xf "$candidate.$ext" -C "$parent" \
+          || { echo "[ERROR] Failed to extract $candidate.$ext" >&2; exit 1; }
+        break
+      fi
+    done
+  done
+
+  for candidate in "${candidates[@]}"; do
+    if [[ -n "$candidate" && -d "$candidate" ]]; then
       export OFFLINE_DEPS_DIR="$candidate"
       echo "[config] OFFLINE_DEPS_DIR auto-detected: $OFFLINE_DEPS_DIR"
       return 0
@@ -48,8 +65,23 @@ if $BUILD; then
   ./install-master.sh
 fi
 
-(cd messenger && ./start.sh --background --prod)
-(cd llm-api && ./start.sh --background)
-(cd hoonbot && ./start.sh --background)
+cleanup() {
+  trap '' INT TERM
+  echo
+  echo "[shutdown] stopping services..."
+  kill -TERM 0 2>/dev/null || true
+  wait 2>/dev/null || true
+  exit 130
+}
+trap cleanup INT TERM
 
-echo "[ok] Master node '$NODE_NAME' startup requested."
+(cd messenger && ./start.sh --prod) &
+MESSENGER_PID=$!
+(cd llm-api && ./start.sh) &
+LLM_API_PID=$!
+(cd hoonbot && ./start.sh) &
+HOONBOT_PID=$!
+
+echo "[ok] Master '$NODE_NAME' running. Ctrl+C to stop."
+echo "[ok]   messenger PID $MESSENGER_PID, llm-api PID $LLM_API_PID, hoonbot PID $HOONBOT_PID"
+wait
