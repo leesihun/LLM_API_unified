@@ -104,8 +104,8 @@ AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 18000
 AGENT_REPO_DOC_CONTEXT_MAX_CHARS = 12000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
-AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 500
-AGENT_COMPACTION_WARM_WINDOW = 5  # keep this many previous iterations uncompressed
+AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 1200  # 500 was too small; 1200 fits ~25 lines of context
+AGENT_COMPACTION_WARM_WINDOW = 10  # multi-file edit flows need more headroom than 5
 
 # Auto-compact: triggered when llama.cpp returns a context-overflow error.
 # We summarize the older half of the conversation via a single LLM call and
@@ -114,7 +114,7 @@ AGENT_AUTOCOMPACT_ENABLED = True
 AGENT_AUTOCOMPACT_MAX_RETRIES = 2          # number of summarize-and-retry attempts per LLM call
 AGENT_AUTOCOMPACT_SUMMARY_MAX_TOKENS = 1500 # cap on the summary the LLM is allowed to emit
 AGENT_AUTOCOMPACT_PER_MSG_CHARS = 1500     # truncate each old message to this before summarizing
-AGENT_AUTOCOMPACT_KEEP_RECENT = 4          # always keep this many most-recent non-system msgs verbatim
+AGENT_AUTOCOMPACT_KEEP_RECENT = 8          # always keep this many most-recent non-system msgs verbatim
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
 AGENT_LOG_ASYNC = True
 AGENT_LOG_PATH = PROMPTS_LOG_PATH
@@ -157,12 +157,15 @@ AVAILABLE_TOOLS = [
     "code_exec",        # Direct Python execution — write and run the code yourself
     "rag",              # Unchanged — FAISS vector search over uploaded documents
     "file_reader",      # Read any file (prefer over shell_exec cat/head/tail)
-    "file_edit",        # NEW — surgical exact-string replacement in existing files
-    "file_patch",       # Apply contextual unified-diff patches to existing files
+    "file_edit",        # Surgical exact-string replacement (single-line / small changes)
+    "apply_patch",      # V4A context-anchored patch (prefer for multi-line/.ps1/.sh edits)
+    "file_patch",       # Legacy unified-diff patch
     "file_writer",      # Create new files or complete rewrites only
     "file_navigator",   # Discover files by name/glob (prefer over shell_exec find)
     "grep",             # NEW — ripgrep content search (prefer over shell_exec grep)
     "shell_exec",       # Shell commands (use for git, package managers, build tools)
+    "shell_lint",       # Lint shell scripts before running (PSScriptAnalyzer / shellcheck)
+    "tool_result_recall", # Retrieve full content of a previously truncated tool result
     "process_monitor",  # Background process lifecycle
     "memo",             # Persistent cross-session key-value memory
     "todo_write",       # NEW — session task checklist (3+ step tasks)
@@ -195,17 +198,20 @@ TOOL_RESULT_BUDGET = {
     "code_exec": 8000,
     "python_coder": 8000,
     "rag": 3000,
-    "file_reader": 4000,
-    "file_edit": 500,
-    "file_patch": 1000,
+    "file_reader": 8000,   # was 4000; .ps1/.sh scripts can be 300-800 lines
+    "file_edit": 1500,     # was 500; failed-edit diffs need to be readable
+    "file_patch": 2000,    # was 1000; V4A apply_patch unified diff output
+    "apply_patch": 2000,   # new V4A patch tool
     "file_writer": 500,
     "file_navigator": 2000,
-    "grep": 4000,
+    "grep": 6000,          # was 4000; multi-file context windows
     "shell_exec": 3000,
+    "shell_lint": 4000,    # new shell linting tool
     "process_monitor": 3000,
     "memo": 1000,
     "todo_write": 300,
     "agent": 6000,
+    "tool_result_recall": 8000,  # new recall tool
 }
 TOOL_RESULT_DEFAULT_BUDGET = 3000
 TOOL_RESULTS_DIR = DATA_DIR / "tool_results"

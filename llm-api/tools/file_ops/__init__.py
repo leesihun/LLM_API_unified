@@ -3,3 +3,4 @@ from tools.file_ops.writer import FileWriterTool
 from tools.file_ops.navigator import FileNavigatorTool
 from tools.file_ops.editor import FileEditorTool
 from tools.file_ops.patcher import FilePatchTool
+from tools.file_ops.v4a_patch import ApplyPatchTool

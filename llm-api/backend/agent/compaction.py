@@ -79,6 +79,23 @@ class CompactionMixin:
         if compressed_count:
             self._log(f"  [MICROCOMPACT] Compressed {compressed_count} old message(s) "
                       f"from iterations before {current_iteration + 1}")
+            # Inject a system-reminder into the VIEW so the model knows context was compressed.
+            # Insert at the boundary index so it appears right before the uncompressed tail.
+            # CRITICAL: mutate `result` (the copy), never `msgs` — mutating msgs would
+            # invalidate the llama.cpp KV-cache prefix for all future iterations.
+            sid = getattr(self, "session_id", None) or "session"
+            reminder = {
+                "role": "system",
+                "content": (
+                    f"<system-reminder>{compressed_count} earlier tool result(s) were compressed "
+                    f"to save context. If you need the full content of a previous result, find the "
+                    f"disk path in the truncation marker (data/tool_results/{sid}/<call_id>.json) "
+                    f"and retrieve it with file_reader or tool_result_recall.</system-reminder>"
+                ),
+            }
+            # Insert just before the first uncompressed message (old_boundary index in result)
+            insert_at = min(old_boundary, len(result))
+            result.insert(insert_at, reminder)
 
         return result
 
@@ -242,11 +259,22 @@ class CompactionMixin:
         except Exception as e:
             self._log(f"  [AUTOCOMPACT] Summarizer call failed ({e}); dropping without summary")
 
+        sid = getattr(self, "session_id", None) or "session"
         if summary_text:
-            notice = f"[Earlier conversation summary]\n{summary_text}"
+            notice = (
+                f"<system-reminder>Conversation auto-compacted. {len(to_compact)} older messages "
+                f"summarized below. Full tool results are at data/tool_results/{sid}/. "
+                f"Use file_reader on the disk path in a truncation marker, or tool_result_recall "
+                f"with the original call_id, to retrieve any result you need. "
+                f"Re-read AGENTS.md or critical files if the summary is missing details.</system-reminder>\n"
+                f"[Earlier conversation summary]\n{summary_text}"
+            )
         else:
-            notice = (f"[Earlier conversation auto-compacted: dropped {len(to_compact)} "
-                      f"older messages without summary]")
+            notice = (
+                f"<system-reminder>Conversation auto-compacted: dropped {len(to_compact)} "
+                f"older messages without summary. Full tool results at data/tool_results/{sid}/."
+                f"</system-reminder>"
+            )
 
         msgs[middle_start:middle_start + half] = [{"role": "system", "content": notice}]
         self._log(f"  [AUTOCOMPACT] Replaced {len(to_compact)} msgs with 1 system summary "

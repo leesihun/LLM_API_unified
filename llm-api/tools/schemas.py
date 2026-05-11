@@ -18,19 +18,24 @@ TOOL_SCHEMAS: dict = {
             "Executes a given shell command and returns its output.\n\n"
             "Each shell_exec call is isolated. Shell state and cd commands do not persist; "
             "always pass working_directory for commands that depend on cwd.\n\n"
+            "PLATFORM — check the injected ## ENVIRONMENT block before every call:\n"
+            "  Windows / PowerShell 5.1: chain with `;` not `&&`; use `$env:VAR` not `$VAR`; "
+            "use Get-Content/Set-Content not cat/echo >; do NOT use chmod, export, source, [[ ]].\n"
+            "  Linux/macOS / bash: chain with `&&`; use `$VAR`; bash syntax is fine.\n\n"
             "IMPORTANT: Avoid using this tool to run find, grep, cat, head, tail, sed, or awk "
             "unless explicitly instructed. Instead use the dedicated tools:\n"
             "  - file_reader   for reading files (not cat/head/tail)\n"
-            "  - file_edit     for in-place edits (not sed/awk)\n"
+            "  - file_edit / apply_patch for in-place edits (not sed/awk)\n"
             "  - grep          for content search (not grep/rg)\n"
             "  - file_navigator for listing directories (not find/ls)\n\n"
             "When issuing multiple independent read/search operations, use dedicated read-only "
-            "tools instead. shell_exec calls run in request order to avoid state races. "
-            "Chain tightly dependent shell commands with && in one call.\n\n"
+            "tools instead. shell_exec calls run in request order to avoid state races.\n\n"
             "When using curl for HTTP APIs, always include -sS --fail-with-body so HTTP 4xx/5xx "
             "responses surface as failures instead of silent exit-code-0 successes.\n\n"
             "For long-running commands set a large timeout (600-3600). "
             "For background servers or watchers, use process_monitor instead.\n\n"
+            "SHELL SCRIPTS: After editing any shell script, call shell_lint to verify syntax "
+            "before running with shell_exec.\n\n"
             "Always provide the description parameter — it appears in logs and helps trace "
             "what each command was doing."
         ),
@@ -117,7 +122,10 @@ TOOL_SCHEMAS: dict = {
             "- The edit will FAIL if old_string is not unique in the file. Either provide more "
             "surrounding context to make it unique, or set replace_all=true to change every instance.\n"
             "- Use replace_all=true for renaming a variable or string across the whole file.\n"
-            "- Only use emojis if the user explicitly requests it."
+            "- IMPORTANT: Use this only for single-line or very small changes where old_string "
+            "will match exactly (including whitespace and line endings). For multi-line edits, "
+            ".ps1 files, or .sh files, use apply_patch instead — it handles CRLF/LF differences "
+            "and whitespace tolerance that make exact matching unreliable."
         ),
         "parameters": {
             "type": "object",
@@ -143,6 +151,49 @@ TOOL_SCHEMAS: dict = {
                 },
             },
             "required": ["path", "old_string", "new_string"],
+        },
+    },
+
+    "apply_patch": {
+        "name": "apply_patch",
+        "description": (
+            "Apply a V4A context-anchored patch to one or more files.\n\n"
+            "Use this for ALL multi-line edits, .ps1 files, and .sh files. "
+            "It locates edit regions by matching surrounding context lines — no line numbers needed — "
+            "and is tolerant of CRLF vs LF and trailing-whitespace differences.\n\n"
+            "Format:\n"
+            "    *** Begin Patch\n"
+            "    *** Update File: path/to/file.ps1\n"
+            "    @@ optional locator text (a nearby unique line)\n"
+            "     unchanged context line\n"
+            "    -removed line\n"
+            "    +added line\n"
+            "     unchanged context line\n"
+            "    *** End Patch\n\n"
+            "Supported directives: *** Add File, *** Delete File, *** Update File, *** Move to.\n"
+            "Multiple files can be patched in one envelope.\n\n"
+            "Example — rename a variable in a .ps1 file:\n"
+            "    *** Begin Patch\n"
+            "    *** Update File: hoonbot/start.ps1\n"
+            "    @@ param(\n"
+            "     param(\n"
+            "    -    [string]$OldName = 'default',\n"
+            "    +    [string]$NewName = 'default',\n"
+            "     )\n"
+            "    *** End Patch\n\n"
+            "On failure, returns an actionable error naming the exact context line that did not "
+            "match — use file_reader to look up the actual content, then reissue the patch with "
+            "corrected context lines. Do NOT write the file if the patch fails."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "patch": {
+                    "type": "string",
+                    "description": "V4A patch text starting with '*** Begin Patch' and ending with '*** End Patch'.",
+                },
+            },
+            "required": ["patch"],
         },
     },
 
@@ -659,6 +710,69 @@ TOOL_SCHEMAS: dict = {
     },
 
     # ================================================================
+    # SHELL LINTING
+    # ================================================================
+
+    "shell_lint": {
+        "name": "shell_lint",
+        "description": (
+            "Run static analysis on a shell script before executing it.\n\n"
+            "Use after EVERY shell script edit, before shell_exec. "
+            "Returns file:line:severity:rule:message for each issue found.\n\n"
+            "  .ps1 files: uses PSScriptAnalyzer (Invoke-ScriptAnalyzer) if installed, "
+            "falling back to the PSParser syntax checker.\n"
+            "  .sh / .bash files: uses shellcheck -f json if on PATH, falling back to bash -n.\n\n"
+            "Workflow: file_edit/apply_patch → shell_lint → fix all errors → "
+            "shell_lint again to confirm clean → shell_exec.\n\n"
+            "Never skip the second lint — small fixes can introduce new issues."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or repo-relative path to the .ps1, .sh, or .bash file to lint.",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+
+    # ================================================================
+    # TOOL RESULT RECALL
+    # ================================================================
+
+    "tool_result_recall": {
+        "name": "tool_result_recall",
+        "description": (
+            "Retrieve the full content of a tool result that was truncated in context.\n\n"
+            "When a tool result exceeds its context budget, the in-context message ends with:\n"
+            "    ...[truncated to N/M chars — full result at data/tool_results/{session}/{call_id}.json]\n\n"
+            "Pass the call_id from that marker to this tool to read the full content. "
+            "Supports offset and limit for paging through large results.\n\n"
+            "Use this instead of re-calling the original tool — the full result is already on disk."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tool_call_id": {
+                    "type": "string",
+                    "description": "The tool call ID from the truncation marker (the part before .json).",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Character offset to start reading from (default: 0).",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum characters to return (default: 8000).",
+                },
+            },
+            "required": ["tool_call_id"],
+        },
+    },
+
+    # ================================================================
     # PYTHON CODER (disabled — kept for reference)
     # ================================================================
 
@@ -697,7 +811,10 @@ TOOL_METADATA: dict = {
     "shell_exec":      {"is_read_only": False, "is_destructive": True,  "is_concurrency_safe": False, "activity": "Running shell command",   "user_name": "Shell"},
     "file_reader":     {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Reading file",            "user_name": "File Reader"},
     "file_edit":       {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Editing file",            "user_name": "File Editor"},
+    "apply_patch":     {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Applying V4A patch",      "user_name": "Apply Patch"},
     "file_patch":      {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Applying patch",          "user_name": "File Patch"},
+    "shell_lint":      {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Linting shell script",    "user_name": "Shell Lint"},
+    "tool_result_recall": {"is_read_only": True, "is_destructive": False, "is_concurrency_safe": True, "activity": "Recalling tool result",  "user_name": "Tool Recall"},
     "file_writer":     {"is_read_only": False, "is_destructive": True,  "is_concurrency_safe": False, "activity": "Writing file",            "user_name": "File Writer"},
     "file_navigator":  {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Navigating files",        "user_name": "File Navigator"},
     "grep":            {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Searching files",         "user_name": "Grep"},

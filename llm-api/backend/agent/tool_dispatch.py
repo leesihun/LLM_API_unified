@@ -158,6 +158,35 @@ class DispatchMixin:
                 patch=arguments["patch"],
             )
 
+        elif name == "apply_patch":
+            if "apply_patch" not in cache:
+                from tools.file_ops import ApplyPatchTool
+                cache["apply_patch"] = ApplyPatchTool(session_id=self.session_id, username=self.username)
+            return await asyncio.to_thread(
+                cache["apply_patch"].apply,
+                patch=arguments["patch"],
+            )
+
+        elif name == "shell_lint":
+            if "shell_lint" not in cache:
+                from tools.shell.lint import ShellLintTool
+                cache["shell_lint"] = ShellLintTool()
+            return await asyncio.to_thread(
+                cache["shell_lint"].lint,
+                path=arguments["path"],
+            )
+
+        elif name == "tool_result_recall":
+            if "tool_result_recall" not in cache:
+                from tools.recall.tool import ToolResultRecallTool
+                cache["tool_result_recall"] = ToolResultRecallTool(session_id=self.session_id)
+            return await asyncio.to_thread(
+                cache["tool_result_recall"].recall,
+                tool_call_id=arguments["tool_call_id"],
+                offset=arguments.get("offset", 0),
+                limit=arguments.get("limit", 8000),
+            )
+
         elif name == "file_navigator":
             if "file_navigator" not in cache:
                 from tools.file_ops import FileNavigatorTool

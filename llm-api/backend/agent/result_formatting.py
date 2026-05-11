@@ -1,6 +1,5 @@
 """FormattingMixin: message builders and tool result microcompaction."""
 import json
-from uuid import uuid4
 from typing import List, Dict, Any, Optional
 
 import config
@@ -39,7 +38,7 @@ class FormattingMixin:
             ensure_ascii=False,
             default=str,
         )
-        content = self._truncate_tool_result(tool_call.function.name, content)
+        content = self._truncate_tool_result(tool_call.function.name, content, call_id=tool_call.id)
         return {
             "role": "tool",
             "name": tool_call.function.name,
@@ -97,20 +96,25 @@ class FormattingMixin:
 
         return value
 
-    def _truncate_tool_result(self, tool_name: str, content: str) -> str:
-        """Truncate a tool result to its per-tool budget. Save full version to disk if over budget."""
+    def _truncate_tool_result(self, tool_name: str, content: str, call_id: str = "") -> str:
+        """Truncate a tool result to its per-tool budget. Save full version to disk if over budget.
+        Truncation marker includes the disk path so the model can recover via file_reader."""
         budget = config.TOOL_RESULT_BUDGET.get(tool_name, config.TOOL_RESULT_DEFAULT_BUDGET)
         if len(content) <= budget:
             return content
 
         self._log(f"  [MICROCOMPACT] {tool_name} result truncated: {len(content)} -> {budget} chars")
 
-        # Save the oversized prompt representation to disk for potential re-retrieval
+        disk_hint = ""
         if self.session_id:
-            call_id = str(uuid4())[:8]
-            self._save_tool_result_to_disk(call_id, content)
+            # Use the deterministic tool_call.id instead of a random UUID so the model
+            # can correlate the truncation marker with tool_result_recall later
+            safe_id = (call_id or "").replace("/", "_").replace("\\", "_")[:64] or "unknown"
+            self._save_tool_result_to_disk(safe_id, content)
+            rel_path = f"data/tool_results/{self.session_id}/{safe_id}.json"
+            disk_hint = f" — full result at {rel_path}"
 
-        return content[:budget] + f"\n...[truncated, {len(content)} chars total]"
+        return content[:budget] + f"\n...[truncated to {budget}/{len(content)} chars{disk_hint}]"
 
     def _save_tool_result_to_disk(self, call_id: str, content: str):
         """Persist an oversized tool result representation to disk."""

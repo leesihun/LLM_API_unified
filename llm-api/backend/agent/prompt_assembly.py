@@ -1,6 +1,10 @@
 """PromptMixin: system prompt, dynamic context, RAG/memo/file formatting, and tool schema helpers."""
 import json
+import os
+import platform
+import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -12,6 +16,126 @@ from backend.agent._cache import (
     _rag_collections_cache,
     _RAG_CACHE_TTL,
 )
+
+# Module-level caches for environment context (avoids spawning subprocesses every iteration)
+_env_git_cache: Dict[str, Any] = {}
+_env_files_cache: Dict[str, Any] = {}
+_ENV_GIT_TTL = 30   # seconds
+_ENV_FILES_TTL = 60 # seconds
+
+
+def _get_git_context(cwd: str) -> str:
+    """Return a brief git block for cwd. Cached 30s. Returns '' if not a git repo or git absent."""
+    cached = _env_git_cache.get(cwd)
+    if cached and time.time() < cached["expires_at"]:
+        return cached["text"]
+
+    lines = []
+    git_dir = Path(cwd) / ".git"
+    if not git_dir.exists():
+        text = ""
+        _env_git_cache[cwd] = {"text": text, "expires_at": time.time() + _ENV_GIT_TTL}
+        return text
+
+    def _run(args):
+        try:
+            r = subprocess.run(
+                args, cwd=cwd, capture_output=True, text=True, timeout=3,
+                encoding="utf-8", errors="replace",
+            )
+            return r.stdout.strip() if r.returncode == 0 else ""
+        except Exception:
+            return ""
+
+    branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"])
+    if branch:
+        lines.append(f"Branch: {branch}")
+    status = _run(["git", "status", "--porcelain"])
+    if status:
+        # Limit to first 20 lines
+        status_lines = status.splitlines()[:20]
+        lines.append("Git status:\n" + "\n".join(status_lines))
+    log = _run(["git", "log", "-5", "--oneline"])
+    if log:
+        lines.append("Recent commits:\n" + log)
+
+    text = "\n".join(lines)
+    _env_git_cache[cwd] = {"text": text, "expires_at": time.time() + _ENV_GIT_TTL}
+    return text
+
+
+def _get_recent_files(cwd: str) -> str:
+    """Return recently-modified files (last 24h). Cached 60s."""
+    cached = _env_files_cache.get(cwd)
+    if cached and time.time() < cached["expires_at"]:
+        return cached["text"]
+
+    EXCLUDE = {".git", "__pycache__", "node_modules", "data", ".venv", "venv"}
+    now = time.time()
+    cutoff = now - 86400  # 24h
+    recent = []
+    try:
+        for p in Path(cwd).rglob("*"):
+            if any(part in EXCLUDE for part in p.parts):
+                continue
+            if not p.is_file():
+                continue
+            try:
+                if p.stat().st_mtime >= cutoff:
+                    try:
+                        recent.append((p.stat().st_mtime, str(p.relative_to(cwd))))
+                    except ValueError:
+                        recent.append((p.stat().st_mtime, str(p)))
+            except OSError:
+                continue
+    except Exception:
+        pass
+
+    recent.sort(reverse=True)
+    top = [name for _, name in recent[:10]]
+    text = "Recently modified:\n" + "\n".join(top) if top else ""
+    _env_files_cache[cwd] = {"text": text, "expires_at": time.time() + _ENV_FILES_TTL}
+    return text
+
+
+def _format_environment_context() -> str:
+    """Build a compact <env> block injected before each turn. Cross-platform."""
+    cwd = os.getcwd()
+    sys_name = platform.system()          # 'Windows', 'Linux', 'Darwin'
+    sys_ver = platform.release()
+
+    if sys_name == "Windows":
+        shell = "PowerShell 5.1"
+        script_ext = ".ps1"
+    elif sys_name == "Darwin":
+        shell = "zsh"
+        script_ext = ".sh"
+    else:
+        shell = "bash"
+        script_ext = ".sh"
+
+    today = datetime.now().strftime("%Y-%m-%d (%A)")
+
+    lines = [
+        f"Working directory: {cwd}",
+        f"Platform: {sys_name} {sys_ver}",
+        f"Shell: {shell}  Script extension: {script_ext}",
+        f"Today: {today}",
+    ]
+
+    git_ctx = _get_git_context(cwd)
+    if git_ctx:
+        lines.append(git_ctx)
+
+    files_ctx = _get_recent_files(cwd)
+    if files_ctx:
+        lines.append(files_ctx)
+
+    block = "\n".join(lines)
+    # Hard cap: keep under ~1.2 KB so it doesn't eat the dynamic context budget
+    if len(block) > 1200:
+        block = block[:1200] + "\n...[env truncated]"
+    return f"## ENVIRONMENT\n{block}"
 
 
 class PromptMixin:
@@ -25,6 +149,10 @@ class PromptMixin:
         """Return per-request dynamic context (RAG, memo, files). Separate from
         system prompt so the static prefix stays byte-identical for cache_prompt."""
         parts = []
+        # Environment block first — gives the model platform/shell/cwd/git before any other context
+        env_ctx = _format_environment_context()
+        if env_ctx:
+            parts.append(env_ctx)
         repo_docs = self._format_repo_instructions_context()
         if repo_docs:
             parts.append(repo_docs)

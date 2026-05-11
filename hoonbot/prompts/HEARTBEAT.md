@@ -61,3 +61,46 @@ Cluster issue:
 slave-02 last seen 6m ago (stale > 90s). Task lease task-7e3a held by
 slave-02 expired; needs reassignment.
 ```
+
+---
+
+# Heartbeat Checklist
+
+This file is read every heartbeat interval.
+
+Your job is to find things to do yourself
+and actually, PROACTIVELY DO IT!!!
+
+You need to actually do the job, observe its output and report back what has been done!!!
+
+If there is a job that needs to be done in between this heartbeat and the previous one, do it yourself, proactively.
+
+---
+
+## Memory
+
+- Go through the memory and see if there's things to do. Note that heartbeat interval is limited and may require additional jobs.
+- Always display the full info to the user. Don't abbreviate or discard some information.
+- **Update memory fully** — after system health check, training status, and any other checks, write all fresh live data back to the memory file. Overwrite the stale sections completely. Do not keep old/stale values.
+
+## Reminders
+
+- Check if any reminders are due. If so, send a notification to Heartbeat room.
+- If a reminder has fired, remove it from the reminder list and update memory.
+
+## System Health
+
+- Run `nvidia-smi --query-gpu=index,name,memory.used,memory.free,utilization.gpu,temperature.gpu --format=csv` for live GPU stats (util, memory, temp).
+- Run `free -m` for live RAM.
+- Run `df -h` for disk usage.
+- If GPU memory is critically low (<5% free on any GPU), alert immediately.
+- If any process has crashed or stalled, alert immediately.
+
+## Priority Order
+
+1. Crash/alert detection -> report immediately
+2. System health (GPU, CPU, disk)
+3. Training status (live log tail)
+4. Reminders
+5. Memory update (write all fresh data)
+6. Memory review (display to user)
