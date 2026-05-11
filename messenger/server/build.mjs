@@ -26,7 +26,7 @@ console.log('[BUILD] Bundling server with esbuild...');
 
 await build({
   absWorkingDir: __dirname,
-  entryPoints: ['src/index.ts'],
+  entryPoints: [path.join(__dirname, 'src', 'index.ts')],
   bundle: true,
   platform: 'node',
   target: 'node18',
