@@ -194,6 +194,16 @@ stage_offline_runtime() {
     fi
 }
 
+build_prod_runtime() {
+    [[ -n "$NODE_BIN" ]] || die "node not found. Install Node.js or stage a Linux Node runtime under OFFLINE_DEPS_DIR/node."
+    [[ -n "$NPM_BIN" ]] || die "npm not found. Install Node/npm first."
+    [[ -d "node_modules" ]] || die "Messenger node_modules missing. Stage messenger/node_modules first."
+    echo "[build] Building Messenger server bundle..."
+    "$NPM_BIN" run build --workspace=server
+    echo "[build] Building Messenger web client..."
+    "$NPM_BIN" run build:web
+}
+
 require_prod_runtime() {
     [[ -d "node_modules" ]] || die "Messenger node_modules missing. Run ./install-master.sh or stage OFFLINE_DEPS_DIR/messenger/node_modules."
     [[ -f "server/dist/server.cjs" ]] || die "Messenger production server bundle missing. Expected server/dist/server.cjs."
@@ -219,16 +229,16 @@ NPM_BIN="$(find_npm_bin "$NODE_BIN" || true)"
 if $BUILD; then
     if ensure_offline_dir; then
         echo "[build] Airgapped mode: using staged Messenger runtime assets."
+        if [[ ! -f "server/dist/server.cjs" || ! -f "client/dist-web/index.html" ]]; then
+            build_prod_runtime
+        fi
         require_prod_runtime
     else
         [[ -n "$NODE_BIN" ]] || die "node not found. Install Node.js first."
         [[ -n "$NPM_BIN" ]] || die "npm not found. Install Node/npm first."
         echo "[build] Installing npm dependencies..."
         "$NPM_BIN" install
-        echo "[build] Building Messenger server bundle..."
-        "$NPM_BIN" run build --workspace=server
-        echo "[build] Building Messenger web client..."
-        "$NPM_BIN" run build:web
+        build_prod_runtime
     fi
 fi
 
@@ -236,6 +246,10 @@ mkdir -p "$(dirname "$LOG_FILE")"
 
 if $PROD; then
     [[ -n "$NODE_BIN" ]] || die "node not found. Install Node.js or stage a Linux Node runtime under OFFLINE_DEPS_DIR/node."
+    if [[ ! -f "server/dist/server.cjs" || ! -f "client/dist-web/index.html" ]]; then
+        echo "[build] Messenger production runtime incomplete; attempting local build."
+        build_prod_runtime
+    fi
     require_prod_runtime
     RUN_CMD=("$NODE_BIN" "server/dist/server.cjs")
 else
