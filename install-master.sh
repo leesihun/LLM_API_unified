@@ -73,11 +73,7 @@ require_file() {
 
 install_python_requirements() {
   local requirements="$1"
-  if ensure_offline_dir; then
-    echo "[skip] Airgapped mode: skipping Python install for $requirements"
-  else
-    "$PYTHON_BIN" -m pip install -r "$requirements"
-  fi
+  echo "[skip] Linux install script: skipping Python install for $requirements"
 }
 
 install_messenger_runtime() {

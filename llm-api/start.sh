@@ -52,15 +52,7 @@ auto_detect_offline_deps_dir() {
 auto_detect_offline_deps_dir >/dev/null 2>&1 || true
 
 install_python_requirements() {
-    if [[ -n "${OFFLINE_DEPS_DIR:-}" ]]; then
-        if [[ ! -d "$OFFLINE_DEPS_DIR" ]]; then
-            echo "[ERROR] OFFLINE_DEPS_DIR does not exist: $OFFLINE_DEPS_DIR"
-            exit 1
-        fi
-        echo "[skip] Airgapped mode: skipping Python install for deps/requirements.txt"
-    else
-        "$PYTHON_BIN" -m pip install -r "deps/requirements.txt"
-    fi
+    echo "[skip] Linux start script: skipping Python install for deps/requirements.txt"
 }
 
 echo "=================================================="
