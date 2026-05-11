@@ -32,14 +32,23 @@ LLM API runtime prompt templates live under `llm-api/prompts/`.
 Single-click Windows wrappers are available at `Start-Master.cmd` and
 `Start-Slave.cmd`.
 
-For airgapped Linux nodes, use the install step explicitly:
+For airgapped Linux nodes, use the install step explicitly. The scripts now
+auto-detect an offline bundle if it is placed in one of these nearby paths:
+
+- `./llm_api_fast_airgap`
+- `./offline_deps`
+- `./.offline_deps`
+- `./airgap`
+- `../llm_api_fast_airgap`
+- `../offline_deps`
+- `$HOME/llm_api_fast_airgap`
+
+You can still override with `OFFLINE_DEPS_DIR` if needed.
 
 ```bash
-export OFFLINE_DEPS_DIR=/path/to/offline-bundle
 ./install-master.sh
 ./start-master.sh
 
-export OFFLINE_DEPS_DIR=/path/to/offline-bundle
 ./install-slave.sh
 ./start-slave.sh
 ```
@@ -51,13 +60,6 @@ Expected offline bundle layout:
 - `messenger/server/dist/server.cjs` or `server/dist/server.cjs`
 - `messenger/client/dist-web/index.html` or `client/dist-web/index.html`
 - `node/` with an unpacked Linux Node runtime, or a `node-v*-linux-*.tar.xz` / `.tar.gz` archive
-
-Linux install now creates one Python virtual environment per app:
-
-- `llm-api/.venv`
-- `hoonbot/.venv`
-
-This avoids cross-service dependency conflicts in shared site-packages.
 
 Manual service startup still works:
 

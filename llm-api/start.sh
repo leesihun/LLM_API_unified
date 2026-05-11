@@ -20,16 +20,36 @@ for arg in "$@"; do
     esac
 done
 
-VENV_PYTHON="$SCRIPT_DIR/.venv/bin/python"
-PYTHON_BIN="${PYTHON:-}"
-if [[ -z "$PYTHON_BIN" && -x "$VENV_PYTHON" ]]; then
-    PYTHON_BIN="$VENV_PYTHON"
-fi
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_BIN="${PYTHON:-python3}"
 if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     echo "[ERROR] python3 not found. Install Python >= 3.10 first."
     exit 1
 fi
+
+auto_detect_offline_deps_dir() {
+    [[ -n "${OFFLINE_DEPS_DIR:-}" ]] && return 0
+
+    local candidates=(
+        "$SCRIPT_DIR/../llm_api_fast_airgap"
+        "$SCRIPT_DIR/../offline_deps"
+        "$SCRIPT_DIR/../.offline_deps"
+        "$SCRIPT_DIR/../airgap"
+        "$(dirname "$SCRIPT_DIR")/llm_api_fast_airgap"
+        "$HOME/llm_api_fast_airgap"
+    )
+
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [[ -d "$candidate" ]]; then
+            export OFFLINE_DEPS_DIR="$candidate"
+            echo "[config] OFFLINE_DEPS_DIR auto-detected: $OFFLINE_DEPS_DIR"
+            return 0
+        fi
+    done
+    return 1
+}
+
+auto_detect_offline_deps_dir >/dev/null 2>&1 || true
 
 install_python_requirements() {
     if [[ -n "${OFFLINE_DEPS_DIR:-}" ]]; then

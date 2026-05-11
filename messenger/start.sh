@@ -34,7 +34,31 @@ die() {
     exit 1
 }
 
+auto_detect_offline_deps_dir() {
+    [[ -n "${OFFLINE_DEPS_DIR:-}" ]] && return 0
+
+    local candidates=(
+        "$SCRIPT_DIR/../llm_api_fast_airgap"
+        "$SCRIPT_DIR/../offline_deps"
+        "$SCRIPT_DIR/../.offline_deps"
+        "$SCRIPT_DIR/../airgap"
+        "$(dirname "$SCRIPT_DIR")/llm_api_fast_airgap"
+        "$HOME/llm_api_fast_airgap"
+    )
+
+    local candidate
+    for candidate in "${candidates[@]}"; do
+        if [[ -d "$candidate" ]]; then
+            export OFFLINE_DEPS_DIR="$candidate"
+            echo "[config] OFFLINE_DEPS_DIR auto-detected: $OFFLINE_DEPS_DIR"
+            return 0
+        fi
+    done
+    return 1
+}
+
 ensure_offline_dir() {
+    auto_detect_offline_deps_dir >/dev/null 2>&1 || true
     [[ -n "${OFFLINE_DEPS_DIR:-}" ]] || return 1
     [[ -d "$OFFLINE_DEPS_DIR" ]] || die "OFFLINE_DEPS_DIR does not exist: $OFFLINE_DEPS_DIR"
 }

@@ -15,44 +15,52 @@ die() {
   exit 1
 }
 
+auto_detect_offline_deps_dir() {
+  [[ -n "${OFFLINE_DEPS_DIR:-}" ]] && return 0
+
+  local candidates=(
+    "$ROOT_DIR/llm_api_fast_airgap"
+    "$ROOT_DIR/offline_deps"
+    "$ROOT_DIR/.offline_deps"
+    "$ROOT_DIR/airgap"
+    "$(dirname "$ROOT_DIR")/llm_api_fast_airgap"
+    "$(dirname "$ROOT_DIR")/offline_deps"
+    "$HOME/llm_api_fast_airgap"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -d "$candidate" ]]; then
+      export OFFLINE_DEPS_DIR="$candidate"
+      echo "[config] OFFLINE_DEPS_DIR auto-detected: $OFFLINE_DEPS_DIR"
+      return 0
+    fi
+  done
+  return 1
+}
+
 ensure_offline_dir() {
+  auto_detect_offline_deps_dir >/dev/null 2>&1 || true
   [[ -n "${OFFLINE_DEPS_DIR:-}" ]] || return 1
   [[ -d "$OFFLINE_DEPS_DIR" ]] || die "OFFLINE_DEPS_DIR does not exist: $OFFLINE_DEPS_DIR"
 }
 
-ensure_python_venv() {
-  local app_dir="$1"
-  local venv_dir="$app_dir/.venv"
-  local venv_python="$venv_dir/bin/python"
-  if [[ -x "$venv_python" ]]; then
-    echo "$venv_python"
-    return 0
-  fi
-  echo "[setup] Creating Python venv: $venv_dir"
-  "$PYTHON_BIN" -m venv "$venv_dir" || die "Failed to create venv at $venv_dir. Install python3-venv or create the venv manually."
-  [[ -x "$venv_python" ]] || die "Venv created but python not found: $venv_python"
-  echo "$venv_python"
-}
-
 install_python_requirements() {
-  local app_dir="$1"
-  local requirements="$2"
-  local app_python
-  app_python="$(ensure_python_venv "$app_dir")"
+  local requirements="$1"
   if ensure_offline_dir; then
     local wheelhouse="${OFFLINE_DEPS_DIR}/wheels"
     [[ -d "$wheelhouse" ]] || wheelhouse="$OFFLINE_DEPS_DIR"
     [[ -d "$wheelhouse" ]] || die "Offline wheelhouse not found under OFFLINE_DEPS_DIR: $OFFLINE_DEPS_DIR"
-    "$app_python" -m pip install --no-index --find-links "$wheelhouse" -r "$requirements"
+    "$PYTHON_BIN" -m pip install --no-index --find-links "$wheelhouse" -r "$requirements"
   else
-    "$app_python" -m pip install -r "$requirements"
+    "$PYTHON_BIN" -m pip install -r "$requirements"
   fi
 }
 
 echo "[install] LLM API dependencies"
-install_python_requirements "$ROOT_DIR/llm-api" "llm-api/deps/requirements.txt"
+install_python_requirements "llm-api/deps/requirements.txt"
 
 echo "[install] Hoonbot dependencies"
-install_python_requirements "$ROOT_DIR/hoonbot" "hoonbot/deps/requirements.txt"
+install_python_requirements "hoonbot/deps/requirements.txt"
 
 echo "[ok] Slave node '$NODE_NAME' installed."

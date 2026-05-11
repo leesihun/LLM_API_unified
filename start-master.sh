@@ -18,6 +18,32 @@ PYTHON_BIN="${PYTHON:-python3}"
 
 "$PYTHON_BIN" -c "import cluster_config; cluster_config.require_valid_advertised_urls(); print('starting master:', cluster_config.NODE_NAME, cluster_config.MASTER_LLM_API_URL)"
 
+auto_detect_offline_deps_dir() {
+  [[ -n "${OFFLINE_DEPS_DIR:-}" ]] && return 0
+
+  local candidates=(
+    "$ROOT_DIR/llm_api_fast_airgap"
+    "$ROOT_DIR/offline_deps"
+    "$ROOT_DIR/.offline_deps"
+    "$ROOT_DIR/airgap"
+    "$(dirname "$ROOT_DIR")/llm_api_fast_airgap"
+    "$(dirname "$ROOT_DIR")/offline_deps"
+    "$HOME/llm_api_fast_airgap"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -d "$candidate" ]]; then
+      export OFFLINE_DEPS_DIR="$candidate"
+      echo "[config] OFFLINE_DEPS_DIR auto-detected: $OFFLINE_DEPS_DIR"
+      return 0
+    fi
+  done
+  return 1
+}
+
+auto_detect_offline_deps_dir >/dev/null 2>&1 || true
+
 if $BUILD; then
   ./install-master.sh
 fi
