@@ -57,13 +57,7 @@ install_python_requirements() {
             echo "[ERROR] OFFLINE_DEPS_DIR does not exist: $OFFLINE_DEPS_DIR"
             exit 1
         fi
-        local wheelhouse="${OFFLINE_DEPS_DIR}/wheels"
-        [[ -d "$wheelhouse" ]] || wheelhouse="$OFFLINE_DEPS_DIR"
-        if [[ ! -d "$wheelhouse" ]]; then
-            echo "[ERROR] Offline wheelhouse not found under OFFLINE_DEPS_DIR: $OFFLINE_DEPS_DIR"
-            exit 1
-        fi
-        "$PYTHON_BIN" -m pip install --no-index --find-links "$wheelhouse" -r "deps/requirements.txt"
+        echo "[skip] Airgapped mode: skipping Python install for deps/requirements.txt"
     else
         "$PYTHON_BIN" -m pip install -r "deps/requirements.txt"
     fi

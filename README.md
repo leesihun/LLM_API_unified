@@ -55,11 +55,13 @@ You can still override with `OFFLINE_DEPS_DIR` if needed.
 
 Expected offline bundle layout:
 
-- `wheels/` or a flat wheelhouse at the bundle root for Python packages
 - `messenger/node_modules/` or `node_modules/`
 - `messenger/server/dist/server.cjs` or `server/dist/server.cjs`
 - `messenger/client/dist-web/index.html` or `client/dist-web/index.html`
 - `node/` with an unpacked Linux Node runtime, or a `node-v*-linux-*.tar.xz` / `.tar.gz` archive
+
+In airgapped mode, Linux scripts skip Python package installation entirely and
+assume the target server's Python environment is already provisioned.
 
 Manual service startup still works:
 

@@ -48,10 +48,7 @@ ensure_offline_dir() {
 install_python_requirements() {
   local requirements="$1"
   if ensure_offline_dir; then
-    local wheelhouse="${OFFLINE_DEPS_DIR}/wheels"
-    [[ -d "$wheelhouse" ]] || wheelhouse="$OFFLINE_DEPS_DIR"
-    [[ -d "$wheelhouse" ]] || die "Offline wheelhouse not found under OFFLINE_DEPS_DIR: $OFFLINE_DEPS_DIR"
-    "$PYTHON_BIN" -m pip install --no-index --find-links "$wheelhouse" -r "$requirements"
+    echo "[skip] Airgapped mode: skipping Python install for $requirements"
   else
     "$PYTHON_BIN" -m pip install -r "$requirements"
   fi
