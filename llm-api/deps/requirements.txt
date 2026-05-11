@@ -3,14 +3,14 @@
 # ============================================================
 
 # --------------- Web Framework ---------------
-# Pin the FastAPI/Starlette/SSE stack so the airgapped wheelhouse resolves
-# deterministically. FastAPI 0.110.0 conflicts with sse-starlette 3.x because
-# they require incompatible Starlette ranges.
-fastapi==0.136.1
-starlette==1.0.0
-uvicorn[standard]==0.46.0
-pydantic==2.13.3
-sse-starlette==3.4.1        # Server-Sent Events for streaming responses
+# Keep the FastAPI/Starlette/SSE stack within one known-compatible line so the
+# airgapped resolver can move slightly without drifting into the older
+# FastAPI 0.110 / Starlette 0.36 incompatibility.
+fastapi>=0.136.1,<0.137
+starlette>=1.0.0,<1.1
+uvicorn[standard]>=0.46.0,<0.47
+pydantic>=2.13.3,<2.14
+sse-starlette>=3.4.1,<3.5   # Server-Sent Events for streaming responses
 
 # --------------- HTTP Client ---------------
 httpx>=0.25.0               # Async HTTP client for llama.cpp backend
