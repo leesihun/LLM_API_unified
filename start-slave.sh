@@ -18,12 +18,11 @@ PYTHON_BIN="${PYTHON:-python3}"
 
 "$PYTHON_BIN" -c "import cluster_config; print('starting slave:', cluster_config.NODE_NAME, 'master=', cluster_config.CLUSTER_MASTER_API_URL)"
 
-build_arg=()
 if $BUILD; then
-  build_arg=(--build)
+  ./install-slave.sh
 fi
 
-(cd llm-api && ./start.sh "${build_arg[@]}" --background)
-(cd hoonbot && ./start.sh "${build_arg[@]}" --background)
+(cd llm-api && ./start.sh --background)
+(cd hoonbot && ./start.sh --background)
 
 echo "[ok] Slave node '$NODE_NAME' startup requested."

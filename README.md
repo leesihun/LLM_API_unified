@@ -18,7 +18,11 @@ LLM API runtime prompt templates live under `llm-api/prompts/`.
 ## Quick Start
 
 ```bash
+# Linux master: --build now runs install-master.sh first, then starts services
 ./start-master.sh --build
+
+# Linux slave: --build now runs install-slave.sh first, then starts services
+./start-slave.sh --build
 ```
 
 ```powershell
@@ -28,6 +32,26 @@ LLM API runtime prompt templates live under `llm-api/prompts/`.
 Single-click Windows wrappers are available at `Start-Master.cmd` and
 `Start-Slave.cmd`.
 
+For airgapped Linux nodes, use the install step explicitly:
+
+```bash
+export OFFLINE_DEPS_DIR=/path/to/offline-bundle
+./install-master.sh
+./start-master.sh
+
+export OFFLINE_DEPS_DIR=/path/to/offline-bundle
+./install-slave.sh
+./start-slave.sh
+```
+
+Expected offline bundle layout:
+
+- `wheels/` or a flat wheelhouse at the bundle root for Python packages
+- `messenger/node_modules/` or `node_modules/`
+- `messenger/server/dist/server.cjs` or `server/dist/server.cjs`
+- `messenger/client/dist-web/index.html` or `client/dist-web/index.html`
+- `node/` with an unpacked Linux Node runtime, or a `node-v*-linux-*.tar.xz` / `.tar.gz` archive
+
 Manual service startup still works:
 
 ```bash
@@ -35,7 +59,7 @@ Manual service startup still works:
 cd llm-api && ./start.sh --build
 
 # 2. Messenger
-cd messenger && ./start.sh --build
+cd messenger && ./start.sh --build --prod
 
 # 3. Hoonbot
 cd hoonbot && ./start.sh --build

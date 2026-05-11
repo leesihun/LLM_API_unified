@@ -18,13 +18,12 @@ PYTHON_BIN="${PYTHON:-python3}"
 
 "$PYTHON_BIN" -c "import cluster_config; cluster_config.require_valid_advertised_urls(); print('starting master:', cluster_config.NODE_NAME, cluster_config.MASTER_LLM_API_URL)"
 
-build_arg=()
 if $BUILD; then
-  build_arg=(--build)
+  ./install-master.sh
 fi
 
-(cd messenger && ./start.sh "${build_arg[@]}" --background --prod)
-(cd llm-api && ./start.sh "${build_arg[@]}" --background)
-(cd hoonbot && ./start.sh "${build_arg[@]}" --background)
+(cd messenger && ./start.sh --background --prod)
+(cd llm-api && ./start.sh --background)
+(cd hoonbot && ./start.sh --background)
 
 echo "[ok] Master node '$NODE_NAME' startup requested."

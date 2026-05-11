@@ -26,13 +26,31 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
     exit 1
 fi
 
+install_python_requirements() {
+    if [[ -n "${OFFLINE_DEPS_DIR:-}" ]]; then
+        if [[ ! -d "$OFFLINE_DEPS_DIR" ]]; then
+            echo "[ERROR] OFFLINE_DEPS_DIR does not exist: $OFFLINE_DEPS_DIR"
+            exit 1
+        fi
+        local wheelhouse="${OFFLINE_DEPS_DIR}/wheels"
+        [[ -d "$wheelhouse" ]] || wheelhouse="$OFFLINE_DEPS_DIR"
+        if [[ ! -d "$wheelhouse" ]]; then
+            echo "[ERROR] Offline wheelhouse not found under OFFLINE_DEPS_DIR: $OFFLINE_DEPS_DIR"
+            exit 1
+        fi
+        "$PYTHON_BIN" -m pip install --no-index --find-links "$wheelhouse" -r "deps/requirements.txt"
+    else
+        "$PYTHON_BIN" -m pip install -r "deps/requirements.txt"
+    fi
+}
+
 echo "=================================================="
 echo "  LLM API"
 echo "=================================================="
 
 if $BUILD; then
     echo "[build] Installing Python dependencies..."
-    "$PYTHON_BIN" -m pip install -r "deps/requirements.txt"
+    install_python_requirements
 fi
 
 if [[ ! -f "config.py" ]]; then

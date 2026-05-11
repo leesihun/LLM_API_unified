@@ -21,9 +21,12 @@ Three independent services live side-by-side in this repo, plus a shared cluster
 .\start-master.ps1 -Build        # install deps, then start messenger + llm-api + hoonbot in background
 .\start-slave.ps1  -Build        # slaves run only llm-api + hoonbot (no messenger)
 ```
-Bash equivalents: `./start-master.sh --build`, `./start-slave.sh --build`. `Start-Master.cmd` / `Start-Slave.cmd` are double-click wrappers.
+Bash equivalents: `./start-master.sh --build`, `./start-slave.sh --build`.
+On Linux, `--build` now means "run install-master.sh / install-slave.sh first, then launch".
+`Start-Master.cmd` / `Start-Slave.cmd` are double-click wrappers.
 
-`install-master.{sh,ps1}` and `install-slave.{sh,ps1}` are install-only (no launch); they support `OFFLINE_DEPS_DIR` / `MESSENGER_NODE_MODULES_DIR` for air-gapped setups.
+`install-master.{sh,ps1}` and `install-slave.{sh,ps1}` are install-only (no launch).
+On Linux, `OFFLINE_DEPS_DIR` is the airgap contract: Python wheelhouse plus staged Messenger runtime assets. Supported Messenger bundle paths are `messenger/node_modules`, `messenger/server/dist`, `messenger/client/dist-web`, and a Linux Node runtime under `node/` or `node-v*-linux-*`.
 
 ### Per-service (run individually)
 
@@ -32,6 +35,8 @@ cd llm-api    ; .\start.ps1 -Build      # llama.cpp must already be running
 cd messenger  ; .\start.ps1 -Build      # builds web client (npm run build:web) then starts
 cd hoonbot    ; .\start.ps1 -Build      # depends on messenger + llm-api being up
 ```
+
+For Linux Messenger production, `./start.sh --prod` now runs the prebuilt server bundle directly (`server/dist/server.cjs`) instead of `npm run start`.
 
 ### Validation (no repo-wide test suite)
 
