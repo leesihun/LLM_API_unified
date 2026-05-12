@@ -18,9 +18,6 @@ import config
 MAX_OUTPUT_SIZE = 50 * 1024  # 50KB cap per stream
 _READ_CHUNK = 4096
 
-# Track already-created workspace directories to skip redundant mkdir calls
-_created_dirs: set = set()
-
 _CURL_HTTP_RE = re.compile(r"(?i)(^|[\s;&|()])(?:curl|curl\.exe)(?=$|[\s])")
 _HTTP_URL_RE = re.compile(r"(?i)https?://")
 _CURL_FAIL_LONG_RE = re.compile(r"(?<!\S)--fail(?:-with-body)?(?:\s|=|$)")
@@ -72,15 +69,10 @@ class ShellExecTool:
     def __init__(self, session_id: str, workspace_dir: Optional[Path] = None):
         self.session_id = session_id or "default"
         self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
-        # `repo_root` is the resolution base for relative `working_directory`
-        # arguments and the default when none is supplied. When a session
-        # workspace is set, the user's project is the project root; otherwise
-        # we fall back to the API's own repo root.
-        self.repo_root = self.workspace_dir or config.APP_DIR.parent.resolve()
-        self.scratch = config.SCRATCH_DIR / self.session_id
-        if self.session_id not in _created_dirs:
-            self.scratch.mkdir(parents=True, exist_ok=True)
-            _created_dirs.add(self.session_id)
+        # Resolution base for relative `working_directory` args, and the default
+        # when none is supplied. workspace_dir wins; otherwise we use the
+        # server's CWD (the repo root for normal startup).
+        self.repo_root = self.workspace_dir or Path.cwd()
 
     def _resolve_working_directory(self, working_directory: Optional[str]) -> Path:
         """

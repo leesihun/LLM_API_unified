@@ -30,14 +30,8 @@ class FileReaderTool:
         self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
 
     def _resolve_path(self, path: str) -> Path:
-        """Resolve path to an absolute local path.
-
-        Lookup order for relative paths:
-          1. session workspace (if set)
-          2. session scratch
-          3. user uploads
-          4. process CWD
-        """
+        """Resolve a relative path against workspace_dir, then user uploads,
+        then the server CWD. Absolute paths are used directly."""
         target = Path(path).expanduser()
         if target.is_absolute():
             return target.resolve()
@@ -47,19 +41,11 @@ class FileReaderTool:
             if ws_path.exists():
                 return ws_path
 
-        if self.session_id:
-            scratch_path = (config.SCRATCH_DIR / self.session_id / target).resolve()
-            if scratch_path.exists():
-                return scratch_path
-
         if self.username:
             upload_path = (config.UPLOAD_DIR / self.username / target).resolve()
             if upload_path.exists():
                 return upload_path
 
-        # Final fallback: prefer workspace over cwd if workspace was set,
-        # so a non-existent relative path still gets a sensible error pointing
-        # at the user's project rather than the server's directory.
         base = self.workspace_dir or Path.cwd()
         return (base / target).resolve()
 

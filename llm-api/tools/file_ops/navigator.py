@@ -17,24 +17,13 @@ class FileNavigatorTool:
                  workspace_dir: Optional[Path] = None):
         self.username = username
         self.session_id = session_id
-        # Default base for listing/searching when no path is supplied: prefer
-        # the user-set workspace over the session scratch dir.
+        # Default base for relative paths: workspace_dir if set, else server CWD.
         self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
-        if self.workspace_dir:
-            self.workspace = self.workspace_dir
-        elif session_id:
-            self.workspace = config.SCRATCH_DIR / session_id
-            self.workspace.mkdir(parents=True, exist_ok=True)
-        else:
-            self.workspace = Path.cwd()
+        self.workspace = self.workspace_dir or Path.cwd()
 
     def _resolve_base_path(self, path: Optional[str]) -> Path:
-        """
-        Resolve base path for list/find.
-
-        If path is omitted, use the session workspace (user-set workspace
-        when present, otherwise the scratch dir).
-        """
+        """Resolve base path for list/find. Defaults to the session workspace
+        (workspace_dir if set, otherwise server CWD)."""
         if not path:
             return self.workspace.resolve()
         target = Path(path).expanduser()

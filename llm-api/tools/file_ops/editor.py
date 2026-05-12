@@ -19,7 +19,8 @@ class FileEditorTool:
         self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
 
     def _resolve_path(self, path: str) -> Path:
-        """Resolve path using the same priority order as FileReaderTool."""
+        """Resolve relative paths against workspace_dir, then user uploads,
+        then server CWD. Absolute paths are used directly."""
         target = Path(path).expanduser()
         if target.is_absolute():
             return target.resolve()
@@ -28,11 +29,6 @@ class FileEditorTool:
             ws_path = (self.workspace_dir / target).resolve()
             if ws_path.exists():
                 return ws_path
-
-        if self.session_id:
-            scratch_path = (config.SCRATCH_DIR / self.session_id / target).resolve()
-            if scratch_path.exists():
-                return scratch_path
 
         if self.username:
             upload_path = (config.UPLOAD_DIR / self.username / target).resolve()

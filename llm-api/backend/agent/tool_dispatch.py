@@ -41,6 +41,7 @@ class DispatchMixin:
             if len(self.tool_calls_log) > 200:
                 self.tool_calls_log = self.tool_calls_log[-200:]
             self._log_tool_result(name, tool_call_id, result, duration)
+            self._track_temp_files(name, result)
             return result
         except Exception as e:
             duration = time.time() - start
@@ -55,6 +56,29 @@ class DispatchMixin:
                 self.tool_calls_log = self.tool_calls_log[-200:]
             self._log_tool_result(name, tool_call_id, err_result, duration)
             return err_result
+
+    def _track_temp_files(self, name: str, result: Dict[str, Any]) -> None:
+        """Register newly-created files (not flagged persist=True) for cleanup
+        at end of run_stream. file_writer and apply_patch are the only tools
+        that can create new files; file_edit only modifies existing ones."""
+        if not result.get("success"):
+            return
+        tracker = getattr(self, "_tracked_new_files", None)
+        if tracker is None:
+            return
+        if name == "file_writer":
+            if result.get("new_file") and not result.get("persist"):
+                path = result.get("path")
+                if path:
+                    tracker.add(path)
+        elif name == "apply_patch":
+            if result.get("persist"):
+                return
+            for change in result.get("files_changed", []) or []:
+                if change.get("op") == "added":
+                    path = change.get("path")
+                    if path:
+                        tracker.add(path)
 
     async def _execute_tools_parallel(self, tool_calls: List[ToolCall]) -> List[Dict[str, Any]]:
         """Execute multiple tool calls concurrently."""
@@ -153,6 +177,7 @@ class DispatchMixin:
                 path=arguments["path"],
                 content=arguments["content"],
                 mode=arguments.get("mode", "write"),
+                persist=bool(arguments.get("persist", False)),
             )
 
         elif name == "file_patch":
@@ -177,6 +202,7 @@ class DispatchMixin:
             return await asyncio.to_thread(
                 cache["apply_patch"].apply,
                 patch=arguments["patch"],
+                persist=bool(arguments.get("persist", False)),
             )
 
         elif name == "shell_lint":

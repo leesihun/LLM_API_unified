@@ -384,8 +384,13 @@ class ApplyPatchTool:
     # Public entry point                                                    #
     # ------------------------------------------------------------------ #
 
-    def apply(self, patch: str) -> Dict[str, Any]:
-        """Apply a V4A patch envelope. Returns success dict or error dict."""
+    def apply(self, patch: str, persist: bool = False) -> Dict[str, Any]:
+        """Apply a V4A patch envelope. Returns success dict or error dict.
+
+        If `persist` is False (default), any files newly added by this patch
+        are flagged as temporary in the result so the agent loop can sweep
+        them at session end. Set persist=True for deliverables.
+        """
         try:
             ops = self._parse_v4a(patch)
         except ValueError as exc:
@@ -430,4 +435,4 @@ class ApplyPatchTool:
             except Exception as exc:
                 return {"success": False, "error": f"Unexpected error on {op.get('path', '?')}: {exc}"}
 
-        return {"success": True, "files_changed": changed}
+        return {"success": True, "files_changed": changed, "persist": bool(persist)}

@@ -2,15 +2,17 @@
 Direct Python code executor — no second LLM call.
 
 The agent LLM writes the code directly in the tool-call arguments.
-This tool just writes it to a file and runs it, skipping the
-code-generation LLM round-trip that python_coder requires.
+This tool writes it to a fresh temp dir, runs it, and the temp dir is
+deleted on return. Nothing persists between calls — by design, so
+generated test scripts don't pile up on disk.
 """
 import re
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 import config
 from backend.utils.prompts_log_append import log_to_prompts_file
@@ -22,17 +24,10 @@ def _format_timeout(timeout: Optional[int]) -> str:
 
 
 class CodeExecTool:
-    """
-    Execute Python code supplied directly by the LLM.
-
-    The workspace is shared with python_coder (same PYTHON_WORKSPACE_DIR /
-    session_id directory) so files written by one tool are visible to the other.
-    """
+    """Execute Python code supplied directly by the LLM in an ephemeral temp dir."""
 
     def __init__(self, session_id: str):
         self.session_id = session_id
-        self.workspace = config.PYTHON_WORKSPACE_DIR / session_id
-        self.workspace.mkdir(parents=True, exist_ok=True)
         self.max_output_size = getattr(config, "PYTHON_EXECUTOR_MAX_OUTPUT_SIZE", 10 * 1024 * 1024)
 
     # ------------------------------------------------------------------
@@ -44,64 +39,59 @@ class CodeExecTool:
         code: str,
         timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """
-        Write *code* to a script file and run it with streaming output capture.
-
-        Args:
-            code:    Complete Python source to execute.
-            timeout: Max seconds (default: config.PYTHON_EXECUTOR_TIMEOUT).
-                     Set timeout <= 0 to disable the wall-clock timeout.
-        """
+        """Write *code* to a temp dir, run it, then delete the dir."""
         exec_timeout = self._resolve_timeout(timeout)
         start_time = time.time()
-
         script_name = self._make_script_name(code)
-        script_path = self.workspace / script_name
-        script_path.write_text(code, encoding="utf-8")
 
-        print(f"\n[CODE_EXEC] Script: {script_path}")
-        print(f"[CODE_EXEC] Timeout: {_format_timeout(exec_timeout)}")
-        self._log_execution_start(code, script_name, exec_timeout)
+        with tempfile.TemporaryDirectory(prefix="code_exec_") as tmpdir:
+            workspace = Path(tmpdir)
+            script_path = workspace / script_name
+            script_path.write_text(code, encoding="utf-8")
 
-        try:
-            result = await run_streaming(
-                program=sys.executable,
-                args=[script_name],
-                cwd=str(self.workspace),
-                timeout=exec_timeout,
-                max_output_size=self.max_output_size,
-            )
-        except Exception as e:
+            print(f"\n[CODE_EXEC] Script: {script_path}")
+            print(f"[CODE_EXEC] Timeout: {_format_timeout(exec_timeout)}")
+            self._log_execution_start(code, script_name, exec_timeout)
+
+            try:
+                result = await run_streaming(
+                    program=sys.executable,
+                    args=[script_name],
+                    cwd=str(workspace),
+                    timeout=exec_timeout,
+                    max_output_size=self.max_output_size,
+                )
+            except Exception as e:
+                execution_time = time.time() - start_time
+                msg = str(e)
+                print(f"[CODE_EXEC] ERROR: {msg}")
+                self._log_execution_error("ERROR", msg, execution_time)
+                return self._result_dict(
+                    success=False, script_name=script_name, executed=False,
+                    stdout="", stderr=msg, returncode=-1,
+                    execution_time=execution_time, error=msg,
+                )
+
             execution_time = time.time() - start_time
-            msg = str(e)
-            print(f"[CODE_EXEC] ERROR: {msg}")
-            self._log_execution_error("ERROR", msg, execution_time)
-            return self._result_dict(
-                success=False, script_name=script_name, executed=False,
-                stdout="", stderr=msg, returncode=-1,
-                execution_time=execution_time, error=msg,
-            )
+            if result.timed_out:
+                msg = f"Execution timeout after {_format_timeout(exec_timeout)}"
+                print(f"[CODE_EXEC] TIMEOUT: {msg}")
+                self._log_execution_error("TIMEOUT", msg, execution_time)
+                return self._result_dict(
+                    success=False, script_name=script_name, executed=False,
+                    stdout=result.stdout, stderr=msg, returncode=-1,
+                    execution_time=execution_time, error=msg,
+                )
 
-        execution_time = time.time() - start_time
-        if result.timed_out:
-            msg = f"Execution timeout after {_format_timeout(exec_timeout)}"
-            print(f"[CODE_EXEC] TIMEOUT: {msg}")
-            self._log_execution_error("TIMEOUT", msg, execution_time)
+            success = result.returncode == 0
+            print(f"[CODE_EXEC] returncode={result.returncode}, time={execution_time:.2f}s")
+            self._log_execution_result(success, result.returncode, execution_time, result.stdout, result.stderr)
             return self._result_dict(
-                success=False, script_name=script_name, executed=False,
-                stdout=result.stdout, stderr=msg, returncode=-1,
-                execution_time=execution_time, error=msg,
+                success=success, script_name=script_name, executed=True,
+                stdout=result.stdout, stderr=result.stderr, returncode=result.returncode,
+                execution_time=execution_time,
+                error=None if success else result.stderr,
             )
-
-        success = result.returncode == 0
-        print(f"[CODE_EXEC] returncode={result.returncode}, time={execution_time:.2f}s")
-        self._log_execution_result(success, result.returncode, execution_time, result.stdout, result.stderr)
-        return self._result_dict(
-            success=success, script_name=script_name, executed=True,
-            stdout=result.stdout, stderr=result.stderr, returncode=result.returncode,
-            execution_time=execution_time,
-            error=None if success else result.stderr,
-        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -180,19 +170,11 @@ class CodeExecTool:
         return {
             "success": success,
             "execution_mode": "code_exec",
-            "script_path": str((self.workspace / script_name).resolve()),
+            "script_name": script_name,
             "executed": executed,
             "stdout": stdout,
             "stderr": stderr,
             "returncode": returncode,
             "execution_time": execution_time,
-            "files": self._list_workspace_files(),
-            "workspace": str(self.workspace),
             "error": error,
         }
-
-    def _list_workspace_files(self) -> List[str]:
-        try:
-            return [f.name for f in self.workspace.iterdir() if f.is_file()]
-        except Exception:
-            return []

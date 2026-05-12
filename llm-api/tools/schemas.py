@@ -58,8 +58,8 @@ TOOL_SCHEMAS: dict = {
         "name": "file_reader",
         "description": (
             "Read a file from the local filesystem. Absolute paths read directly; "
-            "relative paths resolve against the session workspace, scratch, uploads, "
-            "then cwd. Use offset/limit for large files. Prefer this over `cat`."
+            "relative paths resolve against the session workspace (server CWD by default), "
+            "then uploads. Use offset/limit for large files. Prefer this over `cat`."
         ),
         "parameters": {
             "type": "object",
@@ -68,7 +68,7 @@ TOOL_SCHEMAS: dict = {
                     "type": "string",
                     "description": (
                         "Path to the file. Absolute paths (e.g. /home/user/file.py) are read directly. "
-                        "Relative paths resolve against session scratch, then uploads, then cwd."
+                        "Relative paths resolve against the session workspace, then user uploads, then server CWD."
                     ),
                 },
                 "offset": {
@@ -143,6 +143,14 @@ TOOL_SCHEMAS: dict = {
                     "type": "string",
                     "description": "V4A patch text starting with '*** Begin Patch' and ending with '*** End Patch'.",
                 },
+                "persist": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, any files newly added by this patch survive session end. "
+                        "If false/omitted (default), added files are treated as temporary "
+                        "and get cleaned up. Updates/deletes/moves are unaffected by this flag."
+                    ),
+                },
             },
             "required": ["patch"],
         },
@@ -179,6 +187,8 @@ TOOL_SCHEMAS: dict = {
         "description": (
             "Write a file (overwrites). Use ONLY for new files or full rewrites — "
             "for any modification of an existing file, use file_edit or apply_patch. "
+            "New files are TEMPORARY by default and get deleted at session end; pass "
+            "persist=true when the file is a deliverable the user asked for. "
             "Don't create docs/README files unless the user asked."
         ),
         "parameters": {
@@ -187,9 +197,8 @@ TOOL_SCHEMAS: dict = {
                 "path": {
                     "type": "string",
                     "description": (
-                        "Path to the file. Absolute paths write directly to that location "
-                        "(subject to ALLOWED_WRITE_DIRS). Relative paths write inside the session "
-                        "scratch workspace."
+                        "Absolute path, or relative path resolved against the session "
+                        "workspace (the server CWD when no workspace is set)."
                     ),
                 },
                 "content": {
@@ -200,6 +209,14 @@ TOOL_SCHEMAS: dict = {
                     "type": "string",
                     "enum": ["write", "append"],
                     "description": "'write' overwrites the file (default); 'append' adds to the end.",
+                },
+                "persist": {
+                    "type": "boolean",
+                    "description": (
+                        "If true, a newly-created file survives session end. "
+                        "If false/omitted (default), a new file is treated as temporary "
+                        "and gets cleaned up. Editing an existing file is unaffected by this flag."
+                    ),
                 },
             },
             "required": ["path", "content"],
@@ -228,8 +245,9 @@ TOOL_SCHEMAS: dict = {
                 "path": {
                     "type": "string",
                     "description": (
-                        "Directory path to list or search in. Absolute paths are used directly. "
-                        "Relative paths resolve against the session scratch workspace."
+                        "Directory path. Absolute paths are used directly. "
+                        "Relative paths resolve against the session workspace "
+                        "(the server CWD when no workspace is set)."
                     ),
                 },
                 "pattern": {
@@ -576,7 +594,7 @@ TOOL_SCHEMAS: dict = {
                 },
                 "working_directory": {
                     "type": "string",
-                    "description": "Working directory (only for 'start'). Defaults to scratch workspace.",
+                    "description": "Working directory (only for 'start'). Defaults to the session workspace (server CWD when unset).",
                 },
                 "offset": {
                     "type": "integer",

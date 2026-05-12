@@ -85,6 +85,11 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         # repeatedly across autocompact retries.
         self._plan_nudge_emitted: bool = False
 
+        # New files created by file_writer/apply_patch during this run that
+        # weren't flagged persist=True. Swept at end of run_stream so the agent
+        # doesn't litter the workspace with temp scripts/scratch files.
+        self._tracked_new_files: set[str] = set()
+
     # ------------------------------------------------------------------
     # Sampling parameters forwarded to llama.cpp
     # ------------------------------------------------------------------
@@ -433,7 +438,40 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
     # Streaming run
     # ------------------------------------------------------------------
 
+    def _cleanup_temp_files(self) -> None:
+        """Delete files created during this run that weren't flagged persist=True.
+
+        Called from run_stream's finally block — runs even on stop/exception.
+        Empty parent dirs are NOT cleaned (would surprise the user if they
+        wrote into an existing project dir).
+        """
+        if not self._tracked_new_files:
+            return
+        for path in list(self._tracked_new_files):
+            try:
+                p = Path(path)
+                if p.is_file():
+                    p.unlink()
+                    print(f"[AGENT] Removed temp file: {p}")
+            except Exception as exc:
+                print(f"[AGENT] Failed to remove temp file {path}: {exc}")
+        self._tracked_new_files.clear()
+
     async def run_stream(
+        self,
+        messages: List[Dict[str, Any]],
+        attached_files: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncIterator[StreamEvent]:
+        """Run the agent loop and yield events. Wraps _run_stream_body so we
+        can sweep non-persisted temp files in a single finally block, even on
+        early return / exception / generator close."""
+        try:
+            async for event in self._run_stream_body(messages, attached_files):
+                yield event
+        finally:
+            self._cleanup_temp_files()
+
+    async def _run_stream_body(
         self,
         messages: List[Dict[str, Any]],
         attached_files: Optional[List[Dict[str, Any]]] = None,
