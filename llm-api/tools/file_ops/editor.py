@@ -12,15 +12,22 @@ import config
 class FileEditorTool:
     """Exact-string find-and-replace on files. Must read the file first."""
 
-    def __init__(self, session_id: str = None, username: str = None):
+    def __init__(self, session_id: str = None, username: str = None,
+                 workspace_dir: Optional[Path] = None):
         self.session_id = session_id
         self.username = username
+        self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
 
     def _resolve_path(self, path: str) -> Path:
         """Resolve path using the same priority order as FileReaderTool."""
         target = Path(path).expanduser()
         if target.is_absolute():
             return target.resolve()
+
+        if self.workspace_dir:
+            ws_path = (self.workspace_dir / target).resolve()
+            if ws_path.exists():
+                return ws_path
 
         if self.session_id:
             scratch_path = (config.SCRATCH_DIR / self.session_id / target).resolve()
@@ -32,7 +39,8 @@ class FileEditorTool:
             if upload_path.exists():
                 return upload_path
 
-        return (Path.cwd() / target).resolve()
+        base = self.workspace_dir or Path.cwd()
+        return (base / target).resolve()
 
     def edit(
         self,

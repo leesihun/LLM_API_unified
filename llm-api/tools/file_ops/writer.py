@@ -4,17 +4,21 @@ Write or append content to files.
 Lightweight alternative to python_coder for simple file creation.
 """
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import config
 
 class FileWriterTool:
     """Write files to the local filesystem."""
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, workspace_dir: Optional[Path] = None):
         self.session_id = session_id or "default"
-        self.workspace = config.SCRATCH_DIR / self.session_id
-        self.workspace.mkdir(parents=True, exist_ok=True)
+        self.scratch = config.SCRATCH_DIR / self.session_id
+        self.scratch.mkdir(parents=True, exist_ok=True)
+        self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
+        # Relative paths land in the user-set workspace when available;
+        # otherwise fall back to the legacy scratch dir.
+        self.workspace = self.workspace_dir or self.scratch
 
     def _resolve_target(self, path: str) -> Path:
         target_path = Path(path).expanduser()

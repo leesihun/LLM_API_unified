@@ -69,12 +69,17 @@ def _decode(buf: bytearray) -> str:
 class ShellExecTool:
     """Execute shell commands via async subprocess with incremental streaming."""
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, workspace_dir: Optional[Path] = None):
         self.session_id = session_id or "default"
-        self.repo_root = config.APP_DIR.parent.resolve()
-        self.workspace = config.SCRATCH_DIR / self.session_id
+        self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
+        # `repo_root` is the resolution base for relative `working_directory`
+        # arguments and the default when none is supplied. When a session
+        # workspace is set, the user's project is the project root; otherwise
+        # we fall back to the API's own repo root.
+        self.repo_root = self.workspace_dir or config.APP_DIR.parent.resolve()
+        self.scratch = config.SCRATCH_DIR / self.session_id
         if self.session_id not in _created_dirs:
-            self.workspace.mkdir(parents=True, exist_ok=True)
+            self.scratch.mkdir(parents=True, exist_ok=True)
             _created_dirs.add(self.session_id)
 
     def _resolve_working_directory(self, working_directory: Optional[str]) -> Path:
@@ -82,8 +87,9 @@ class ShellExecTool:
         Resolve working directory for command execution.
 
         Absolute paths are used directly.
-        Relative paths are resolved from the repository root.
-        If unset, default to the repository root.
+        Relative paths are resolved from the project root (workspace if set,
+        otherwise the API repo root).
+        If unset, default to the project root.
         """
         if not working_directory:
             return self.repo_root

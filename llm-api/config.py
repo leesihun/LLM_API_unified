@@ -6,7 +6,7 @@ Single server, llama.cpp backend, native tool calling.
 import importlib.util
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 # ============================================================================
 # Paths
@@ -118,6 +118,44 @@ AGENT_AUTOCOMPACT_KEEP_RECENT = 8          # always keep this many most-recent n
 AGENT_LOG_VERBOSITY: Literal["off", "summary", "debug"] = "summary"
 AGENT_LOG_ASYNC = True
 AGENT_LOG_PATH = PROMPTS_LOG_PATH
+
+# ----------------------------------------------------------------------------
+# Agent: workspace awareness
+# ----------------------------------------------------------------------------
+# Per-session workspace dir. None = preserve legacy behaviour (server CWD).
+# Callers (chat.py, hoonbot) may pass a `workspace` field per request; that
+# overrides this default for the session.
+AGENT_DEFAULT_WORKSPACE: Optional[str] = None
+# Inline attached-file contents into the dynamic context when total size
+# (across all attached files) is <= this budget. Above the budget, only the
+# metadata preview is included.
+AGENT_ATTACHED_FILE_INLINE_BUDGET = 8000
+
+# ----------------------------------------------------------------------------
+# Agent: anti-spiral / reflection
+# ----------------------------------------------------------------------------
+AGENT_STUCK_REPEAT_THRESHOLD = 3          # same signature N times within window
+AGENT_STUCK_REPEAT_WINDOW = 6
+AGENT_STUCK_COOLDOWN_ITERATIONS = 4
+AGENT_CONSECUTIVE_FAILURE_THRESHOLD = 2   # all-failed iterations in a row before reflection nudge
+AGENT_GOAL_REMINDER_ITERATIONS: tuple = (10, 25, 50)
+AGENT_PLAN_NUDGE_MIN_CHARS = 200
+AGENT_PLAN_NUDGE_KEYWORDS = (
+    "build", "refactor", "migrate", "implement", "redesign", "rewrite",
+    "add support", "set up", "scaffold",
+)
+
+# ----------------------------------------------------------------------------
+# Agent: user-input fidelity
+# ----------------------------------------------------------------------------
+AGENT_TAIL_GOAL_REMINDER_ENABLED = True
+AGENT_TAIL_GOAL_MIN_TURNS = 4          # only inject when conversation has at least this many msgs
+AGENT_TAIL_GOAL_MAX_CHARS = 1500       # cap on echoed user message length
+
+# ----------------------------------------------------------------------------
+# Agent: turn boundary / previous-context isolation
+# ----------------------------------------------------------------------------
+AGENT_TURN_BOUNDARY_MARKER_ENABLED = True
 
 # ============================================================================
 # Database Settings

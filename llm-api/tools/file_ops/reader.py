@@ -23,15 +23,29 @@ MAX_READ_BYTES = 50 * 1024  # 50KB cap
 class FileReaderTool:
     """Read files from local filesystem."""
 
-    def __init__(self, username: str = None, session_id: str = None):
+    def __init__(self, username: str = None, session_id: str = None,
+                 workspace_dir: Optional[Path] = None):
         self.username = username
         self.session_id = session_id
+        self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
 
     def _resolve_path(self, path: str) -> Path:
-        """Resolve path to an absolute local path."""
+        """Resolve path to an absolute local path.
+
+        Lookup order for relative paths:
+          1. session workspace (if set)
+          2. session scratch
+          3. user uploads
+          4. process CWD
+        """
         target = Path(path).expanduser()
         if target.is_absolute():
             return target.resolve()
+
+        if self.workspace_dir:
+            ws_path = (self.workspace_dir / target).resolve()
+            if ws_path.exists():
+                return ws_path
 
         if self.session_id:
             scratch_path = (config.SCRATCH_DIR / self.session_id / target).resolve()
@@ -43,7 +57,11 @@ class FileReaderTool:
             if upload_path.exists():
                 return upload_path
 
-        return (Path.cwd() / target).resolve()
+        # Final fallback: prefer workspace over cwd if workspace was set,
+        # so a non-existent relative path still gets a sensible error pointing
+        # at the user's project rather than the server's directory.
+        base = self.workspace_dir or Path.cwd()
+        return (base / target).resolve()
 
     def read(
         self,

@@ -1,10 +1,30 @@
 """CompactionMixin: microcompaction, history limits, and auto-compact on context overflow."""
 import asyncio
 import json
-from typing import List, Dict, Any, AsyncIterator
+import re
+from typing import List, Dict, Any, AsyncIterator, Optional
 
 import config
 from backend.core.llm_backend import StreamEvent, TextEvent, ToolStatusEvent
+
+
+# Substrings (case-insensitive) that mark a tool result worth keeping in full
+# through microcompaction — failure signals are the most useful context for
+# the agent to recover from a spiral.
+_FAILURE_SUBSTRINGS = (
+    "error", "traceback", "exception", "failed", "permission denied",
+    "no such file", "not found", "fatal:", "syntax error", "exit code",
+    "exitcode", "killed", "timeout", "timed out", "denied", "refused",
+)
+_ACTIVE_GOAL_LINE_RE = re.compile(r"(?im)^\s*active\s*goal\s*:\s*(.+?)\s*$")
+
+
+def _looks_like_failure(content: str) -> bool:
+    """Cheap heuristic — preserve verbatim through microcompaction."""
+    if not content:
+        return False
+    lower = content[:400].lower()
+    return any(s in lower for s in _FAILURE_SUBSTRINGS)
 
 
 class CompactionMixin:
@@ -21,8 +41,19 @@ class CompactionMixin:
         tail (recent `warm` iterations) is passed through unchanged.
         """
         warm = config.AGENT_COMPACTION_WARM_WINDOW
+        # Even when no microcompaction is due, we still want to run the
+        # overlay hook so reflection / turn-boundary / tail-goal reminders
+        # land on the first iteration too. A shallow list copy is cheap and
+        # keeps the original msgs list (and its KV-cache prefix) untouched.
         if current_iteration == 0 or len(self._iteration_boundaries) <= warm:
-            return msgs
+            result = list(msgs)
+            overlay = getattr(self, "_apply_loop_overlays", None)
+            if callable(overlay):
+                try:
+                    overlay(result, msgs, current_iteration)
+                except Exception as e:
+                    self._log(f"  [MICROCOMPACT] overlay hook failed: {e}")
+            return result
 
         old_boundary = self._iteration_boundaries[-(warm + 1)]
         summary_cap = config.AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS
@@ -42,10 +73,15 @@ class CompactionMixin:
             if role == "tool":
                 content = msg.get("content", "")
                 if len(content) > tool_result_min:
-                    tool_name = msg.get("name", "tool")
-                    summary = content[:summary_cap].replace('\n', ' ')
-                    msg = {**msg, "content": f"[{tool_name}: {summary}...]"}
-                    compressed_count += 1
+                    if _looks_like_failure(content):
+                        # Keep failure signals verbatim — the agent needs the
+                        # full error text to recover, not a 120-char prefix.
+                        pass
+                    else:
+                        tool_name = msg.get("name", "tool")
+                        summary = content[:summary_cap].replace('\n', ' ')
+                        msg = {**msg, "content": f"[{tool_name}: {summary}...]"}
+                        compressed_count += 1
 
             elif role == "assistant" and msg.get("tool_calls"):
                 tc_list = msg["tool_calls"]
@@ -96,6 +132,16 @@ class CompactionMixin:
             # Insert just before the first uncompressed message (old_boundary index in result)
             insert_at = min(old_boundary, len(result))
             result.insert(insert_at, reminder)
+
+        # Hook: let the concrete agent layer apply additional view-only
+        # overlays (turn-boundary marker, tail-goal reminder, stuck reminders).
+        # Default implementation is a no-op; AgentLoop overrides it.
+        overlay = getattr(self, "_apply_loop_overlays", None)
+        if callable(overlay):
+            try:
+                overlay(result, msgs, current_iteration)
+            except Exception as e:
+                self._log(f"  [MICROCOMPACT] overlay hook failed: {e}")
 
         return result
 
@@ -258,6 +304,17 @@ class CompactionMixin:
             summary_text = (resp.content or "").strip()
         except Exception as e:
             self._log(f"  [AUTOCOMPACT] Summarizer call failed ({e}); dropping without summary")
+
+        # Extract the trailing `Active goal: ...` line so the agent loop can
+        # re-inject it as a tail reminder on subsequent iterations. Empty if
+        # the summarizer didn't include one (older model output may not).
+        active_goal: Optional[str] = None
+        if summary_text:
+            m = _ACTIVE_GOAL_LINE_RE.search(summary_text)
+            if m:
+                active_goal = m.group(1).strip()
+        if active_goal and hasattr(self, "_carried_active_goal"):
+            self._carried_active_goal = active_goal
 
         sid = getattr(self, "session_id", None) or "session"
         if summary_text:

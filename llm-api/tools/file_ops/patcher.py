@@ -6,7 +6,7 @@ unified-diff hunks only when the old context matches the current file exactly.
 """
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import config
 
@@ -25,10 +25,15 @@ _GENERATED_PARTS = {
 class FilePatchTool:
     """Apply unified-diff patches to existing text files."""
 
-    def __init__(self, session_id: str = None, username: str = None):
+    def __init__(self, session_id: str = None, username: str = None,
+                 workspace_dir: Optional[Path] = None):
         self.session_id = session_id
         self.username = username
-        self.repo_root = config.APP_DIR.parent.resolve()
+        # When a workspace is set, treat it as the project root for relative
+        # patch targets and for the "no escapes outside the project" guard.
+        # Otherwise fall back to the API's own repo root (legacy behaviour).
+        self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
+        self.repo_root = self.workspace_dir or config.APP_DIR.parent.resolve()
 
     def _clean_diff_path(self, raw_path: str) -> str:
         path = raw_path.strip()

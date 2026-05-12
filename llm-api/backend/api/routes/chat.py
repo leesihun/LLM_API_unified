@@ -65,6 +65,7 @@ async def _parse_request(request: Request) -> dict:
         temperature = form.get("temperature")
         max_tokens = form.get("max_tokens")
         session_id = form.get("session_id") or None
+        workspace = form.get("workspace") or None
         files = [v for v in form.getlist("files") if isinstance(v, UploadFile) and v.filename]
         try:
             messages_data = json.loads(messages_raw)
@@ -82,6 +83,7 @@ async def _parse_request(request: Request) -> dict:
         temperature = body.get("temperature")
         max_tokens = body.get("max_tokens")
         session_id = body.get("session_id") or None
+        workspace = body.get("workspace") or None
         files = []
 
     return dict(
@@ -91,6 +93,7 @@ async def _parse_request(request: Request) -> dict:
         temperature=float(temperature) if temperature is not None else None,
         max_tokens=int(max_tokens) if max_tokens is not None else None,
         session_id=session_id,
+        workspace=workspace,
         files=files,
     )
 
@@ -219,6 +222,7 @@ async def chat_completions(
         is_streaming = parsed["stream"]
         temp = parsed["temperature"] if parsed["temperature"] is not None else config.DEFAULT_TEMPERATURE
         session_id = parsed["session_id"]
+        workspace = parsed["workspace"]
         files: List[UploadFile] = parsed["files"]
         username = current_user["username"] if current_user else "guest"
 
@@ -245,6 +249,17 @@ async def chat_completions(
             db.update_session_title(session_id, title)
             history = []
 
+        # Workspace selection: explicit request value (if non-empty) updates the
+        # persisted session workspace. Otherwise reuse whatever was stored on
+        # the session row. Validation lives in AgentLoop._validate_workspace —
+        # we just record whatever the caller asked for.
+        if workspace:
+            db.update_session_workspace(session_id, workspace)
+            effective_workspace = workspace
+        else:
+            session_row = db.get_session(session_id) or {}
+            effective_workspace = session_row.get("workspace_dir")
+
         # File uploads
         file_paths: List[str] = []
         if files:
@@ -261,6 +276,7 @@ async def chat_completions(
             temperature=temp,
             session_id=session_id,
             username=username,
+            workspace_dir=effective_workspace,
         )
 
         request_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"

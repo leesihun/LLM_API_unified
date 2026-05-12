@@ -98,9 +98,20 @@ def _get_recent_files(cwd: str) -> str:
     return text
 
 
-def _format_environment_context() -> str:
-    """Build a compact <env> block injected before each turn. Cross-platform."""
-    cwd = os.getcwd()
+def _format_environment_context(workspace_dir: Optional[Path] = None) -> str:
+    """Build a compact <env> block injected before each turn. Cross-platform.
+
+    When *workspace_dir* is set, it is reported as the working directory and
+    used as the base for git/recent-files context. Otherwise the process CWD
+    is used (legacy behaviour).
+    """
+    if workspace_dir:
+        try:
+            cwd = str(Path(workspace_dir).resolve())
+        except Exception:
+            cwd = os.getcwd()
+    else:
+        cwd = os.getcwd()
     sys_name = platform.system()          # 'Windows', 'Linux', 'Darwin'
     sys_ver = platform.release()
 
@@ -118,10 +129,15 @@ def _format_environment_context() -> str:
 
     lines = [
         f"Working directory: {cwd}",
+    ]
+    if workspace_dir:
+        lines.append("(this is the user-selected session workspace; relative "
+                     "paths in file/shell tools resolve here first)")
+    lines.extend([
         f"Platform: {sys_name} {sys_ver}",
         f"Shell: {shell}  Script extension: {script_ext}",
         f"Today: {today}",
-    ]
+    ])
 
     git_ctx = _get_git_context(cwd)
     if git_ctx:
@@ -149,8 +165,9 @@ class PromptMixin:
         """Return per-request dynamic context (RAG, memo, files). Separate from
         system prompt so the static prefix stays byte-identical for cache_prompt."""
         parts = []
+        ws = getattr(self, "workspace_dir", None)
         # Environment block first — gives the model platform/shell/cwd/git before any other context
-        env_ctx = _format_environment_context()
+        env_ctx = _format_environment_context(ws)
         if env_ctx:
             parts.append(env_ctx)
         repo_docs = self._format_repo_instructions_context()
@@ -170,6 +187,9 @@ class PromptMixin:
             parts.append(self._format_todos())
         if attached_files:
             parts.append(self._format_attached_files(attached_files))
+            inlined = self._format_attached_file_contents(attached_files)
+            if inlined:
+                parts.append(inlined)
         if not parts:
             return None
         dynamic_ctx = "\n".join(parts)
@@ -179,20 +199,43 @@ class PromptMixin:
         return dynamic_ctx
 
     def _repo_doc_candidates(self) -> List[Path]:
-        """Return repository instruction docs in precedence/read order."""
-        repo_root = config.APP_DIR.parent.resolve()
-        candidates = [
-            repo_root / "AGENTS.md",
-            repo_root / "CLAUDE.md",
-            repo_root / "README.md",
-            config.APP_DIR / "README.md",
-            repo_root / "hoonbot" / "README.md",
-            repo_root / "messenger" / "README.md",
-        ]
+        """Return repository instruction docs in precedence/read order.
+
+        When a session workspace is set, scan it first for the standard
+        agent-onboarding files. The API's own repo docs are appended as a
+        fallback only when no workspace is set — pointing the agent at the
+        API's `AGENTS.md` while the user is working on a different project
+        is actively harmful.
+        """
+        candidates: List[Path] = []
+        ws = getattr(self, "workspace_dir", None)
+        if ws:
+            ws_root = Path(ws).resolve()
+            candidates.extend([
+                ws_root / "AGENTS.md",
+                ws_root / "CLAUDE.md",
+                ws_root / ".claude" / "CLAUDE.md",
+                ws_root / "README.md",
+                ws_root / "docs" / "AGENTS.md",
+                ws_root / "docs" / "README.md",
+            ])
+        else:
+            repo_root = config.APP_DIR.parent.resolve()
+            candidates.extend([
+                repo_root / "AGENTS.md",
+                repo_root / "CLAUDE.md",
+                repo_root / "README.md",
+                config.APP_DIR / "README.md",
+                repo_root / "hoonbot" / "README.md",
+                repo_root / "messenger" / "README.md",
+            ])
         seen = set()
         unique = []
         for path in candidates:
-            resolved = path.resolve()
+            try:
+                resolved = path.resolve()
+            except Exception:
+                continue
             if resolved not in seen:
                 unique.append(resolved)
                 seen.add(resolved)
@@ -302,6 +345,69 @@ class PromptMixin:
             priority = t.get("priority", "medium")
             lines.append(f"  {icon} {t['id']}: {t['content']} (priority: {priority})")
         return "\n".join(lines)
+
+    def _format_attached_file_contents(self, attached_files: List[Dict[str, Any]]) -> str:
+        """Inline the full contents of attached text files when the total size
+        is small enough to fit in the budget. Above the budget, return ""
+        (the caller still emits a metadata preview separately).
+
+        Skips files with errors, images, and anything not obviously text.
+        """
+        if not attached_files:
+            return ""
+        budget = max(0, getattr(config, "AGENT_ATTACHED_FILE_INLINE_BUDGET", 0))
+        if budget <= 0:
+            return ""
+        text_categories = {"text", "code", "data"}
+        eligible: List[Dict[str, Any]] = []
+        total = 0
+        for f in attached_files:
+            if "error" in f or not f.get("path"):
+                continue
+            cat = f.get("category", "")
+            if cat not in text_categories:
+                continue
+            size = f.get("size") or 0
+            if size <= 0:
+                continue
+            total += size
+            eligible.append(f)
+        if not eligible or total > budget:
+            return ""
+        sections: List[str] = []
+        remaining = budget
+        for f in eligible:
+            if remaining <= 0:
+                break
+            try:
+                path = Path(f["path"])
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                try:
+                    text = path.read_text(encoding="utf-8", errors="replace")
+                except Exception:
+                    continue
+            except Exception:
+                continue
+            name = f.get("name") or path.name
+            header = f"\n### {name}\n"
+            budget_for_body = remaining - len(header)
+            if budget_for_body <= 0:
+                break
+            body = text[:budget_for_body]
+            if len(text) > budget_for_body:
+                body += "\n...[file truncated]"
+            sections.append(header + body)
+            remaining -= len(header) + len(body)
+        if not sections:
+            return ""
+        return (
+            "\n\n## ATTACHED FILE CONTENTS\n"
+            "Full contents of small attached files, inlined so you can use them "
+            "without re-reading. Trust this content as if you had run "
+            "file_reader.\n"
+            + "".join(sections)
+        )
 
     def _format_attached_files(self, attached_files: List[Dict[str, Any]]) -> str:
         if not attached_files:

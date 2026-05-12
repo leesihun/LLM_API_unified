@@ -1,7 +1,10 @@
 """AgentLoop: the main single-while-loop agent that composes all the mixins."""
 import asyncio
 import hashlib
-from typing import List, Dict, Any, Optional, AsyncIterator
+import json as _json
+from collections import deque
+from pathlib import Path
+from typing import List, Dict, Any, Optional, AsyncIterator, Deque, Tuple
 
 import config
 from backend.core.llm_backend import (
@@ -40,6 +43,7 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         session_id: str = None,
         username: str = None,
         tools: Optional[List[str]] = None,
+        workspace_dir: Optional[str] = None,
     ):
         self.model = model or config.LLAMACPP_MODEL
         self.temperature = temperature if temperature is not None else config.DEFAULT_TEMPERATURE
@@ -59,6 +63,28 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         # Session-scoped todo list (injected into dynamic context each iteration)
         self._session_todos: List[Dict[str, Any]] = []
 
+        # Per-session workspace dir. None preserves legacy behaviour (relative
+        # paths resolve against scratch/uploads/CWD). When set, file_reader,
+        # file_navigator, file_editor, file_writer, apply_patch, file_patch,
+        # and shell_exec all treat it as the project root.
+        self.workspace_dir: Optional[Path] = self._validate_workspace(workspace_dir)
+
+        # ----- Reflection / anti-spiral state -----
+        # (tool_name, sha1(args_canonical_json)[:16]) tuples in arrival order.
+        self._tool_call_history: Deque[Tuple[str, str]] = deque(maxlen=64)
+        # Iteration index where the last repeat-call reminder was injected.
+        self._last_repeat_reminder_iter: int = -10**6
+        # Per-iteration tool-success ledger (1 = all-failed, 0 = at least one success).
+        self._iteration_failures: Deque[int] = deque(maxlen=8)
+        # Carry-forward goal extracted from autocompact summary (active goal line).
+        self._carried_active_goal: Optional[str] = None
+        # Iterations at which milestone goal reminders have been emitted (so we
+        # don't double-inject when the loop reattempts after autocompact).
+        self._emitted_goal_reminder_iters: set = set()
+        # True after we inject the first-iteration plan nudge so it doesn't fire
+        # repeatedly across autocompact retries.
+        self._plan_nudge_emitted: bool = False
+
     # ------------------------------------------------------------------
     # Sampling parameters forwarded to llama.cpp
     # ------------------------------------------------------------------
@@ -66,6 +92,287 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
     def _slot_id(self) -> int:
         digest = hashlib.sha256(self.session_id.encode("utf-8")).digest()
         return int.from_bytes(digest[:8], "big") % config.LLAMACPP_SLOTS
+
+    # ------------------------------------------------------------------
+    # Workspace validation
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _validate_workspace(raw: Optional[str]) -> Optional[Path]:
+        """Resolve and validate a workspace path supplied by the caller.
+
+        Returns None for unset / invalid values rather than raising — an
+        unknown workspace should degrade to legacy behaviour, not break the
+        chat request. Validation errors are printed for the operator.
+        """
+        if not raw:
+            default = getattr(config, "AGENT_DEFAULT_WORKSPACE", None)
+            raw = default if default else None
+        if not raw:
+            return None
+        try:
+            p = Path(raw).expanduser().resolve()
+        except Exception as e:
+            print(f"[AGENT] Ignoring invalid workspace path '{raw}': {e}")
+            return None
+        if not p.exists() or not p.is_dir():
+            print(f"[AGENT] Ignoring workspace '{p}' - directory does not exist")
+            return None
+        # Refuse to point the agent at its own install root by default — the
+        # agent editing itself is almost always unintentional.
+        try:
+            api_root = config.APP_DIR.resolve()
+            if p == api_root:
+                print(f"[AGENT] Refusing workspace == llm-api install dir ({p})")
+                return None
+        except Exception:
+            pass
+        return p
+
+    # ------------------------------------------------------------------
+    # Reflection helpers (anti-spiral)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _tool_signature(name: str, arguments: Any) -> Tuple[str, str]:
+        """Return (tool_name, short_arg_hash) — used for repeat-call detection."""
+        try:
+            if isinstance(arguments, str):
+                canon = arguments
+            else:
+                canon = _json.dumps(arguments, sort_keys=True, default=str, ensure_ascii=False)
+        except Exception:
+            canon = repr(arguments)
+        h = hashlib.sha1(canon.encode("utf-8", errors="replace")).hexdigest()[:16]
+        return name, h
+
+    def _record_iteration_outcome(self, results: List[Dict[str, Any]]) -> None:
+        """Append 1 to the failure ledger if every result in this iteration failed."""
+        if not results:
+            return
+        any_success = any(bool(r.get("success", True)) for r in results)
+        self._iteration_failures.append(0 if any_success else 1)
+
+    def _detect_repeat_call(self, current_iteration: int) -> Optional[str]:
+        """Return a reminder string when the most recent tool signature has
+        appeared >= threshold times within the recent window. Otherwise None.
+
+        Honors a cooldown so the same reminder isn't injected every iteration.
+        """
+        threshold = max(2, getattr(config, "AGENT_STUCK_REPEAT_THRESHOLD", 3))
+        window = max(threshold, getattr(config, "AGENT_STUCK_REPEAT_WINDOW", 6))
+        cooldown = max(0, getattr(config, "AGENT_STUCK_COOLDOWN_ITERATIONS", 4))
+        if current_iteration - self._last_repeat_reminder_iter < cooldown:
+            return None
+        if len(self._tool_call_history) < threshold:
+            return None
+        recent = list(self._tool_call_history)[-window:]
+        if not recent:
+            return None
+        latest_sig = recent[-1]
+        count = sum(1 for sig in recent if sig == latest_sig)
+        if count < threshold:
+            return None
+        self._last_repeat_reminder_iter = current_iteration
+        tool_name = latest_sig[0]
+        return (
+            f"<system-reminder>The `{tool_name}` call has run {count} times with "
+            f"similar arguments in the last {window} tool rounds and isn't "
+            f"producing new information. Stop repeating it. Choose one: "
+            f"(a) try a fundamentally different approach, (b) ask the user "
+            f"for clarification, or (c) report what you've found and what's "
+            f"blocking you.</system-reminder>"
+        )
+
+    def _detect_consecutive_failures(self) -> Optional[str]:
+        """Return a reflection reminder when the last N iterations all failed."""
+        threshold = max(2, getattr(config, "AGENT_CONSECUTIVE_FAILURE_THRESHOLD", 2))
+        recent = list(self._iteration_failures)[-threshold:]
+        if len(recent) < threshold or not all(recent):
+            return None
+        return (
+            f"<system-reminder>The last {threshold} tool rounds all failed. "
+            f"Step back: re-read the user's latest request, identify the "
+            f"assumption that's wrong, and decide whether to (a) investigate "
+            f"the failure (read the error), (b) try a different tool or path, "
+            f"or (c) ask the user. Do not retry the same call.</system-reminder>"
+        )
+
+    def _milestone_goal_reminder(self, current_iteration: int,
+                                 latest_user_text: Optional[str]) -> Optional[str]:
+        """At configured milestones, re-inject the user's latest request to
+        combat lost-in-the-middle on long iteration tails."""
+        milestones = tuple(getattr(config, "AGENT_GOAL_REMINDER_ITERATIONS", ()))
+        if not milestones or not latest_user_text:
+            return None
+        if current_iteration not in milestones:
+            return None
+        if current_iteration in self._emitted_goal_reminder_iters:
+            return None
+        self._emitted_goal_reminder_iters.add(current_iteration)
+        cap = max(200, getattr(config, "AGENT_TAIL_GOAL_MAX_CHARS", 1500))
+        text = latest_user_text.strip()
+        if len(text) > cap:
+            text = text[:cap] + "...[truncated]"
+        return (
+            f"<system-reminder>User's request (reminder at iteration "
+            f"{current_iteration + 1}/{self.max_iterations}): {text}"
+            f"</system-reminder>"
+        )
+
+    def _plan_nudge(self, current_iteration: int,
+                    latest_user_text: Optional[str]) -> Optional[str]:
+        """On the first iteration of a session, gently suggest a brief plan
+        when the user request is long or contains multi-step verbs."""
+        if self._plan_nudge_emitted or current_iteration != 0 or not latest_user_text:
+            return None
+        text = latest_user_text.strip()
+        min_chars = max(40, getattr(config, "AGENT_PLAN_NUDGE_MIN_CHARS", 200))
+        keywords = tuple(getattr(config, "AGENT_PLAN_NUDGE_KEYWORDS", ()))
+        lowered = text.lower()
+        keyword_hit = any(k in lowered for k in keywords)
+        if len(text) < min_chars and not keyword_hit:
+            return None
+        self._plan_nudge_emitted = True
+        return (
+            "<system-reminder>This looks like a multi-step request. Outline a "
+            "short plan (3–5 bullets) before acting. Read any provided docs "
+            "first if you haven't already.</system-reminder>"
+        )
+
+    # ------------------------------------------------------------------
+    # Static helpers for view overlays
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_last_user_message(msgs: List[Dict[str, Any]]) -> Optional[Tuple[int, str]]:
+        """Return (index, text) of the last role=user message, or None.
+
+        Strips list-content (multimodal) blocks to plain text.
+        """
+        for i in range(len(msgs) - 1, -1, -1):
+            m = msgs[i]
+            if m.get("role") != "user":
+                continue
+            content = m.get("content")
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        parts.append(part.get("text", ""))
+                text = " ".join(parts)
+            else:
+                text = str(content) if content is not None else ""
+            return i, text
+        return None
+
+    @staticmethod
+    def _has_prior_assistant_turn(msgs: List[Dict[str, Any]], user_idx: int) -> bool:
+        """True if there's any role=assistant message at index < user_idx."""
+        for i in range(user_idx):
+            if msgs[i].get("role") == "assistant":
+                return True
+        return False
+
+    # ------------------------------------------------------------------
+    # View overlay hook called by CompactionMixin._compress_old_iterations
+    # ------------------------------------------------------------------
+
+    def _apply_loop_overlays(
+        self,
+        view: List[Dict[str, Any]],
+        msgs: List[Dict[str, Any]],
+        current_iteration: int,
+    ) -> None:
+        """Insert view-only `<system-reminder>` blocks for:
+
+        - D1: turn-boundary marker before a new user message that follows
+          prior assistant turns,
+        - B5: plan-first nudge on iteration 0 for long/multi-step requests,
+        - B4: milestone goal re-injection at configured iterations,
+        - B2: repeat-call detection reminder,
+        - B3: consecutive-failure reflection reminder,
+        - D3: carried "Active goal" from autocompact,
+        - C1: tail-pinned user-goal echo.
+
+        Mutates *view* in place. Never touches *msgs*.
+        """
+        last_user = self._find_last_user_message(view)
+        latest_user_text = last_user[1] if last_user else None
+        # Capture pre-overlay view length so the tail-goal min-turns gate uses
+        # the real conversation size, not the size after we inserted markers.
+        view_len_pre_overlay = len(view)
+
+        # ---- D1: turn-boundary marker ----
+        if getattr(config, "AGENT_TURN_BOUNDARY_MARKER_ENABLED", True) and last_user is not None:
+            user_idx, _ = last_user
+            if self._has_prior_assistant_turn(view, user_idx):
+                view.insert(user_idx, {
+                    "role": "system",
+                    "content": (
+                        "<system-reminder>New user request boundary. Earlier "
+                        "turns in this session are completed work — treat them "
+                        "as background context, not as ongoing constraints, "
+                        "unless the user explicitly references them. The "
+                        "user's *next* message (immediately after this "
+                        "reminder) is the active request.</system-reminder>"
+                    ),
+                })
+
+        # ---- Tail-injected reminders (appended to view) ----
+        tail_blocks: List[str] = []
+
+        # B5: plan nudge (iteration 0 only)
+        plan = self._plan_nudge(current_iteration, latest_user_text)
+        if plan:
+            tail_blocks.append(plan)
+
+        # B4: milestone goal re-injection
+        milestone = self._milestone_goal_reminder(current_iteration, latest_user_text)
+        if milestone:
+            tail_blocks.append(milestone)
+
+        # B2: repeat-call detection
+        repeat = self._detect_repeat_call(current_iteration)
+        if repeat:
+            tail_blocks.append(repeat)
+
+        # B3: consecutive-failure reflection
+        failure = self._detect_consecutive_failures()
+        if failure:
+            tail_blocks.append(failure)
+
+        # D3: carried active goal from autocompact summary
+        if self._carried_active_goal:
+            cap = max(200, getattr(config, "AGENT_TAIL_GOAL_MAX_CHARS", 1500))
+            goal_text = self._carried_active_goal.strip()
+            if len(goal_text) > cap:
+                goal_text = goal_text[:cap] + "...[truncated]"
+            tail_blocks.append(
+                f"<system-reminder>Active goal carried forward from earlier "
+                f"summary: {goal_text}</system-reminder>"
+            )
+
+        # C1: tail-pinned latest user goal (always last, wins recency)
+        if (
+            getattr(config, "AGENT_TAIL_GOAL_REMINDER_ENABLED", True)
+            and latest_user_text
+            and view_len_pre_overlay >= getattr(config, "AGENT_TAIL_GOAL_MIN_TURNS", 4)
+        ):
+            cap = max(200, getattr(config, "AGENT_TAIL_GOAL_MAX_CHARS", 1500))
+            text = latest_user_text.strip()
+            if len(text) > cap:
+                text = text[:cap] + "...[truncated]"
+            tail_blocks.append(
+                f"<system-reminder>The user's latest request, repeated for "
+                f"fidelity (highest priority after system instructions): "
+                f"{text}</system-reminder>"
+            )
+
+        for block in tail_blocks:
+            view.append({"role": "system", "content": block})
 
     def _sampling_kwargs(self, final_response: bool = False) -> Dict[str, Any]:
         """Return sampling + slot-pinning params to forward to the LLM backend."""
@@ -209,6 +516,14 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
                 content="".join(streamed_text_parts).strip() or None,
             ))
 
+            # Record tool-call signatures for repeat detection BEFORE awaiting
+            # results — we want every issued call counted even if a later one
+            # in the same iteration fails.
+            for tc in all_tool_calls:
+                self._tool_call_history.append(
+                    self._tool_signature(tc.function.name, tc.function.arguments)
+                )
+
             # Resolve results in model order.
             results = []
             for tc, task in pending_tasks:
@@ -225,6 +540,10 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
                 else:
                     result = await task
                 results.append(result)
+
+            # Record iteration outcome (all-failed vs at-least-one-success)
+            # for the consecutive-failure detector.
+            self._record_iteration_outcome(results)
 
             new_entries = self.tool_calls_log[log_start:]
             duration_by_call_id = {

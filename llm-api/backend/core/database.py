@@ -65,6 +65,8 @@ class Database:
             cols = [row[1] for row in cursor.execute("PRAGMA table_info(sessions)").fetchall()]
             if "title" not in cols:
                 cursor.execute("ALTER TABLE sessions ADD COLUMN title TEXT")
+            if "workspace_dir" not in cols:
+                cursor.execute("ALTER TABLE sessions ADD COLUMN workspace_dir TEXT")
 
             # Create default admin user
             self._create_default_admin()
@@ -186,6 +188,18 @@ class Database:
             conn.execute(
                 "UPDATE sessions SET title = ? WHERE id = ?",
                 (title, session_id)
+            )
+
+    def update_session_workspace(self, session_id: str, workspace_dir: Optional[str]):
+        """Set or clear the workspace directory for a session.
+
+        Stored verbatim (absolute path); resolution/validation lives in the
+        chat route, not the DB layer.
+        """
+        with self.get_connection() as conn:
+            conn.execute(
+                "UPDATE sessions SET workspace_dir = ? WHERE id = ?",
+                (workspace_dir, session_id)
             )
 
     def search_sessions(self, username: str, query: str) -> List[Dict[str, Any]]:

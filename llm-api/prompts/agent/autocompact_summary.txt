@@ -57,6 +57,15 @@ that has no content.
 7. `## Open questions / blockers` — bullets.
 8. `## User preferences` — bullets, only if non-default.
 
+After the sections, on the **last line** of your summary, emit exactly one
+line in this form:
+
+    Active goal: <one short sentence stating the user's most recent
+    unmet request, derived from the latest user turn in the transcript>
+
+This line is parsed by the agent loop and re-injected into context after
+compaction. It must be present even if every section above was empty.
+
 Keep the whole summary as short as completeness allows. No commentary about
 the summarization process itself.
 

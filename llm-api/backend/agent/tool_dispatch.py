@@ -130,7 +130,10 @@ class DispatchMixin:
         elif name == "file_reader":
             if "file_reader" not in cache:
                 from tools.file_ops import FileReaderTool
-                cache["file_reader"] = FileReaderTool(username=self.username, session_id=self.session_id)
+                cache["file_reader"] = FileReaderTool(
+                    username=self.username, session_id=self.session_id,
+                    workspace_dir=self.workspace_dir,
+                )
             return await asyncio.to_thread(
                 cache["file_reader"].read,
                 path=arguments["path"],
@@ -141,7 +144,10 @@ class DispatchMixin:
         elif name == "file_writer":
             if "file_writer" not in cache:
                 from tools.file_ops import FileWriterTool
-                cache["file_writer"] = FileWriterTool(session_id=self.session_id)
+                cache["file_writer"] = FileWriterTool(
+                    session_id=self.session_id,
+                    workspace_dir=self.workspace_dir,
+                )
             return await asyncio.to_thread(
                 cache["file_writer"].write,
                 path=arguments["path"],
@@ -152,7 +158,10 @@ class DispatchMixin:
         elif name == "file_patch":
             if "file_patch" not in cache:
                 from tools.file_ops import FilePatchTool
-                cache["file_patch"] = FilePatchTool(session_id=self.session_id, username=self.username)
+                cache["file_patch"] = FilePatchTool(
+                    session_id=self.session_id, username=self.username,
+                    workspace_dir=self.workspace_dir,
+                )
             return await asyncio.to_thread(
                 cache["file_patch"].apply,
                 patch=arguments["patch"],
@@ -161,7 +170,10 @@ class DispatchMixin:
         elif name == "apply_patch":
             if "apply_patch" not in cache:
                 from tools.file_ops import ApplyPatchTool
-                cache["apply_patch"] = ApplyPatchTool(session_id=self.session_id, username=self.username)
+                cache["apply_patch"] = ApplyPatchTool(
+                    session_id=self.session_id, username=self.username,
+                    workspace_dir=self.workspace_dir,
+                )
             return await asyncio.to_thread(
                 cache["apply_patch"].apply,
                 patch=arguments["patch"],
@@ -190,7 +202,10 @@ class DispatchMixin:
         elif name == "file_navigator":
             if "file_navigator" not in cache:
                 from tools.file_ops import FileNavigatorTool
-                cache["file_navigator"] = FileNavigatorTool(username=self.username, session_id=self.session_id)
+                cache["file_navigator"] = FileNavigatorTool(
+                    username=self.username, session_id=self.session_id,
+                    workspace_dir=self.workspace_dir,
+                )
             return await asyncio.to_thread(
                 cache["file_navigator"].navigate,
                 operation=arguments["operation"],
@@ -201,7 +216,10 @@ class DispatchMixin:
         elif name == "shell_exec":
             if "shell_exec" not in cache:
                 from tools.shell import ShellExecTool
-                cache["shell_exec"] = ShellExecTool(session_id=self.session_id)
+                cache["shell_exec"] = ShellExecTool(
+                    session_id=self.session_id,
+                    workspace_dir=self.workspace_dir,
+                )
             desc = arguments.get("description")
             if desc:
                 print(f"  [shell_exec] {desc}")
@@ -240,7 +258,10 @@ class DispatchMixin:
         elif name == "file_edit":
             if "file_edit" not in cache:
                 from tools.file_ops import FileEditorTool
-                cache["file_edit"] = FileEditorTool(session_id=self.session_id, username=self.username)
+                cache["file_edit"] = FileEditorTool(
+                    session_id=self.session_id, username=self.username,
+                    workspace_dir=self.workspace_dir,
+                )
             return await asyncio.to_thread(
                 cache["file_edit"].edit,
                 path=arguments["path"],

@@ -13,17 +13,27 @@ import config
 class FileNavigatorTool:
     """List and search files on local filesystem."""
 
-    def __init__(self, username: str = None, session_id: str = None):
+    def __init__(self, username: str = None, session_id: str = None,
+                 workspace_dir: Optional[Path] = None):
         self.username = username
         self.session_id = session_id
-        self.workspace = config.SCRATCH_DIR / session_id if session_id else Path.cwd()
-        self.workspace.mkdir(parents=True, exist_ok=True)
+        # Default base for listing/searching when no path is supplied: prefer
+        # the user-set workspace over the session scratch dir.
+        self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
+        if self.workspace_dir:
+            self.workspace = self.workspace_dir
+        elif session_id:
+            self.workspace = config.SCRATCH_DIR / session_id
+            self.workspace.mkdir(parents=True, exist_ok=True)
+        else:
+            self.workspace = Path.cwd()
 
     def _resolve_base_path(self, path: Optional[str]) -> Path:
         """
         Resolve base path for list/find.
 
-        If path is omitted, use the session scratch workspace.
+        If path is omitted, use the session workspace (user-set workspace
+        when present, otherwise the scratch dir).
         """
         if not path:
             return self.workspace.resolve()

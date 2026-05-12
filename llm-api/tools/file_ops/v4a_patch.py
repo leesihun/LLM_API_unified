@@ -42,10 +42,14 @@ _GENERATED_PARTS = {".git", "__pycache__", "data", "dist", "dist-web", "node_mod
 class ApplyPatchTool:
     """Apply V4A context-anchored patches to files."""
 
-    def __init__(self, session_id: str = None, username: str = None):
+    def __init__(self, session_id: str = None, username: str = None,
+                 workspace_dir: Optional[Path] = None):
         self.session_id = session_id
         self.username = username
-        self.repo_root = config.APP_DIR.parent.resolve()
+        self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
+        # Workspace, when set, becomes the project root. Falls back to the
+        # API's repo root for legacy behaviour.
+        self.repo_root = self.workspace_dir or config.APP_DIR.parent.resolve()
 
     # ------------------------------------------------------------------ #
     # Path resolution                                                       #
