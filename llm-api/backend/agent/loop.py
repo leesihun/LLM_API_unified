@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional, AsyncIterator, Deque, Tuple
 
 import config
 from backend.core.llm_backend import (
-    StreamEvent, TextEvent,
+    StreamEvent, TextEvent, ReasoningEvent,
     ToolCallDeltaEvent, ToolCall, ToolStatusEvent, llm_backend,
 )
 from backend.utils.stop_signal import check_stop
@@ -46,7 +46,7 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         workspace_dir: Optional[str] = None,
     ):
         self.model = model or config.LLAMACPP_MODEL
-        self.temperature = temperature if temperature is not None else config.DEFAULT_TEMPERATURE
+        self.temperature = self._resolve_temperature(temperature)
         self.session_id = session_id
         self.username = username
         self.llm = llm_backend
@@ -92,6 +92,23 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
     def _slot_id(self) -> int:
         digest = hashlib.sha256(self.session_id.encode("utf-8")).digest()
         return int.from_bytes(digest[:8], "big") % config.LLAMACPP_SLOTS
+
+    def _resolve_temperature(self, requested: Optional[float]) -> float:
+        """Pick the temperature for this session.
+
+        Caller-supplied value wins. Otherwise look up MODEL_TEMPERATURE_OVERRIDES
+        for a substring match on the model name (e.g. 'minimax' -> 1.0 per
+        MiniMax M2 official recommendation). Falls back to DEFAULT_TEMPERATURE.
+        """
+        if requested is not None:
+            return requested
+        overrides = getattr(config, "MODEL_TEMPERATURE_OVERRIDES", None) or {}
+        if overrides:
+            model_lower = (self.model or "").lower()
+            for needle, temp in overrides.items():
+                if needle and needle.lower() in model_lower:
+                    return float(temp)
+        return config.DEFAULT_TEMPERATURE
 
     # ------------------------------------------------------------------
     # Workspace validation
@@ -222,22 +239,18 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
 
     def _plan_nudge(self, current_iteration: int,
                     latest_user_text: Optional[str]) -> Optional[str]:
-        """On the first iteration of a session, gently suggest a brief plan
-        when the user request is long or contains multi-step verbs."""
+        """On the first iteration of a session, prompt a brief plan before any
+        tool calls. Fires unconditionally — even trivial-looking requests
+        benefit from a one-line plan, and the cost (one short reminder) is
+        negligible compared to the tool-spam it prevents."""
         if self._plan_nudge_emitted or current_iteration != 0 or not latest_user_text:
-            return None
-        text = latest_user_text.strip()
-        min_chars = max(40, getattr(config, "AGENT_PLAN_NUDGE_MIN_CHARS", 200))
-        keywords = tuple(getattr(config, "AGENT_PLAN_NUDGE_KEYWORDS", ()))
-        lowered = text.lower()
-        keyword_hit = any(k in lowered for k in keywords)
-        if len(text) < min_chars and not keyword_hit:
             return None
         self._plan_nudge_emitted = True
         return (
-            "<system-reminder>This looks like a multi-step request. Outline a "
-            "short plan (3–5 bullets) before acting. Read any provided docs "
-            "first if you haven't already.</system-reminder>"
+            "<system-reminder>Before any tool calls, state a brief plan "
+            "(1–5 bullets, scaled to the task). Read provided docs/files "
+            "if you haven't. Avoid exploratory grep/search loops — converge "
+            "fast on the specific files the task touches.</system-reminder>"
         )
 
     # ------------------------------------------------------------------
@@ -452,6 +465,10 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
             # assistant turn we record back into msgs preserves it. Without this,
             # the model sees content=None next iteration and may emit empty replies.
             streamed_text_parts: list[str] = []
+            # Reasoning/thinking deltas (separate field on reasoning models).
+            # Preserved in history but NOT yielded to the caller, so the user
+            # never sees raw chain-of-thought.
+            streamed_reasoning_parts: list[str] = []
             log_start = len(self.tool_calls_log)
 
             # Compressed view is rebuilt per attempt inside the wrapper. msgs
@@ -467,6 +484,9 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
                 if isinstance(event, TextEvent):
                     streamed_text_parts.append(event.content)
                     yield event
+                elif isinstance(event, ReasoningEvent):
+                    streamed_reasoning_parts.append(event.content)
+                    # Internal-only: NOT yielded to the caller (chat.py / hoonbot).
                 elif isinstance(event, ToolCallDeltaEvent):
                     for tc in event.tool_calls:
                         all_tool_calls.append(tc)
@@ -510,10 +530,23 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
             # Log what the LLM requested
             self._log_tool_calls_requested(all_tool_calls, iteration)
 
-            # Append assistant message (must contain ALL tool calls before results)
+            # Append assistant message (must contain ALL tool calls before results).
+            # Reasoning content (if emitted by the model) is preserved inline as
+            # `<think>...</think>` so the model can build on its own chain of
+            # thought on the next iteration. MiniMax M2 in particular degrades
+            # severely when prior reasoning is stripped from history.
+            text_body = "".join(streamed_text_parts).strip()
+            reasoning_body = "".join(streamed_reasoning_parts).strip()
+            if reasoning_body:
+                if text_body:
+                    combined_content = f"<think>\n{reasoning_body}\n</think>\n\n{text_body}"
+                else:
+                    combined_content = f"<think>\n{reasoning_body}\n</think>"
+            else:
+                combined_content = text_body
             msgs.append(self._build_assistant_tool_msg(
                 all_tool_calls,
-                content="".join(streamed_text_parts).strip() or None,
+                content=combined_content or None,
             ))
 
             # Record tool-call signatures for repeat detection BEFORE awaiting

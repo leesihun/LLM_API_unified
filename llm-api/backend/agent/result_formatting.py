@@ -49,7 +49,10 @@ class FormattingMixin:
     def _build_tool_result_preview(self, result: Any, tool_name: str) -> Any:
         """Create a bounded preview before serialising large tool payloads."""
         budget = config.TOOL_RESULT_BUDGET.get(tool_name, config.TOOL_RESULT_DEFAULT_BUDGET)
-        text_cap = max(120, min(1200, budget))
+        # Use the full per-tool budget so depth-1 strings (e.g. file_reader
+        # `content`) aren't pre-truncated to 600 chars (~10 lines). The final
+        # char budget is enforced by _truncate_tool_result.
+        text_cap = budget
         return self._summarize_tool_value(result, text_cap=text_cap, list_cap=6, depth=0)
 
     def _summarize_tool_value(

@@ -73,12 +73,22 @@ CLUSTER_DIR = DATA_DIR / "cluster"
 # ============================================================================
 # Model Parameters (Default LLM Inference Settings)
 # ============================================================================
-DEFAULT_TEMPERATURE = 0.6
+DEFAULT_TEMPERATURE = 0.7
 DEFAULT_TOP_P = 0.95
 DEFAULT_TOP_K = 40
 DEFAULT_MIN_P = 0.1
 DEFAULT_MAX_TOKENS = 8192
 DEFAULT_REPEAT_PENALTY = 1
+
+# Per-model temperature overrides (substring match on model name, lowercase).
+# Reasoning-trained models have published optimal settings — using a generic
+# default kills their performance. MiniMax explicitly recommends temperature=1.0
+# for M2; Qwen3-Thinking and DeepSeek-R1 land around 0.6-0.7.
+MODEL_TEMPERATURE_OVERRIDES = {
+    "minimax": 1.0,
+    "qwen3": 0.7,
+    "deepseek": 0.6,
+}
 
 # ============================================================================
 # llama.cpp Performance Tuning
@@ -98,13 +108,13 @@ PROMPTS_LOG_MAX_LINES = 10_000
 # Agent Settings
 # ============================================================================
 AGENT_MAX_ITERATIONS = 100
-AGENT_TOOL_LOOP_MAX_TOKENS = 4096
+AGENT_TOOL_LOOP_MAX_TOKENS = 8192
 AGENT_SYSTEM_PROMPT = "system.txt"
-AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 18000
-AGENT_REPO_DOC_CONTEXT_MAX_CHARS = 12000
+AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 12000
+AGENT_REPO_DOC_CONTEXT_MAX_CHARS = 6000
 AGENT_MEMO_MAX_CHARS = 2000
 AGENT_FILE_PREVIEW_MAX_CHARS = 120
-AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 1200  # 500 was too small; 1200 fits ~25 lines of context
+AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 4000  # MiniMax M2 / Qwen3 handle long context fine; aggressive compaction was erasing useful detail
 AGENT_COMPACTION_WARM_WINDOW = 10  # multi-file edit flows need more headroom than 5
 
 # Auto-compact: triggered when llama.cpp returns a context-overflow error.
@@ -193,22 +203,24 @@ STOP_FILE = DATA_DIR / "STOP"
 AVAILABLE_TOOLS = [
     "websearch",
     "code_exec",        # Direct Python execution — write and run the code yourself
-    "rag",              # Unchanged — FAISS vector search over uploaded documents
+    "rag",              # FAISS vector search over uploaded documents
     "file_reader",      # Read any file (prefer over shell_exec cat/head/tail)
     "file_edit",        # Surgical exact-string replacement (single-line / small changes)
-    "apply_patch",      # V4A context-anchored patch (prefer for multi-line/.ps1/.sh edits)
-    "file_patch",       # Legacy unified-diff patch
+    "apply_patch",      # V4A context-anchored patch (for multi-line / .ps1 / .sh edits)
     "file_writer",      # Create new files or complete rewrites only
     "file_navigator",   # Discover files by name/glob (prefer over shell_exec find)
-    "grep",             # NEW — ripgrep content search (prefer over shell_exec grep)
+    "grep",             # ripgrep content search (prefer over shell_exec grep)
     "shell_exec",       # Shell commands (use for git, package managers, build tools)
     "shell_lint",       # Lint shell scripts before running (PSScriptAnalyzer / shellcheck)
-    "tool_result_recall", # Retrieve full content of a previously truncated tool result
     "process_monitor",  # Background process lifecycle
     "memo",             # Persistent cross-session key-value memory
-    "todo_write",       # NEW — session task checklist (3+ step tasks)
-    "agent",            # NEW — spawn explore/general subagent in fresh context
+    "todo_write",       # Session task checklist (3+ step tasks)
+    "agent",            # Spawn explore/general subagent in fresh context
 ]
+# Note: file_patch (legacy unified diff) is superseded by apply_patch and was
+# removed from the default list to reduce tool-selection confusion.
+# tool_result_recall was removed; truncated tool results include the disk path
+# in the truncation marker, and file_reader handles retrieval just fine.
 
 TOOL_PARAMETERS = {
     "code_exec": {

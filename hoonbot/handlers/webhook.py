@@ -393,14 +393,11 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             room_info["name"], room_id, room_info["isGroup"], sender_name, reply_to_data
         )
 
-        # Always inject the full context (PROMPT.md + session vars + memory) so it
-        # survives LLM history compaction and is present in every LLM call —
-        # matching heartbeat behaviour where context is fresh on every tick.
-        context = build_llm_context()
-        user_content = f"{context}\n\n---\n\n{msg_header}\n{content}"
+        user_content = f"{msg_header}\n{content}"
 
         if existing_session_id:
-            # Track message count and nudge memory flush when session is getting long
+            # Context already in history — don't re-inject PROMPT.md every turn.
+            # Only append the memory-flush hint when the session is getting long.
             count = _room_msg_count.get(room_id, 0) + 1
             _room_msg_count[room_id] = count
 
@@ -416,8 +413,15 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             }
             logger.info(f"{log_prefix} Continuing session {existing_session_id} (msg #{count})")
         else:
-            _room_msg_count[room_id] = 0  # Reset counter for new session
-            messages = [{"role": "user", "content": user_content}]
+            # First turn of a new session: inject the full hoonbot context
+            # (PROMPT.md + session vars + memory) as a system message so it
+            # lands in history once and doesn't bloat every subsequent user turn.
+            _room_msg_count[room_id] = 0
+            context = build_llm_context()
+            messages = [
+                {"role": "system", "content": context},
+                {"role": "user", "content": user_content},
+            ]
             llm_data = {
                 "model": config.LLM_MODEL,
                 "messages": json.dumps(messages),

@@ -15,29 +15,12 @@ TOOL_SCHEMAS: dict = {
     "shell_exec": {
         "name": "shell_exec",
         "description": (
-            "Executes a given shell command and returns its output.\n\n"
-            "Each shell_exec call is isolated. Shell state and cd commands do not persist; "
-            "always pass working_directory for commands that depend on cwd.\n\n"
-            "PLATFORM — check the injected ## ENVIRONMENT block before every call:\n"
-            "  Windows / PowerShell 5.1: chain with `;` not `&&`; use `$env:VAR` not `$VAR`; "
-            "use Get-Content/Set-Content not cat/echo >; do NOT use chmod, export, source, [[ ]].\n"
-            "  Linux/macOS / bash: chain with `&&`; use `$VAR`; bash syntax is fine.\n\n"
-            "IMPORTANT: Avoid using this tool to run find, grep, cat, head, tail, sed, or awk "
-            "unless explicitly instructed. Instead use the dedicated tools:\n"
-            "  - file_reader   for reading files (not cat/head/tail)\n"
-            "  - file_edit / apply_patch for in-place edits (not sed/awk)\n"
-            "  - grep          for content search (not grep/rg)\n"
-            "  - file_navigator for listing directories (not find/ls)\n\n"
-            "When issuing multiple independent read/search operations, use dedicated read-only "
-            "tools instead. shell_exec calls run in request order to avoid state races.\n\n"
-            "When using curl for HTTP APIs, always include -sS --fail-with-body so HTTP 4xx/5xx "
-            "responses surface as failures instead of silent exit-code-0 successes.\n\n"
-            "For long-running commands set a large timeout (600-3600). "
-            "For background servers or watchers, use process_monitor instead.\n\n"
-            "SHELL SCRIPTS: After editing any shell script, call shell_lint to verify syntax "
-            "before running with shell_exec.\n\n"
-            "Always provide the description parameter — it appears in logs and helps trace "
-            "what each command was doing."
+            "Execute a shell command. State does not persist between calls — pass "
+            "working_directory when cwd matters. Check the ## ENVIRONMENT block for "
+            "the active shell (PowerShell on Windows uses `;` and `$env:VAR`; bash "
+            "uses `&&` and `$VAR`). For long-running servers/watchers use "
+            "process_monitor instead. For reading/searching files use file_reader, "
+            "grep, and file_navigator — not cat/grep/find."
         ),
         "parameters": {
             "type": "object",
@@ -74,17 +57,9 @@ TOOL_SCHEMAS: dict = {
     "file_reader": {
         "name": "file_reader",
         "description": (
-            "Reads a file from the local filesystem. You can access any file directly by using "
-            "this tool.\n\n"
-            "Assume this tool can read all files on the machine. It is okay to read a file that "
-            "does not exist — an error will be returned.\n\n"
-            "Usage notes:\n"
-            "- Absolute paths are read directly. Relative paths resolve against the session "
-            "scratch workspace, then user uploads, then the current working directory.\n"
-            "- By default reads up to 2000 lines from the beginning of the file.\n"
-            "- For large files, use offset and limit to read specific sections.\n"
-            "- Use this instead of shell_exec cat/head/tail.\n"
-            "- If you already know the file path, call file_reader directly — do not explore first."
+            "Read a file from the local filesystem. Absolute paths read directly; "
+            "relative paths resolve against the session workspace, scratch, uploads, "
+            "then cwd. Use offset/limit for large files. Prefer this over `cat`."
         ),
         "parameters": {
             "type": "object",
@@ -112,20 +87,10 @@ TOOL_SCHEMAS: dict = {
     "file_edit": {
         "name": "file_edit",
         "description": (
-            "Performs exact string replacements in files.\n\n"
-            "Usage:\n"
-            "- You MUST use file_reader at least once before editing a file. This tool will "
-            "error if the old_string is not found — reading first ensures you have the exact text.\n"
-            "- When editing, preserve the exact indentation (tabs/spaces) as it appears in the file. "
-            "Never guess indentation — copy it exactly from file_reader output.\n"
-            "- ALWAYS prefer editing existing files over creating new ones with file_writer.\n"
-            "- The edit will FAIL if old_string is not unique in the file. Either provide more "
-            "surrounding context to make it unique, or set replace_all=true to change every instance.\n"
-            "- Use replace_all=true for renaming a variable or string across the whole file.\n"
-            "- IMPORTANT: Use this only for single-line or very small changes where old_string "
-            "will match exactly (including whitespace and line endings). For multi-line edits, "
-            ".ps1 files, or .sh files, use apply_patch instead — it handles CRLF/LF differences "
-            "and whitespace tolerance that make exact matching unreliable."
+            "Exact string replacement in a file. Read the file first so old_string "
+            "matches byte-for-byte (preserve indentation). For multi-line edits, "
+            ".ps1 or .sh files, use apply_patch instead. Set replace_all=true to "
+            "rename a symbol across the file."
         ),
         "parameters": {
             "type": "object",
@@ -157,33 +122,19 @@ TOOL_SCHEMAS: dict = {
     "apply_patch": {
         "name": "apply_patch",
         "description": (
-            "Apply a V4A context-anchored patch to one or more files.\n\n"
-            "Use this for ALL multi-line edits, .ps1 files, and .sh files. "
-            "It locates edit regions by matching surrounding context lines — no line numbers needed — "
-            "and is tolerant of CRLF vs LF and trailing-whitespace differences.\n\n"
+            "Apply a V4A context-anchored patch to one or more files. Preferred for "
+            "all multi-line edits and shell scripts (handles CRLF/LF and whitespace).\n\n"
             "Format:\n"
             "    *** Begin Patch\n"
-            "    *** Update File: path/to/file.ps1\n"
-            "    @@ optional locator text (a nearby unique line)\n"
-            "     unchanged context line\n"
-            "    -removed line\n"
-            "    +added line\n"
-            "     unchanged context line\n"
+            "    *** Update File: path/to/file\n"
+            "    @@ nearby unique line\n"
+            "     unchanged context\n"
+            "    -removed\n"
+            "    +added\n"
             "    *** End Patch\n\n"
-            "Supported directives: *** Add File, *** Delete File, *** Update File, *** Move to.\n"
-            "Multiple files can be patched in one envelope.\n\n"
-            "Example — rename a variable in a .ps1 file:\n"
-            "    *** Begin Patch\n"
-            "    *** Update File: hoonbot/start.ps1\n"
-            "    @@ param(\n"
-            "     param(\n"
-            "    -    [string]$OldName = 'default',\n"
-            "    +    [string]$NewName = 'default',\n"
-            "     )\n"
-            "    *** End Patch\n\n"
-            "On failure, returns an actionable error naming the exact context line that did not "
-            "match — use file_reader to look up the actual content, then reissue the patch with "
-            "corrected context lines. Do NOT write the file if the patch fails."
+            "Directives: *** Add File / *** Delete File / *** Update File / *** Move to. "
+            "Multiple files per envelope. On failure the error names the unmatched "
+            "context line — re-read with file_reader, then reissue."
         ),
         "parameters": {
             "type": "object",
@@ -226,15 +177,9 @@ TOOL_SCHEMAS: dict = {
     "file_writer": {
         "name": "file_writer",
         "description": (
-            "Writes a file to the local filesystem.\n\n"
-            "Usage:\n"
-            "- This tool will OVERWRITE the existing file if there is one at the provided path.\n"
-            "- ALWAYS prefer file_edit for modifying existing files — it only sends the diff and "
-            "is far less likely to corrupt surrounding code.\n"
-            "- Only use file_writer to CREATE new files or for complete rewrites of an existing file.\n"
-            "- If this is an existing file, you MUST use file_reader first to read its contents.\n"
-            "- Never create documentation (*.md) or README files unless explicitly requested.\n"
-            "- Relative paths write inside the session scratch workspace."
+            "Write a file (overwrites). Use ONLY for new files or full rewrites — "
+            "for any modification of an existing file, use file_edit or apply_patch. "
+            "Don't create docs/README files unless the user asked."
         ),
         "parameters": {
             "type": "object",
@@ -264,16 +209,9 @@ TOOL_SCHEMAS: dict = {
     "file_navigator": {
         "name": "file_navigator",
         "description": (
-            "List directory contents or find files by name using glob patterns.\n\n"
-            "Use this tool to discover file *names* and directory structure. "
-            "For searching file *contents* (e.g., finding where a function is defined), "
-            "use grep instead.\n\n"
-            "Operations:\n"
-            "  list   — list files in a directory\n"
-            "  search — find files matching a glob pattern (e.g. '*.py', '**/*.ts')\n"
-            "  tree   — show recursive directory tree\n\n"
-            "Only use this when file paths are unknown. If you already know the path, "
-            "call file_reader directly."
+            "List or find files by name/glob. Operations: list (directory), "
+            "search (glob like '**/*.py'), tree (recursive). For searching file "
+            "*contents* use grep instead. If you know the path, call file_reader."
         ),
         "parameters": {
             "type": "object",
@@ -310,20 +248,10 @@ TOOL_SCHEMAS: dict = {
     "grep": {
         "name": "grep",
         "description": (
-            "A powerful search tool built on ripgrep for searching file contents.\n\n"
-            "Usage:\n"
-            "- ALWAYS use grep for content search tasks. NEVER invoke shell_exec grep or rg.\n"
-            "- Supports full regex syntax (e.g. 'log.*Error', 'function\\s+\\w+').\n"
-            "- Filter files with glob parameter (e.g. '*.js', '**/*.tsx') or type parameter "
-            "(e.g. 'js', 'py', 'rust').\n"
-            "- Output modes: 'content' shows matching lines (supports -A/-B/-C context, -n line "
-            "numbers), 'files_with_matches' shows only file paths (default), 'count' shows match "
-            "counts per file.\n"
-            "- Pattern syntax: uses ripgrep (not grep). Literal braces need escaping.\n"
-            "- Multiline matching: by default patterns match within single lines. For cross-line "
-            "patterns, use multiline=true.\n"
-            "- Use agent with subagent_type='explore' for broad open-ended searches that may "
-            "require multiple rounds of grepping."
+            "ripgrep content search. Supports full regex, glob filters, and file-type "
+            "filters. Output modes: 'files_with_matches' (default, just paths), "
+            "'content' (matching lines, supports -A/-B/-C), 'count'. For multi-round "
+            "open-ended exploration, use the `agent` tool with subagent_type='explore'."
         ),
         "parameters": {
             "type": "object",
@@ -404,18 +332,10 @@ TOOL_SCHEMAS: dict = {
     "code_exec": {
         "name": "code_exec",
         "description": (
-            "Default tool for Python coding tasks. Execute Python code directly — pass the "
-            "complete, ready-to-run script as the 'code' argument. Runs in the session workspace, "
-            "returns stdout/stderr/returncode.\n\n"
-            "Use this for any task where you can write the code yourself: file processing, "
-            "data analysis, calculations, multi-step logic, library calls, plotting, ML training.\n\n"
-            "Prefer code_exec over shell_exec for Python-specific work — it sets up the correct "
-            "workspace and captures output cleanly.\n\n"
-            "Before declaring success: verify the script actually ran and produced the expected "
-            "output. Check returncode and stderr.\n\n"
-            "Timeout policy: omit timeout for the default limit. Set a positive timeout for "
-            "known-long runs. Set timeout=0 only when the user explicitly wants no wall-clock "
-            "timeout; this can run indefinitely until the process exits or is externally stopped."
+            "Run a complete Python script. Returns stdout/stderr/returncode. "
+            "Use for data processing, calculations, library calls, plotting, ML. "
+            "Prefer this over shell_exec for Python work. Check returncode before "
+            "declaring success. Set timeout=0 only when the user wants no wall-clock limit."
         ),
         "parameters": {
             "type": "object",
@@ -440,23 +360,10 @@ TOOL_SCHEMAS: dict = {
     "todo_write": {
         "name": "todo_write",
         "description": (
-            "Update the todo list for the current session. Use proactively and often to track "
-            "progress and pending tasks.\n\n"
-            "WHEN to use:\n"
-            "- Multi-step tasks with 3 or more distinct steps\n"
-            "- Complex non-trivial work requiring careful sequencing\n"
-            "- When starting any task — create todos BEFORE beginning work\n"
-            "- After completing a step — update status immediately\n"
-            "- When new follow-up tasks are discovered mid-execution\n\n"
-            "WHEN NOT to use:\n"
-            "- Single straightforward tasks\n"
-            "- Tasks completable in under 3 trivial steps\n"
-            "- Purely conversational requests\n\n"
-            "Rules:\n"
-            "- Exactly ONE task may be 'in_progress' at a time\n"
-            "- Mark tasks 'completed' ONLY when fully done — not if tests fail or work is partial\n"
-            "- Pass the COMPLETE updated list every call (this replaces the previous list)\n"
-            "- Use clear imperative content: 'Fix auth bug', 'Run tests', 'Refactor parser'"
+            "Track progress for multi-step tasks (3+ distinct steps). Each call "
+            "replaces the full list. Exactly one task in 'in_progress' at a time. "
+            "Mark 'completed' only when actually done. Skip for trivial or "
+            "single-step requests."
         ),
         "parameters": {
             "type": "object",
@@ -501,25 +408,12 @@ TOOL_SCHEMAS: dict = {
     "agent": {
         "name": "agent",
         "description": (
-            "Launch a specialized subagent to handle complex, multi-step tasks in a fresh "
-            "context without polluting the main conversation.\n\n"
-            "Available subagent types:\n"
-            "  explore — Read-only research agent (file_reader, grep, file_navigator, websearch). "
-            "Use for broad codebase exploration: 'what files handle auth?', 'find all usages of X'. "
-            "Faster and cheaper than inline shell loops.\n"
-            "  general — Full toolset agent. Use for delegating a complete self-contained subtask.\n\n"
-            "WHEN to use:\n"
-            "- Open-ended searches that span the codebase and require multiple queries\n"
-            "- Research whose findings inform later steps (run foreground)\n"
-            "- Genuinely independent parallel work (run multiple agents in one turn)\n\n"
-            "WHEN NOT to use:\n"
-            "- You already know the target file — use file_reader directly\n"
-            "- A single grep or glob would answer the question\n"
-            "- The task is a narrow, named lookup\n\n"
-            "IMPORTANT: The result returned by the subagent is NOT visible to the user. "
-            "You must relay the findings explicitly in your response.\n\n"
-            "Do NOT duplicate work a subagent is doing — if you delegate research, do not also "
-            "perform the same searches yourself."
+            "Spawn a subagent in fresh context. subagent_type='explore' is read-only "
+            "(file_reader, grep, file_navigator, websearch) for broad codebase research; "
+            "'general' has the full toolset for delegated subtasks. Use only when the "
+            "question needs multiple rounds — skip for narrow lookups a single grep or "
+            "file_reader could answer. Relay the subagent's findings yourself; the "
+            "result is not shown to the user automatically."
         ),
         "parameters": {
             "type": "object",
@@ -654,13 +548,9 @@ TOOL_SCHEMAS: dict = {
     "process_monitor": {
         "name": "process_monitor",
         "description": (
-            "Manage long-running background processes: start, check status, read output, or kill.\n\n"
-            "Use this instead of shell_exec when you need to:\n"
-            "  - Launch a server or watcher and check on it later\n"
-            "  - Observe incremental output from a long-running process\n"
-            "  - Run a process and continue with other work while it runs\n\n"
-            "Each process gets a handle like 'proc_1' for future reference. "
-            "Use 'read_output' with next_offset for incremental reads."
+            "Background process lifecycle: start, status, read_output, kill, list. "
+            "Use instead of shell_exec for servers/watchers, or to observe long "
+            "incremental output. Each process gets a handle like 'proc_1'."
         ),
         "parameters": {
             "type": "object",
@@ -716,15 +606,10 @@ TOOL_SCHEMAS: dict = {
     "shell_lint": {
         "name": "shell_lint",
         "description": (
-            "Run static analysis on a shell script before executing it.\n\n"
-            "Use after EVERY shell script edit, before shell_exec. "
-            "Returns file:line:severity:rule:message for each issue found.\n\n"
-            "  .ps1 files: uses PSScriptAnalyzer (Invoke-ScriptAnalyzer) if installed, "
-            "falling back to the PSParser syntax checker.\n"
-            "  .sh / .bash files: uses shellcheck -f json if on PATH, falling back to bash -n.\n\n"
-            "Workflow: file_edit/apply_patch → shell_lint → fix all errors → "
-            "shell_lint again to confirm clean → shell_exec.\n\n"
-            "Never skip the second lint — small fixes can introduce new issues."
+            "Static analysis on a shell script (.ps1/.sh/.bash) before running it. "
+            "Uses PSScriptAnalyzer / shellcheck where available, falls back to "
+            "syntax-only checks. Returns file:line:severity:rule:message. Worth "
+            "running after non-trivial edits."
         ),
         "parameters": {
             "type": "object",

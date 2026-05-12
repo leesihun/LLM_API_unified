@@ -40,6 +40,19 @@ class TextEvent(StreamEvent):
     content: str = ""
 
 @dataclass
+class ReasoningEvent(StreamEvent):
+    """Model-emitted reasoning/thinking content.
+
+    MiniMax M2, Qwen3-Thinking, DeepSeek-R1, and other reasoning-trained
+    models emit `<think>...</think>` chains either inline in `content` or
+    via a separate `reasoning_content` delta field. These need to be
+    preserved in the assistant turn that gets fed back to the model on the
+    next iteration — stripping them severely degrades agentic performance —
+    but they should NOT be streamed to the end user as visible text.
+    """
+    content: str = ""
+
+@dataclass
 class ToolCallDeltaEvent(StreamEvent):
     """Accumulated tool calls parsed from the stream.
 
@@ -252,6 +265,11 @@ class LlamaCppBackend:
                 chunk_finish = choices[0].get("finish_reason")
                 if chunk_finish:
                     finish_reason = chunk_finish
+
+                # Reasoning content (MiniMax M2, Qwen3-Thinking, DeepSeek-R1).
+                # Preserved in history but not surfaced to the user.
+                if "reasoning_content" in delta and delta["reasoning_content"]:
+                    yield ReasoningEvent(content=delta["reasoning_content"])
 
                 # Text content — yield immediately
                 if "content" in delta and delta["content"]:

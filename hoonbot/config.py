@@ -131,7 +131,7 @@ BOT_USER_ID: int = 0
 # Heartbeat
 # ---------------------------------------------------------------------------
 HEARTBEAT_ENABLED = True
-HEARTBEAT_INTERVAL_SECONDS = 3000
+HEARTBEAT_INTERVAL_SECONDS = 1200
 # If heartbeat hits LLM connectivity errors, pause heartbeat LLM calls
 # for this many seconds.
 HEARTBEAT_LLM_COOLDOWN_SECONDS = 600
