@@ -65,6 +65,11 @@ if $BUILD; then
   ./install-master.sh
 fi
 
+# Kill any stale cluster processes that might be holding ports
+if [[ -x "$ROOT_DIR/stop-cluster.sh" ]]; then
+  "$ROOT_DIR/stop-cluster.sh" --force >/dev/null 2>&1 || true
+fi
+
 cleanup() {
   trap '' INT TERM
   echo
