@@ -13,13 +13,14 @@ import json
 import logging
 import os
 import re
+import shutil
 from datetime import datetime, time
 from typing import Any, Callable, Awaitable
 
 import httpx
 
 import config
-from core.context import build_llm_context
+from core.context import MEMORY_FILE, build_llm_context
 from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
@@ -72,6 +73,58 @@ def _extract_json(text: str, expected_type: type) -> Any:
     except (json.JSONDecodeError, ValueError):
         pass
     return None
+
+
+def _is_heartbeat_ok(text: str) -> bool:
+    return text.strip() == "HEARTBEAT_OK"
+
+
+def _file_status(path: str) -> str:
+    try:
+        size = os.path.getsize(path)
+        return f"`{os.path.abspath(path)}` readable ({size} bytes)"
+    except FileNotFoundError:
+        return f"`{os.path.abspath(path)}` missing"
+    except OSError as exc:
+        return f"`{os.path.abspath(path)}` unreadable ({type(exc).__name__}: {exc})"
+
+
+def _disk_status(path: str) -> str:
+    try:
+        usage = shutil.disk_usage(path)
+        free_gib = usage.free / (1024 ** 3)
+        total_gib = usage.total / (1024 ** 3)
+        return f"{free_gib:.1f} GiB free of {total_gib:.1f} GiB at `{os.path.abspath(path)}`"
+    except OSError as exc:
+        return f"unavailable for `{os.path.abspath(path)}` ({type(exc).__name__}: {exc})"
+
+
+def _build_system_review(tasks: list[dict], results: list[str]) -> str:
+    findings = sum(1 for result in results if not _is_heartbeat_ok(result))
+    return "\n".join([
+        f"- Home room: id `{config.MESSENGER_HOME_ROOM_ID}` (configured name `{config.MESSENGER_HOME_ROOM_NAME or 'none'}`)",
+        f"- LLM: `{config.LLM_API_URL}` model `{config.LLM_MODEL or 'unset'}`",
+        f"- Heartbeat prompt: {_file_status(_HEARTBEAT_FILE)}",
+        f"- Memory file: {_file_status(MEMORY_FILE)}",
+        f"- Data disk: {_disk_status(config.DATA_DIR)}",
+        f"- Tasks checked: `{len(tasks)}`; task findings: `{findings}`",
+    ])
+
+
+def _compile_report(tasks: list[dict], results: list[str]) -> str:
+    lines = ["**System Review**", _build_system_review(tasks, results)]
+    visible_results = [
+        (task, result)
+        for task, result in zip(tasks, results)
+        if not _is_heartbeat_ok(result)
+    ]
+    lines.append("**Task Results**")
+    if visible_results:
+        for task, result in visible_results:
+            lines.append(f"**Task {task.get('id', '?')}: {task['task']}**\n{result}")
+    else:
+        lines.append("No task findings reported.")
+    return "\n\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -260,10 +313,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
                     results[i] = await _execute_task(task, context, tick_hour, headers)
 
         # Phase 4 — Compile report
-        lines = []
-        for task, result in zip(tasks, results):
-            lines.append(f"**Task {task.get('id', '?')}: {task['task']}**\n{result}")
-        full_text = "\n\n".join(lines)
+        full_text = _compile_report(tasks, results)
 
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         _llm_cooldown_until = asyncio.get_event_loop().time() + config.HEARTBEAT_LLM_COOLDOWN_SECONDS
@@ -280,9 +330,6 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         return
 
     reply = full_text.strip()
-    if reply == "HEARTBEAT_OK":
-        logger.info("[Heartbeat] HEARTBEAT_OK ??nothing to post")
-        return
     if not reply:
         logger.info("[Heartbeat] No output — nothing to post")
     elif config.MESSENGER_HOME_ROOM_ID < 0:

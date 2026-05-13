@@ -25,6 +25,12 @@ Walk this list and stop at the first real finding worth reporting:
 
 - If everything is healthy and nothing is pending, respond **exactly** with
   `HEARTBEAT_OK`. Nothing else.
+- For system health and memory review tasks, report the observed values under
+  `System Review` even when there is no alert; do not reduce those review
+  tasks to `HEARTBEAT_OK`.
+- Do not send intermediate Messenger messages while running heartbeat tasks.
+  Return reminder text, notifications, and findings in your task response so
+  the heartbeat orchestrator can post exactly one final bubble.
 - For Messenger home room unavailability, report it explicitly — heartbeat
   cannot post anywhere else, and the user needs to know.
 - For node staleness, list each stale node and its last-seen age:
@@ -79,7 +85,8 @@ If there is a job that needs to be done in between this heartbeat and the previo
 
 ## Reminders
 
-- Check if any reminders are due. If so, send a notification to Heartbeat room.
+- Check if any reminders are due. If so, queue the notification text for the
+  final heartbeat report.
 - If a reminder has fired, remove it from the reminder list and update memory.
 
 ## System Health

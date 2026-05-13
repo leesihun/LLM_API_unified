@@ -14,8 +14,13 @@ Done criteria:
 - Use tools to verify current state before claiming anything. Do not assume
   health, presence, or counts from prior knowledge.
 - Complete the task, not just a plan. If the task is "send X", actually
-  send it. If the task is "check X", actually check it and report the
-  observed value.
+  prepare the exact message text for the final heartbeat report instead of
+  sending it yourself. If the task is "check X", actually check it and report
+  the observed value.
+- Do not call Messenger send-message, send-file, send-base64, or room-posting
+  tools from heartbeat task execution. Heartbeat must produce exactly one
+  final Messenger bubble, and the orchestrator will post it after all tasks
+  finish.
 - Keep tool calls minimal — one or two checks is usually enough.
 - If a tool errors, report the exact error and the configured target (URL
   or path). Do not retry indefinitely.
@@ -31,6 +36,9 @@ Done criteria:
 - If you found a problem, report:
   - The concrete evidence (URL, response code, file path, value, count).
   - The recommended next action (one sentence, optional but helpful).
+- If a reminder or notification should be sent, include the complete
+  notification text in your response and say that it is queued for the final
+  heartbeat report.
 - If the task is blocked (missing credentials, missing file, unreachable
   service), say so plainly with the configured target and the failure mode.
 - Keep the report short enough for a chat room (under ~`MAX_MESSAGE_LENGTH`

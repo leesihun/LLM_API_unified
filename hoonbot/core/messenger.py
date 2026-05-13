@@ -128,21 +128,34 @@ def _split_message(text: str, limit: int) -> list:
     return chunks
 
 
+async def _post_text_message(room_id: int, content: str, reply_to_id: int | None = None) -> dict:
+    client = _get_client()
+    body = {"roomId": room_id, "content": content, "type": "text"}
+    if reply_to_id:
+        body["replyToId"] = reply_to_id
+    resp = await client.post(
+        f"{config.MESSENGER_URL}/api/send-message",
+        headers=_headers(),
+        json=body,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
+async def send_message_once(room_id: int, content: str, reply_to_id: int | None = None) -> None:
+    """Send exactly one message. Used for final heartbeat reports."""
+    async def _send():
+        await _post_text_message(room_id, content, reply_to_id)
+
+    await with_retry(_send, label="Messenger send once", max_attempts=3)
+
+
 async def send_message(room_id: int, content: str, reply_to_id: int | None = None) -> None:
     """Send a message, automatically splitting if it exceeds the character limit."""
     chunks = _split_message(content, config.MAX_MESSAGE_LENGTH)
     for i, chunk in enumerate(chunks):
         async def _send(c=chunk, first=(i == 0)):
-            client = _get_client()
-            body = {"roomId": room_id, "content": c, "type": "text"}
-            if reply_to_id and first:
-                body["replyToId"] = reply_to_id
-            resp = await client.post(
-                f"{config.MESSENGER_URL}/api/send-message",
-                headers=_headers(),
-                json=body,
-            )
-            resp.raise_for_status()
+            await _post_text_message(room_id, c, reply_to_id if first else None)
 
         await with_retry(_send, label="Messenger send", max_attempts=3)
 
@@ -159,17 +172,7 @@ async def send_message_returning_id(
     """
     try:
         async def _send():
-            client = _get_client()
-            body: dict = {"roomId": room_id, "content": content, "type": "text"}
-            if reply_to_id:
-                body["replyToId"] = reply_to_id
-            resp = await client.post(
-                f"{config.MESSENGER_URL}/api/send-message",
-                headers=_headers(),
-                json=body,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            data = await _post_text_message(room_id, content, reply_to_id)
             return data.get("message", {}).get("id") or data.get("id")
 
         return await with_retry(_send, label="Messenger send (id)", max_attempts=3)

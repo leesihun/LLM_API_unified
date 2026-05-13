@@ -162,27 +162,37 @@ async def _subscribe_webhooks() -> None:
 
 
 async def _resolve_home_room() -> None:
-    """If MESSENGER_HOME_ROOM_NAME is set, look up the room ID by name."""
-    if not config.MESSENGER_HOME_ROOM_NAME:
-        return
+    """Resolve home room by name, then fall back to configured numeric ID."""
+    fallback_id = config.MESSENGER_HOME_ROOM_ID
+    candidates: list[str] = []
+    for name in (config.MESSENGER_HOME_ROOM_NAME, "Heartbeat", "heartbeat"):
+        name = (name or "").strip()
+        if name and name not in candidates:
+            candidates.append(name)
 
     bot_info = await messenger.get_bot_info()
     if not bot_info:
-        logger.warning("[Hoonbot] Could not fetch bot info for home room resolution")
+        config.MESSENGER_HOME_ROOM_ID = fallback_id
+        logger.warning(
+            "[Hoonbot] Could not fetch bot info for home room resolution; "
+            f"using configured room id={fallback_id}"
+        )
         return
 
-    resolved_id = await messenger.resolve_home_room_by_name(
-        config.MESSENGER_HOME_ROOM_NAME, bot_info["id"],
+    for name in candidates:
+        resolved_id = await messenger.resolve_home_room_by_name(name, bot_info["id"])
+        if resolved_id is not None:
+            config.MESSENGER_HOME_ROOM_ID = resolved_id
+            logger.info(f"[Hoonbot] Home room resolved: '{name}' -> id={resolved_id}")
+            return
+
+    config.MESSENGER_HOME_ROOM_ID = fallback_id
+    logger.warning(
+        "[Hoonbot] Home room name not found "
+        f"({', '.join(candidates) or 'no name configured'}); "
+        f"using configured room id={fallback_id}"
     )
-    if resolved_id is not None:
-        config.MESSENGER_HOME_ROOM_ID = resolved_id
-        logger.info(f"[Hoonbot] Home room resolved: '{config.MESSENGER_HOME_ROOM_NAME}' -> id={resolved_id}")
-    else:
-        config.MESSENGER_HOME_ROOM_ID = -1
-        logger.warning(
-            f"[Hoonbot] Home room '{config.MESSENGER_HOME_ROOM_NAME}' not found — "
-            "heartbeat will not post until the room exists and Hoonbot is restarted"
-        )
+    return
 
 
 async def _catch_up_room(room: dict, semaphore: asyncio.Semaphore) -> None:
@@ -279,7 +289,7 @@ async def lifespan(app: FastAPI):
     )
 
     catchup_task = asyncio.create_task(_catch_up())
-    heartbeat_task = asyncio.create_task(run_heartbeat_loop(messenger.send_message))
+    heartbeat_task = asyncio.create_task(run_heartbeat_loop(messenger.send_message_once))
 
     def _on_task_done(task: asyncio.Task, name: str = "") -> None:
         if task.cancelled():
