@@ -1,9 +1,8 @@
 """
 Asynchronous subprocess execution with incremental output streaming.
 
-Shared helper used by the Python-runner tools (code_exec, python_coder native,
-python_coder opencode) so they all stream stdout/stderr chunk-by-chunk with a
-shared memory cap. Keeps the writing process unblocked by continuing to read
+Shared helper used by code_exec so it streams stdout/stderr chunk-by-chunk
+with a shared memory cap. Keeps the writing process unblocked by continuing to read
 past the cap (excess bytes are dropped, not stored).
 
 Two optional kill triggers (beyond normal exit):

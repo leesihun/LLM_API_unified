@@ -31,6 +31,11 @@ delegation targets.
 
 - Preserve normal Flutter assistant behavior when no cluster directive is
   present.
+- **Discover before you read.** When you don't already know a path, call
+  `file_navigator` (operation=`list` or `tree`) or `grep` BEFORE
+  `file_reader`. Never guess paths. If a relative read fails, check the
+  `near_matches` and `parent_listing` fields in the error response before
+  retrying.
 - For delegation, validate the target before submitting:
   - Resolve `@<node-name>` against the registered node list.
   - Resolve `@tag:` / `@role:` against current cluster state.

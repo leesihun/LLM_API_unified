@@ -71,8 +71,9 @@ class ShellExecTool:
         self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
         # Resolution base for relative `working_directory` args, and the default
         # when none is supplied. workspace_dir wins; otherwise we use the
-        # server's CWD (the repo root for normal startup).
-        self.repo_root = self.workspace_dir or Path.cwd()
+        # configured AGENT_DEFAULT_WORKSPACE (typically $HOME / /home/<user>).
+        default_base = getattr(config, "AGENT_DEFAULT_WORKSPACE", None) or Path.cwd()
+        self.repo_root = self.workspace_dir or Path(default_base)
 
     def _resolve_working_directory(self, working_directory: Optional[str]) -> Path:
         """

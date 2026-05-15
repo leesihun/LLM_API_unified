@@ -1,7 +1,6 @@
 """
 File Writer Tool
-Write or append content to files. Lightweight alternative to python_coder
-for simple file creation.
+Write or append content to files.
 
 Newly-created files are tracked in the response (`new_file: True`) so the
 agent loop can sweep non-persisted temp files at the end of a session.

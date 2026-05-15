@@ -20,7 +20,7 @@ from typing import Any, Callable, Awaitable
 import httpx
 
 import config
-from core.context import MEMORY_FILE, build_llm_context
+from core.context import MEMORY_FILE, build_llm_context, build_per_turn_context
 from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
@@ -287,7 +287,8 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         logger.warning("[Heartbeat] LLM not configured — skipping tick")
         return
 
-    context = build_llm_context()
+    ambient = build_per_turn_context(profile="heartbeat")
+    context = f"{build_llm_context()}\n\n{ambient}"
     tick_hour = datetime.now().strftime("%Y%m%d%H")
     headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
 

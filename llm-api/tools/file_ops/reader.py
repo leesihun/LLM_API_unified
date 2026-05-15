@@ -1,12 +1,12 @@
 """
 File Reader Tool
 Read file contents from local filesystem.
-Lightweight alternative to python_coder for simple file reading.
 """
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 import config
+from tools.file_ops._pathing import build_failure_report, candidate_roots
 
 
 TEXT_EXTENSIONS = {
@@ -29,25 +29,28 @@ class FileReaderTool:
         self.session_id = session_id
         self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
 
-    def _resolve_path(self, path: str) -> Path:
+    def _resolve_path(self, path: str) -> Tuple[Path, List[Path]]:
         """Resolve a relative path against workspace_dir, then user uploads,
-        then the server CWD. Absolute paths are used directly."""
+        then the server CWD. Absolute paths are used directly.
+
+        Returns (chosen, attempted). *chosen* is the first candidate that
+        exists, or the final fallback if none exist. *attempted* lists every
+        candidate inspected, in order — used to build actionable error reports.
+        """
         target = Path(path).expanduser()
         if target.is_absolute():
-            return target.resolve()
+            resolved = target.resolve()
+            return resolved, [resolved]
 
-        if self.workspace_dir:
-            ws_path = (self.workspace_dir / target).resolve()
-            if ws_path.exists():
-                return ws_path
-
-        if self.username:
-            upload_path = (config.UPLOAD_DIR / self.username / target).resolve()
-            if upload_path.exists():
-                return upload_path
-
-        base = self.workspace_dir or Path.cwd()
-        return (base / target).resolve()
+        attempted: List[Path] = []
+        for _label, root in candidate_roots(self.workspace_dir, self.username):
+            candidate = (root / target).resolve()
+            attempted.append(candidate)
+            if candidate.exists():
+                return candidate, attempted
+        # No candidate existed - return the last one as the "chosen" fallback
+        # so callers can still pattern-match against it.
+        return attempted[-1], attempted
 
     def read(
         self,
@@ -63,10 +66,22 @@ class FileReaderTool:
             offset: Start reading from this line number (1-based)
             limit: Maximum number of lines to return
         """
-        resolved = self._resolve_path(path)
+        resolved, attempted = self._resolve_path(path)
 
+        if not resolved.exists():
+            return build_failure_report(
+                requested=path,
+                attempted=attempted,
+                workspace_dir=self.workspace_dir,
+                error="file not found",
+            )
         if not resolved.is_file():
-            raise FileNotFoundError(f"Not a file: {path}")
+            return build_failure_report(
+                requested=path,
+                attempted=attempted,
+                workspace_dir=self.workspace_dir,
+                error=f"not a file (is a directory): {resolved}",
+            )
 
         file_size = resolved.stat().st_size
         suffix = resolved.suffix.lower()

@@ -13,7 +13,6 @@ from backend.utils.auth import get_optional_user, get_current_user
 from backend.models.schemas import WebSearchRequest
 from backend.core.llm_backend import llm_backend
 from tools.web_search import WebSearchTool
-from tools.python_coder import PythonCoderTool
 from tools.rag import RAGTool
 import config
 
@@ -31,12 +30,6 @@ class ToolResponse(BaseModel):
     data: Dict[str, Any]
     metadata: Dict[str, Any]
     error: Optional[str] = None
-
-
-class PythonCoderRequest(BaseModel):
-    instruction: str
-    session_id: str
-    timeout: Optional[int] = None
 
 
 class RAGQueryRequest(BaseModel):
@@ -99,77 +92,6 @@ async def websearch(request: WebSearchRequest, current_user: Optional[dict] = De
             success=False, answer="", data={},
             metadata={"execution_time": time.time() - start_time}, error=str(e),
         )
-
-
-@router.post("/python_coder", response_model=ToolResponse)
-async def python_coder(request: PythonCoderRequest, current_user: Optional[dict] = Depends(get_optional_user)):
-    """Execute a coding task from natural language instruction."""
-    start_time = time.time()
-    tool = None
-
-    try:
-        tool = PythonCoderTool(session_id=request.session_id)
-    except Exception as e:
-        return ToolResponse(
-            success=False, answer=f"Tool initialization error: {e}",
-            data={"stdout": "", "stderr": str(e), "files": {}, "workspace": "", "returncode": -1},
-            metadata={"execution_time": time.time() - start_time}, error=str(e),
-        )
-
-    try:
-        result = tool.execute(instruction=request.instruction, timeout=request.timeout)
-
-        if result["success"]:
-            answer = "Code executed successfully."
-            if result['stdout']:
-                answer += f"\n\nOutput:\n{result['stdout']}"
-            if result.get('files'):
-                answer += f"\n\nFiles in workspace: {', '.join(result['files'].keys())}"
-        else:
-            answer = "Code execution failed."
-            if result['stdout']:
-                answer += f"\n\nOutput (before error):\n{result['stdout']}"
-            if result['stderr']:
-                answer += f"\n\nError:\n{result['stderr']}"
-
-        return ToolResponse(
-            success=result["success"], answer=answer,
-            data={
-                "stdout": result["stdout"], "stderr": result["stderr"],
-                "files": result["files"], "workspace": result["workspace"],
-                "returncode": result["returncode"],
-            },
-            metadata={"execution_time": time.time() - start_time, "code_execution_time": result["execution_time"]},
-            error=result.get("error"),
-        )
-    except Exception as e:
-        return ToolResponse(
-            success=False, answer=f"Unexpected execution error: {e}",
-            data={"stdout": "", "stderr": str(e), "files": {}, "workspace": str(tool.workspace) if tool else "", "returncode": -1},
-            metadata={"execution_time": time.time() - start_time}, error=str(e),
-        )
-
-
-@router.get("/python_coder/files/{session_id}")
-async def list_python_files(session_id: str, current_user: Optional[dict] = Depends(get_optional_user)):
-    try:
-        tool = PythonCoderTool(session_id=session_id)
-        files = tool.list_files()
-        return {"success": True, "files": files, "error": None}
-    except Exception as e:
-        return {"success": False, "files": [], "error": str(e)}
-
-
-@router.get("/python_coder/files/{session_id}/{filename}")
-async def read_python_file(session_id: str, filename: str, current_user: Optional[dict] = Depends(get_optional_user)):
-    try:
-        tool = PythonCoderTool(session_id=session_id)
-        content = tool.read_file(filename)
-        if content is None:
-            return {"success": False, "filename": filename, "content": "", "error": f"File '{filename}' not found"}
-        return {"success": True, "filename": filename, "content": content, "error": None}
-    except Exception as e:
-        return {"success": False, "filename": filename, "content": "", "error": str(e)}
 
 
 # ============================================================================

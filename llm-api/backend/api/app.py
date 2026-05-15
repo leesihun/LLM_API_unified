@@ -263,10 +263,6 @@ async def startup_event():
             f"{config.LLAMACPP_HOST} or {getattr(config, 'LLAMACPP_BACKUP_HOST', '')}"
         )
 
-    if config.PYTHON_EXECUTOR_MODE == "opencode":
-        from tools.python_coder.opencode_server import start_opencode_server
-        start_opencode_server()
-
     async def _periodic_llm_cleanup():
         while True:
             await asyncio.sleep(24 * 60 * 60)

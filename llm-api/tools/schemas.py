@@ -90,7 +90,13 @@ TOOL_SCHEMAS: dict = {
             "Exact string replacement in a file. Read the file first so old_string "
             "matches byte-for-byte (preserve indentation). For multi-line edits, "
             ".ps1 or .sh files, use apply_patch instead. Set replace_all=true to "
-            "rename a symbol across the file."
+            "rename a symbol across the file.\n\n"
+            "If exact match fails, the harness retries with progressively looser "
+            "whitespace-normalised matching (line-trimmed -> indent-flexible -> "
+            "whitespace-collapsed). The result's `strategy` field reports which "
+            "match succeeded. If all strategies fail or produce ambiguous matches, "
+            "re-read the file with file_reader (offset/limit to scope) and retry "
+            "with a smaller, more precisely-anchored old_string."
         ),
         "parameters": {
             "type": "object",
@@ -150,32 +156,6 @@ TOOL_SCHEMAS: dict = {
                         "If false/omitted (default), added files are treated as temporary "
                         "and get cleaned up. Updates/deletes/moves are unaffected by this flag."
                     ),
-                },
-            },
-            "required": ["patch"],
-        },
-    },
-
-    "file_patch": {
-        "name": "file_patch",
-        "description": (
-            "Applies a contextual unified-diff patch to existing text files.\n\n"
-            "Usage:\n"
-            "- Prefer this for multi-line code or shell-script edits. It is safer than "
-            "rewriting an entire file and less brittle than exact string replacement.\n"
-            "- The patch must be a standard unified diff with ---/+++ file headers and @@ hunks.\n"
-            "- Use repo-relative paths such as a/llm-api/config.py and b/llm-api/config.py.\n"
-            "- The tool rejects stale hunks when context does not match the current file.\n"
-            "- The tool rejects generated/runtime directories, binary files, deletes, and "
-            "paths outside the repository/write policy.\n"
-            "- After changing shell scripts, run bash -n on the changed files before final reply."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "patch": {
-                    "type": "string",
-                    "description": "Unified diff patch text to apply.",
                 },
             },
             "required": ["patch"],
@@ -675,37 +655,6 @@ TOOL_SCHEMAS: dict = {
         },
     },
 
-    # ================================================================
-    # PYTHON CODER (disabled — kept for reference)
-    # ================================================================
-
-    "python_coder": {
-        "name": "python_coder",
-        "description": (
-            "DEPRECATED — use code_exec instead. "
-            "An internal LLM generates and runs Python code from your spec. "
-            "Only use when the task is too open-ended or large to write with code_exec directly. "
-            "Set timeout=0 only when the user explicitly wants no script wall-clock timeout."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "instruction": {
-                    "type": "string",
-                    "description": "A precise engineering spec for the code to generate.",
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Optional file contents or data samples the script needs.",
-                },
-                "timeout": {
-                    "type": "integer",
-                    "description": "Maximum seconds for generated script execution (default: 300). Set 0 for no script wall-clock timeout.",
-                },
-            },
-            "required": ["instruction"],
-        },
-    },
 }
 
 # Per-tool metadata: safety flags, UI activity descriptions, user-facing names.
@@ -715,7 +664,6 @@ TOOL_METADATA: dict = {
     "file_reader":     {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Reading file",            "user_name": "File Reader"},
     "file_edit":       {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Editing file",            "user_name": "File Editor"},
     "apply_patch":     {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Applying V4A patch",      "user_name": "Apply Patch"},
-    "file_patch":      {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Applying patch",          "user_name": "File Patch"},
     "shell_lint":      {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Linting shell script",    "user_name": "Shell Lint"},
     "tool_result_recall": {"is_read_only": True, "is_destructive": False, "is_concurrency_safe": True, "activity": "Recalling tool result",  "user_name": "Tool Recall"},
     "file_writer":     {"is_read_only": False, "is_destructive": True,  "is_concurrency_safe": False, "activity": "Writing file",            "user_name": "File Writer"},

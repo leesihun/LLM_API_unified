@@ -5,6 +5,10 @@ from typing import List, Dict, Any, Optional
 
 import config
 from backend.core.llm_backend import ToolCall
+from pathlib import Path
+
+from tools.file_ops._postcheck import check_python, is_python_path
+from tools.file_ops._agents_md import walk_up_for_agents_md, attach_to_result
 
 
 class DispatchMixin:
@@ -42,6 +46,8 @@ class DispatchMixin:
                 self.tool_calls_log = self.tool_calls_log[-200:]
             self._log_tool_result(name, tool_call_id, result, duration)
             self._track_temp_files(name, result)
+            await self._run_postchecks(name, result)
+            self._inject_subtree_agents_md(name, arguments, result)
             return result
         except Exception as e:
             duration = time.time() - start
@@ -80,6 +86,93 @@ class DispatchMixin:
                     if path:
                         tracker.add(path)
 
+    async def _run_postchecks(self, name: str, result: Dict[str, Any]) -> None:
+        """Run lightweight post-write verification (currently Python syntax).
+
+        Attaches a `post_edit_check` field to *result* in-place so the model
+        sees the verification outcome in the next turn. Never raises - check
+        failures become structured data the model can react to.
+        """
+        if not result.get("success"):
+            return
+        paths: List[str] = []
+        if name in ("file_writer", "file_edit"):
+            path = result.get("path")
+            if is_python_path(path):
+                paths.append(path)
+        elif name == "apply_patch":
+            for change in result.get("files_changed", []) or []:
+                if change.get("op") == "deleted":
+                    continue
+                path = change.get("path")
+                if is_python_path(path):
+                    paths.append(path)
+        if not paths:
+            return
+
+        outcomes = await asyncio.gather(*(check_python(p) for p in paths))
+        failures = [
+            {"path": p, "error": o.get("error", "")}
+            for p, o in zip(paths, outcomes)
+            if o.get("status") == "failed"
+        ]
+        if failures:
+            # Mirror the shape the microcompaction guard recognises so
+            # this signal survives across iterations.
+            result["post_edit_check"] = {
+                "status": "failed",
+                "failures": failures,
+                "hint": "Fix the syntax error before continuing. Re-read the file with file_reader if needed.",
+            }
+        else:
+            result["post_edit_check"] = {"status": "passed", "files": paths}
+
+    def _inject_subtree_agents_md(
+        self, name: str, arguments: Dict[str, Any], result: Dict[str, Any]
+    ) -> None:
+        """When the agent reads into a subtree, surface that subtree's
+        AGENTS.md / CLAUDE.md (if any, and not already seen this session).
+
+        Only fires for the discovery tools - reader/navigator/grep. Walks
+        parents of the accessed path up to the workspace root, capped by
+        the per-session seen set on the agent loop instance.
+        """
+        if name not in ("file_reader", "file_navigator", "grep"):
+            return
+        if not result.get("success"):
+            return
+
+        accessed_raw = (
+            result.get("path")
+            or result.get("root")
+            or arguments.get("path")
+        )
+        if not accessed_raw:
+            return
+
+        try:
+            accessed = Path(accessed_raw)
+        except Exception:
+            return
+
+        workspace_root = self.workspace_dir or getattr(
+            config, "AGENT_DEFAULT_WORKSPACE", None
+        )
+        if not workspace_root:
+            return
+
+        seen = getattr(self, "_agents_md_seen", None)
+        if seen is None:
+            return
+
+        try:
+            discovered = walk_up_for_agents_md(accessed, Path(workspace_root), seen)
+        except Exception as exc:
+            self._log(f"  [AGENTS.md] walk-up failed for {accessed}: {exc}")
+            return
+
+        attach_to_result(result, discovered)
+
     async def _execute_tools_parallel(self, tool_calls: List[ToolCall]) -> List[Dict[str, Any]]:
         """Execute multiple tool calls concurrently."""
         tasks = [
@@ -108,16 +201,6 @@ class DispatchMixin:
             return await cache["code_exec"].execute(
                 code=arguments["code"],
                 timeout=self._tool_timeout("code_exec", arguments),
-            )
-
-        elif name == "python_coder":
-            if "python_coder" not in cache:
-                from tools.python_coder import PythonCoderTool
-                cache["python_coder"] = PythonCoderTool(session_id=self.session_id)
-            return await cache["python_coder"].execute(
-                instruction=arguments["instruction"],
-                context=arguments.get("context"),
-                timeout=self._tool_timeout("python_coder", arguments),
             )
 
         elif name == "rag":
@@ -178,18 +261,6 @@ class DispatchMixin:
                 content=arguments["content"],
                 mode=arguments.get("mode", "write"),
                 persist=bool(arguments.get("persist", False)),
-            )
-
-        elif name == "file_patch":
-            if "file_patch" not in cache:
-                from tools.file_ops import FilePatchTool
-                cache["file_patch"] = FilePatchTool(
-                    session_id=self.session_id, username=self.username,
-                    workspace_dir=self.workspace_dir,
-                )
-            return await asyncio.to_thread(
-                cache["file_patch"].apply,
-                patch=arguments["patch"],
             )
 
         elif name == "apply_patch":

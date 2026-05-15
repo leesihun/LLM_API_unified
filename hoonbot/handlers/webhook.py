@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Request
 import config
 from core import messenger
 from core.cluster_client import try_submit_from_message
-from core.context import build_llm_context
+from core.context import build_llm_context, build_per_turn_context
 from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
@@ -393,7 +393,8 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             room_info["name"], room_id, room_info["isGroup"], sender_name, reply_to_data
         )
 
-        user_content = f"{msg_header}\n{content}"
+        ambient = build_per_turn_context(profile=getattr(config, "CLUSTER_ROLE", "flutter"))
+        user_content = f"{ambient}\n\n{msg_header}\n{content}"
 
         if existing_session_id:
             # Context already in history — don't re-inject PROMPT.md every turn.
@@ -523,7 +524,7 @@ _TYPING_REFRESH_INTERVAL_SECONDS = 10
 def _format_tool_status(running_tools: dict[str, str]) -> str:
     """Return the typing-indicator text for the current set of running tools.
 
-    Preserves insertion order so the indicator reads `websearch + python_coder
+    Preserves insertion order so the indicator reads `websearch + code_exec
     사용 중` in the order the tools started. Falls back to the generating
     status when no tool is active.
     """

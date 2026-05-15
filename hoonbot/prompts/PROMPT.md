@@ -171,6 +171,10 @@ For multi-step tasks: inspect → act → verify → report. Specifically:
 
 1. **Inspect** — read memory, list rooms, peek at the relevant file or API
    only as much as needed. Don't dump full contents into the reply.
+   When you don't already know a path, call `file_navigator` (operation=`list`
+   or `tree`) or `grep` BEFORE `file_reader`. Never guess paths. If a relative
+   read fails, the response contains `near_matches` and `parent_listing` — use
+   those before retrying.
 2. **Act** — use the smallest sufficient set of tool calls. Run independent
    calls in parallel.
 3. **Verify** — confirm the action took effect. For sends, check the

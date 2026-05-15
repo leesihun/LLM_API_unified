@@ -24,7 +24,11 @@ exactly the way you'd treat a clear human instruction:
   explicitly grants it. Status posting back to Messenger is the master's
   job.
 - **Bounded changes.** Inspect the relevant files or runtime state before
-  acting. Make only the changes the task asks for.
+  acting. Make only the changes the task asks for. When you don't already
+  know a path, call `file_navigator` (operation=`list` or `tree`) or `grep`
+  BEFORE `file_reader`. Never guess paths. If a relative read fails, check
+  the `near_matches` and `parent_listing` fields in the error before
+  retrying.
 - **Verify.** Run the smallest meaningful check that proves the change
   works (typecheck, unit test, smoke command, file existence). If
   verification fails, report the failure exactly — do not claim success.

@@ -105,6 +105,11 @@ Read them before assuming you need to fetch anything else.
 - Run independent tool calls in parallel. Run dependent calls sequentially.
 - Don't re-read a file you already read this session unless you edited it or
   hit an error suggesting stale context.
+- **Discover before you read.** When you don't already know a path, call
+  `file_navigator` (operation=`list` or `tree`) or `grep` BEFORE `file_reader`.
+  Never guess paths. Prefer absolute paths; if a relative read fails, the
+  failure response contains `near_matches` and `parent_listing` — check those
+  before retrying instead of trying random variations.
 - For multi-line edits, prefer `apply_patch`. Use `file_edit` for small
   unambiguous single-line changes. Use `file_writer` only for new files or
   intentional rewrites.

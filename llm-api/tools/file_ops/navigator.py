@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 
 import config
+from tools.file_ops._pathing import build_failure_report
 
 
 class FileNavigatorTool:
@@ -17,9 +18,11 @@ class FileNavigatorTool:
                  workspace_dir: Optional[Path] = None):
         self.username = username
         self.session_id = session_id
-        # Default base for relative paths: workspace_dir if set, else server CWD.
+        # Default base for relative paths: workspace_dir if set,
+        # else AGENT_DEFAULT_WORKSPACE (typically $HOME / /home/<user>).
         self.workspace_dir = Path(workspace_dir).resolve() if workspace_dir else None
-        self.workspace = self.workspace_dir or Path.cwd()
+        default_base = getattr(config, "AGENT_DEFAULT_WORKSPACE", None) or Path.cwd()
+        self.workspace = self.workspace_dir or Path(default_base)
 
     def _resolve_base_path(self, path: Optional[str]) -> Path:
         """Resolve base path for list/find. Defaults to the session workspace
@@ -60,8 +63,20 @@ class FileNavigatorTool:
     def _list_directory(self, path: Optional[str] = None) -> Dict[str, Any]:
         target = self._resolve_base_path(path)
 
+        if not target.exists():
+            return build_failure_report(
+                requested=path or str(target),
+                attempted=[target],
+                workspace_dir=self.workspace_dir,
+                error="path not found",
+            )
         if not target.is_dir():
-            return {"success": False, "error": f"Not a directory: {path}"}
+            return build_failure_report(
+                requested=path or str(target),
+                attempted=[target],
+                workspace_dir=self.workspace_dir,
+                error=f"not a directory: {target}",
+            )
 
         entries = []
         for item in sorted(target.iterdir()):
@@ -79,9 +94,19 @@ class FileNavigatorTool:
     def _search_files(self, pattern: str, path: Optional[str] = None) -> Dict[str, Any]:
         root = self._resolve_base_path(path)
         if not root.exists():
-            return {"success": False, "error": f"Path not found: {root}"}
+            return build_failure_report(
+                requested=path or str(root),
+                attempted=[root],
+                workspace_dir=self.workspace_dir,
+                error="path not found",
+            )
         if not root.is_dir():
-            return {"success": False, "error": f"Not a directory: {root}"}
+            return build_failure_report(
+                requested=path or str(root),
+                attempted=[root],
+                workspace_dir=self.workspace_dir,
+                error=f"not a directory: {root}",
+            )
 
         results = []
         for match in root.glob(pattern):
@@ -105,9 +130,19 @@ class FileNavigatorTool:
     def _tree_directory(self, path: Optional[str] = None) -> Dict[str, Any]:
         root = self._resolve_base_path(path)
         if not root.exists():
-            return {"success": False, "error": f"Path not found: {root}"}
+            return build_failure_report(
+                requested=path or str(root),
+                attempted=[root],
+                workspace_dir=self.workspace_dir,
+                error="path not found",
+            )
         if not root.is_dir():
-            return {"success": False, "error": f"Not a directory: {root}"}
+            return build_failure_report(
+                requested=path or str(root),
+                attempted=[root],
+                workspace_dir=self.workspace_dir,
+                error=f"not a directory: {root}",
+            )
 
         tree = []
         errors = []

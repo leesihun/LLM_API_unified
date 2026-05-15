@@ -12,6 +12,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import config
+from tools.file_ops._pathing import build_failure_report
+
 
 _RG_BIN: Optional[str] = shutil.which("rg")
 
@@ -59,7 +62,20 @@ class GrepTool:
             offset:           Skip first N entries before applying head_limit.
             multiline:        Match across newlines (rg -U --multiline-dotall).
         """
-        search_path = Path(path).resolve() if path else Path.cwd()
+        default_base = getattr(config, "AGENT_DEFAULT_WORKSPACE", None) or Path.cwd()
+        search_path = Path(path).resolve() if path else Path(default_base).resolve()
+
+        if path is not None and not search_path.exists():
+            report = build_failure_report(
+                requested=path,
+                attempted=[search_path],
+                workspace_dir=None,
+                error="search path not found",
+            )
+            report["results"] = ""
+            report["num_matches"] = 0
+            report["truncated"] = False
+            return report
 
         if _RG_BIN:
             return self._rg_search(

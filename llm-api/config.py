@@ -5,6 +5,7 @@ Single server, llama.cpp backend, native tool calling.
 """
 import importlib.util
 import os
+import sys
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -14,6 +15,27 @@ from typing import Literal, Optional
 APP_DIR = Path(__file__).resolve().parent
 DATA_DIR = APP_DIR / "data"
 PROMPTS_DIR = APP_DIR / "prompts"
+
+# Default base directory for agent tools when a session has no explicit
+# workspace. Lets the agent operate on the whole user dir instead of being
+# pinned to APP_DIR. Override via env AGENT_DEFAULT_WORKSPACE.
+# Internal API paths (DATA_DIR, UPLOAD_DIR, SCRATCH_DIR) are unaffected -
+# they always resolve under APP_DIR.
+def _resolve_agent_default_workspace() -> Path:
+    override = os.environ.get("AGENT_DEFAULT_WORKSPACE")
+    if override:
+        try:
+            return Path(override).expanduser().resolve()
+        except Exception:
+            pass
+    if sys.platform != "win32":
+        for candidate in (Path("/home/leesihun"), Path.home(), Path("/home")):
+            if candidate.is_dir():
+                return candidate.resolve()
+    return Path.home().resolve()
+
+
+AGENT_DEFAULT_WORKSPACE: Path = _resolve_agent_default_workspace()
 
 
 def prompt_path(relative_path: str) -> Path:
@@ -132,10 +154,9 @@ AGENT_LOG_PATH = PROMPTS_LOG_PATH
 # ----------------------------------------------------------------------------
 # Agent: workspace awareness
 # ----------------------------------------------------------------------------
-# Per-session workspace dir. None = preserve legacy behaviour (server CWD).
-# Callers (chat.py, hoonbot) may pass a `workspace` field per request; that
-# overrides this default for the session.
-AGENT_DEFAULT_WORKSPACE: Optional[str] = None
+# AGENT_DEFAULT_WORKSPACE is computed near the top of this file by
+# _resolve_agent_default_workspace(). Callers (chat.py, hoonbot) may pass a
+# per-request `workspace` field that overrides it for that session.
 # Inline attached-file contents into the dynamic context when total size
 # (across all attached files) is <= this budget. Above the budget, only the
 # metadata preview is included.
@@ -217,19 +238,12 @@ AVAILABLE_TOOLS = [
     "todo_write",       # Session task checklist (3+ step tasks)
     "agent",            # Spawn explore/general subagent in fresh context
 ]
-# Note: file_patch (legacy unified diff) is superseded by apply_patch and was
-# removed from the default list to reduce tool-selection confusion.
 # tool_result_recall was removed; truncated tool results include the disk path
 # in the truncation marker, and file_reader handles retrieval just fine.
 
 TOOL_PARAMETERS = {
     "code_exec": {
         "timeout": 864000,
-    },
-    "python_coder": {
-        "temperature": 0.6,
-        "max_tokens": 10000,
-        "timeout": 300,
     },
     "rag": {
         "temperature": 0.2,
@@ -246,12 +260,10 @@ TOOL_PARAMETERS = {
 TOOL_RESULT_BUDGET = {
     "websearch": 2000,
     "code_exec": 8000,
-    "python_coder": 8000,
     "rag": 3000,
     "file_reader": 8000,   # was 4000; .ps1/.sh scripts can be 300-800 lines
     "file_edit": 1500,     # was 500; failed-edit diffs need to be readable
-    "file_patch": 2000,    # was 1000; V4A apply_patch unified diff output
-    "apply_patch": 2000,   # new V4A patch tool
+    "apply_patch": 2000,   # V4A patch tool
     "file_writer": 500,
     "file_navigator": 2000,
     "grep": 6000,          # was 4000; multi-file context windows
@@ -276,28 +288,10 @@ TAVILY_EXCLUDE_DOMAINS = []
 WEBSEARCH_MAX_RESULTS = 5
 
 # ============================================================================
-# Python Coder Tool Settings
+# code_exec subprocess caps
 # ============================================================================
-PYTHON_EXECUTOR_MODE: Literal["native", "opencode"] = "native"
-
-# Kept for code_exec tool and opencode fallback (subprocess caps):
 PYTHON_EXECUTOR_TIMEOUT = 300       # code_exec default; tool timeout=0 disables wall-clock kill
 PYTHON_EXECUTOR_MAX_OUTPUT_SIZE = 1024 * 1024 * 10
-PYTHON_WORKSPACE_DIR = SCRATCH_DIR
-
-# Layered timeouts for native python_coder:
-PYTHON_GENERATION_TIMEOUT = 120      # LLM code-generation call
-PYTHON_EXECUTION_TIMEOUT_MAX = 900   # ceiling when caller passes a bigger value
-PYTHON_EXECUTION_IDLE_TIMEOUT = None # disabled — most scripts don't print continuously
-PYTHON_TOTAL_TIMEOUT = 600           # wall-clock cap: gen + exec + all retries
-
-PYTHON_EXECUTOR_MAX_RETRIES = 2      # self-debug retries on non-zero exit
-
-OPENCODE_PATH: str = "opencode"
-OPENCODE_SERVER_PORT: int = 37254
-OPENCODE_SERVER_HOST: str = "127.0.0.1"
-OPENCODE_TIMEOUT: int = 864000
-OPENCODE_LOG_VERBOSITY: Literal["summary", "debug"] = "summary"
 
 # ============================================================================
 # RAG Tool Settings

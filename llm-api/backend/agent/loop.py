@@ -65,7 +65,7 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
 
         # Per-session workspace dir. None preserves legacy behaviour (relative
         # paths resolve against scratch/uploads/CWD). When set, file_reader,
-        # file_navigator, file_editor, file_writer, apply_patch, file_patch,
+        # file_navigator, file_editor, file_writer, apply_patch,
         # and shell_exec all treat it as the project root.
         self.workspace_dir: Optional[Path] = self._validate_workspace(workspace_dir)
 
@@ -89,6 +89,11 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         # weren't flagged persist=True. Swept at end of run_stream so the agent
         # doesn't litter the workspace with temp scripts/scratch files.
         self._tracked_new_files: set[str] = set()
+
+        # AGENTS.md / CLAUDE.md files already injected this session. The
+        # tool_dispatch walk-up uses this set to inject each subtree
+        # instruction file at most once. Resolved paths as strings.
+        self._agents_md_seen: set[str] = set()
 
     # ------------------------------------------------------------------
     # Sampling parameters forwarded to llama.cpp

@@ -111,7 +111,8 @@ def _format_environment_context(workspace_dir: Optional[Path] = None) -> str:
         except Exception:
             cwd = os.getcwd()
     else:
-        cwd = os.getcwd()
+        default_root = getattr(config, "AGENT_DEFAULT_WORKSPACE", None)
+        cwd = str(default_root) if default_root else os.getcwd()
     sys_name = platform.system()          # 'Windows', 'Linux', 'Darwin'
     sys_ver = platform.release()
 

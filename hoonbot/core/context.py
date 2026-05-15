@@ -5,8 +5,14 @@ Both the webhook handler (per-message sessions) and the heartbeat (scheduled
 ticks) need to inject the same base context into the LLM: system prompt, memory
 file path, skills directory path, and current memory content.  This module is
 the single source of truth for that logic.
+
+It also builds a small per-turn ambient context block (build_per_turn_context)
+injected before every user message so the model retains awareness of node
+identity, data paths, and memory size across long sessions.
 """
 import os
+import time
+from datetime import datetime
 
 import config
 
@@ -81,6 +87,85 @@ def build_llm_context() -> str:
     else:
         context += "\n\n## Current Memory\n\n(No memory saved yet)"
     return context
+
+
+# ---------------------------------------------------------------------------
+# Per-turn ambient context
+# ---------------------------------------------------------------------------
+
+_PER_TURN_CACHE: dict = {"text": "", "expires_at": 0.0, "profile": None}
+_PER_TURN_TTL_SECONDS = 30
+_PER_TURN_MAX_CHARS = 800
+
+
+def _list_skills() -> str:
+    """Return a comma-separated list of *.md skill basenames in SKILLS_DIR."""
+    try:
+        entries = sorted(
+            p.replace(".md", "")
+            for p in os.listdir(SKILLS_DIR)
+            if p.lower().endswith(".md") and not p.startswith(".")
+        )
+    except (FileNotFoundError, PermissionError):
+        return ""
+    return ", ".join(entries)
+
+
+def _memory_size_summary() -> str:
+    """Return 'N chars' for the current memory file, or '(empty)'."""
+    try:
+        size = os.path.getsize(MEMORY_FILE)
+        return f"{size} chars" if size > 0 else "(empty)"
+    except FileNotFoundError:
+        return "(missing)"
+
+
+def build_per_turn_context(profile: str = "flutter") -> str:
+    """Return a <system-reminder> block with dynamic ambient context.
+
+    Injected before every user message in the webhook handler so the model
+    keeps awareness of node identity, data paths, memory size and available
+    skills across long sessions. Cached for 30s; capped at ~800 chars.
+
+    *profile* should be one of "flutter" (DMs / casual), "master", "slave",
+    or "heartbeat". v1 only adds the always-on fields; profile-specific
+    extras (lease, cluster health, last heartbeat) are stubbed for follow-up.
+    """
+    now = time.time()
+    cached = _PER_TURN_CACHE
+    if (
+        cached["profile"] == profile
+        and cached["expires_at"] > now
+        and cached["text"]
+    ):
+        return cached["text"]
+
+    lines = []
+    lines.append(f"Now: {datetime.now().strftime('%Y-%m-%d %H:%M (%A, %Z)').strip()}")
+    node_name = getattr(config, "NODE_NAME", "")
+    cluster_role = getattr(config, "CLUSTER_ROLE", "")
+    if node_name or cluster_role:
+        lines.append(f"Node: {node_name or '?'} | Role: {cluster_role or '?'}")
+    lines.append(f"Data dir: {os.path.abspath(config.DATA_DIR)}")
+    lines.append(f"Memory file: {os.path.abspath(MEMORY_FILE)} ({_memory_size_summary()})")
+    skills = _list_skills()
+    if skills:
+        lines.append(f"Skills available: {skills}")
+
+    # Profile-specific stubs - v1 leaves these to follow-up work since they
+    # need live cluster state (master) or in-memory worker state (slave).
+    # Adding them here keeps the location obvious for future expansion.
+
+    body = "\n".join(lines)
+    if len(body) > _PER_TURN_MAX_CHARS:
+        body = body[:_PER_TURN_MAX_CHARS] + "\n...[truncated]"
+
+    block = f"<system-reminder>\n{body}\n</system-reminder>"
+
+    _PER_TURN_CACHE["text"] = block
+    _PER_TURN_CACHE["expires_at"] = now + _PER_TURN_TTL_SECONDS
+    _PER_TURN_CACHE["profile"] = profile
+    return block
 
 
 def _build_session_variables() -> str:
