@@ -95,6 +95,11 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         # instruction file at most once. Resolved paths as strings.
         self._agents_md_seen: set[str] = set()
 
+        # Post-edit check failure carried from the previous iteration. Set by
+        # _run_stream_body when any tool result has post_edit_check.status=="failed";
+        # consumed (and cleared) by _apply_loop_overlays on the next iteration.
+        self._pending_postcheck_reminder: Optional[str] = None
+
     # ------------------------------------------------------------------
     # Sampling parameters forwarded to llama.cpp
     # ------------------------------------------------------------------
@@ -346,6 +351,12 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
 
         # ---- Tail-injected reminders (appended to view) ----
         tail_blocks: List[str] = []
+
+        # P1: post-edit syntax/type check failure — inject first, highest priority
+        pending_pec = getattr(self, "_pending_postcheck_reminder", None)
+        if pending_pec:
+            tail_blocks.append(pending_pec)
+            self._pending_postcheck_reminder = None
 
         # B5: plan nudge (iteration 0 only)
         plan = self._plan_nudge(current_iteration, latest_user_text)
@@ -620,6 +631,23 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
             # Record iteration outcome (all-failed vs at-least-one-success)
             # for the consecutive-failure detector.
             self._record_iteration_outcome(results)
+
+            # Carry post-edit check failures into next iteration as a high-priority
+            # system-reminder so the model must address them before continuing.
+            self._pending_postcheck_reminder = None
+            for r in results:
+                pec = r.get("post_edit_check")
+                if pec and pec.get("status") == "failed":
+                    lines = "; ".join(
+                        f"{f['path']}: {f['error']}"
+                        for f in pec.get("failures", [])
+                    )
+                    self._pending_postcheck_reminder = (
+                        f"<system-reminder>Post-edit check FAILED: {lines} — "
+                        f"fix the error before continuing. "
+                        f"Re-read the file with file_reader if needed.</system-reminder>"
+                    )
+                    break
 
             new_entries = self.tool_calls_log[log_start:]
             duration_by_call_id = {

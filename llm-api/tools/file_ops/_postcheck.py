@@ -60,3 +60,61 @@ def is_python_path(path: Optional[str]) -> bool:
     if not path:
         return False
     return path.lower().endswith(".py")
+
+
+_TS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx"}
+
+
+def is_typescript_path(path: Optional[str]) -> bool:
+    if not path:
+        return False
+    return Path(path).suffix.lower() in _TS_EXTENSIONS
+
+
+def _find_messenger_dir(path: str) -> Optional[Path]:
+    """Return the messenger/ root if path is inside it, else None."""
+    try:
+        import config as _config
+        messenger = (_config.APP_DIR.parent / "messenger").resolve()
+        if messenger.is_dir() and Path(path).resolve().is_relative_to(messenger):
+            return messenger
+    except Exception:
+        pass
+    return None
+
+
+def _run_typecheck(messenger_dir: Path) -> Dict[str, Any]:
+    npm = "npm.cmd" if sys.platform == "win32" else "npm"
+    try:
+        proc = subprocess.run(
+            [npm, "run", "typecheck"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            encoding="utf-8",
+            errors="replace",
+            cwd=str(messenger_dir),
+        )
+    except subprocess.TimeoutExpired:
+        return {"status": "failed", "error": "typecheck timed out (>30s)"}
+    except FileNotFoundError:
+        return {"status": "skipped", "error": f"{npm} not found"}
+    except Exception as exc:
+        return {"status": "skipped", "error": f"typecheck invocation error: {exc}"}
+
+    if proc.returncode == 0:
+        return {"status": "passed"}
+    output = (proc.stderr or proc.stdout or "typecheck failed without output").strip()
+    return {"status": "failed", "error": output[:2000]}
+
+
+async def check_typescript(path: str) -> Dict[str, Any]:
+    """Run npm typecheck for the messenger/ service if path is within it.
+
+    The typecheck is project-wide (not per-file), so one call covers all
+    changed TS files. Returns skipped if path is outside messenger/.
+    """
+    messenger_dir = _find_messenger_dir(path)
+    if messenger_dir is None:
+        return {"status": "skipped", "error": "not inside messenger/"}
+    return await asyncio.to_thread(_run_typecheck, messenger_dir)

@@ -430,7 +430,12 @@ class ApplyPatchTool:
                         diff = self._make_diff(before, after, path_str)
                         changed.append({"op": "updated", "path": out, "diff": diff})
 
-            except (ValueError, FileNotFoundError, PermissionError, FileExistsError) as exc:
+            except FileNotFoundError as exc:
+                from tools.file_ops._pathing import build_failure_report
+                return build_failure_report(
+                    op.get("path", "?"), [], self.repo_root, str(exc)
+                )
+            except (ValueError, PermissionError, FileExistsError) as exc:
                 return {"success": False, "error": str(exc)}
             except Exception as exc:
                 return {"success": False, "error": f"Unexpected error on {op.get('path', '?')}: {exc}"}

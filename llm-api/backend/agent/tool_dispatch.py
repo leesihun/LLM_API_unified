@@ -7,7 +7,10 @@ import config
 from backend.core.llm_backend import ToolCall
 from pathlib import Path
 
-from tools.file_ops._postcheck import check_python, is_python_path
+from tools.file_ops._postcheck import (
+    check_python, is_python_path,
+    check_typescript, is_typescript_path,
+)
 from tools.file_ops._agents_md import walk_up_for_agents_md, attach_to_result
 
 
@@ -87,7 +90,7 @@ class DispatchMixin:
                         tracker.add(path)
 
     async def _run_postchecks(self, name: str, result: Dict[str, Any]) -> None:
-        """Run lightweight post-write verification (currently Python syntax).
+        """Run lightweight post-write verification (Python syntax + TS typecheck).
 
         Attaches a `post_edit_check` field to *result* in-place so the model
         sees the verification outcome in the next turn. Never raises - check
@@ -95,37 +98,53 @@ class DispatchMixin:
         """
         if not result.get("success"):
             return
-        paths: List[str] = []
+        py_paths: List[str] = []
+        ts_paths: List[str] = []
         if name in ("file_writer", "file_edit"):
             path = result.get("path")
             if is_python_path(path):
-                paths.append(path)
+                py_paths.append(path)
+            elif is_typescript_path(path):
+                ts_paths.append(path)
         elif name == "apply_patch":
             for change in result.get("files_changed", []) or []:
                 if change.get("op") == "deleted":
                     continue
                 path = change.get("path")
                 if is_python_path(path):
-                    paths.append(path)
-        if not paths:
+                    py_paths.append(path)
+                elif is_typescript_path(path):
+                    ts_paths.append(path)
+        if not py_paths and not ts_paths:
             return
 
-        outcomes = await asyncio.gather(*(check_python(p) for p in paths))
-        failures = [
-            {"path": p, "error": o.get("error", "")}
-            for p, o in zip(paths, outcomes)
-            if o.get("status") == "failed"
-        ]
+        failures: List[Dict[str, Any]] = []
+        all_paths: List[str] = py_paths + ts_paths
+
+        if py_paths:
+            outcomes = await asyncio.gather(*(check_python(p) for p in py_paths))
+            failures.extend(
+                {"path": p, "error": o.get("error", "")}
+                for p, o in zip(py_paths, outcomes)
+                if o.get("status") == "failed"
+            )
+        if ts_paths:
+            # Typecheck is project-wide — one call covers all changed TS files.
+            ts_outcome = await check_typescript(ts_paths[0])
+            if ts_outcome.get("status") == "failed":
+                failures.append({
+                    "path": ", ".join(ts_paths),
+                    "error": ts_outcome.get("error", ""),
+                })
+
         if failures:
-            # Mirror the shape the microcompaction guard recognises so
-            # this signal survives across iterations.
             result["post_edit_check"] = {
                 "status": "failed",
                 "failures": failures,
-                "hint": "Fix the syntax error before continuing. Re-read the file with file_reader if needed.",
+                "hint": "Fix the error before continuing. Re-read the file with file_reader if needed.",
             }
         else:
-            result["post_edit_check"] = {"status": "passed", "files": paths}
+            result["post_edit_check"] = {"status": "passed", "files": all_paths}
 
     def _inject_subtree_agents_md(
         self, name: str, arguments: Dict[str, Any], result: Dict[str, Any]

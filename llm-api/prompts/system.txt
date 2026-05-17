@@ -102,7 +102,11 @@ Read them before assuming you need to fetch anything else.
 
 - Converge fast. Identify the specific files the task touches, then act.
   Avoid open-ended grep/search loops — pick the right tool the first time.
-- Run independent tool calls in parallel. Run dependent calls sequentially.
+- **Batch aggressively.** You can issue multiple independent tool calls in a
+  single response — reads, searches, and writes that don't depend on each other
+  should always go together. Run dependent calls sequentially. A turn that
+  issues 5–8 independent calls is normal; a turn that issues only 1 call when
+  more are available is wasteful.
 - Don't re-read a file you already read this session unless you edited it or
   hit an error suggesting stale context.
 - **Discover before you read.** When you don't already know a path, call

@@ -35,6 +35,21 @@ _TASK_EXECUTION_TEMPLATE = config.read_prompt("heartbeat/task_execution.txt")
 
 _STALE_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 
+_OVERFLOW_KEYWORDS = (
+    "context",
+    "exceed",
+    "too large",
+    "too long",
+    "n_ctx",
+    "slot unavailable",
+    "input is too large",
+)
+
+
+def _is_context_overflow(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return any(kw in msg for kw in _OVERFLOW_KEYWORDS)
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -212,10 +227,10 @@ async def _plan_tasks(checklist: str, context: str, headers: dict) -> list[dict]
     return [{"id": 1, "task": checklist.strip(), "done_criteria": "All checklist items addressed"}]
 
 
-async def _execute_task(task: dict, context: str, tick_hour: str, headers: dict) -> str:
+async def _execute_task(task: dict, context: str, tick_id: str, headers: dict) -> str:
     """Phase 2: run one task through the full agent loop (with tools)."""
     task_id = task.get("id", 1)
-    session_id = f"hb_{tick_hour}_t{task_id}"
+    session_id = f"hb_{tick_id}_t{task_id}"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     prompt = _TASK_EXECUTION_TEMPLATE.format(
@@ -236,7 +251,13 @@ async def _execute_task(task: dict, context: str, tick_hour: str, headers: dict)
         logger.info(f"[Heartbeat] Task {task_id} finished ({len(result)} chars)")
         return result.strip() or "(no output)"
     except Exception as exc:
-        logger.warning(f"[Heartbeat] Task {task_id} execution error: {exc}")
+        if _is_context_overflow(exc):
+            logger.warning(
+                f"[Heartbeat] Task {task_id} context overflow — "
+                f"increase interval or shrink memory.md ({exc})"
+            )
+        else:
+            logger.warning(f"[Heartbeat] Task {task_id} execution error: {exc}")
         return f"(error: {exc})"
 
 
@@ -289,7 +310,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
 
     ambient = build_per_turn_context(profile="heartbeat")
     context = f"{build_llm_context()}\n\n{ambient}"
-    tick_hour = datetime.now().strftime("%Y%m%d%H")
+    tick_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     headers = {"Authorization": f"Bearer {config.LLM_API_KEY}"}
 
     logger.info(f"[Heartbeat] Starting orchestrated tick (model={config.LLM_MODEL})")
@@ -302,7 +323,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         # Phase 2 — Execute each task
         results: list[str] = []
         for task in tasks:
-            result = await _execute_task(task, context, tick_hour, headers)
+            result = await _execute_task(task, context, tick_id, headers)
             results.append(result)
 
         # Phase 3 — Validate; retry incomplete tasks once
@@ -311,7 +332,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
             logger.info(f"[Heartbeat] Retrying {len(incomplete_ids)} incomplete task(s): {incomplete_ids}")
             for i, task in enumerate(tasks):
                 if task.get("id") in incomplete_ids:
-                    results[i] = await _execute_task(task, context, tick_hour, headers)
+                    results[i] = await _execute_task(task, context, tick_id, headers)
 
         # Phase 4 — Compile report
         full_text = _compile_report(tasks, results)

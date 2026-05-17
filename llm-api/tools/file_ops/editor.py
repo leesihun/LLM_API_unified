@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import config
+from tools.file_ops._pathing import build_failure_report
 
 
 class FileEditorTool:
@@ -65,9 +66,9 @@ class FileEditorTool:
         target = self._resolve_path(path)
 
         if not target.exists():
-            return {"success": False, "error": f"File not found: {target}"}
+            return build_failure_report(path, [target], self.workspace_dir, "file not found")
         if not target.is_file():
-            return {"success": False, "error": f"Path is not a file: {target}"}
+            return build_failure_report(path, [target], self.workspace_dir, "path is not a file")
 
         try:
             content = target.read_text(encoding="utf-8")
