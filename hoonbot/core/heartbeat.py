@@ -390,6 +390,10 @@ async def run_heartbeat_loop(send_fn: Callable[[int, str], Awaitable[None]]) -> 
             continue
 
         try:
-            await _run_once(send_fn)
+            await asyncio.wait_for(_run_once(send_fn), timeout=3600)
+        except asyncio.TimeoutError:
+            logger.error(
+                "[Heartbeat] Tick exceeded 3600s deadline — cancelling and continuing loop"
+            )
         except Exception as exc:
             logger.error(f"[Heartbeat] Unhandled loop error: {exc}", exc_info=True)

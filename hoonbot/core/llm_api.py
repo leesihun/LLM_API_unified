@@ -13,10 +13,11 @@ def get_client() -> httpx.AsyncClient:
     global _client
     if _client is None or _client.is_closed:
         _client = httpx.AsyncClient(
-            # read=None disables the per-chunk timeout so long tool executions
-            # (OpenCode startup, slow shell, etc.) don't kill the stream mid-answer.
-            # connect/write/pool still have reasonable caps.
-            timeout=httpx.Timeout(connect=10.0, read=None, write=60.0, pool=60.0),
+            # read=1800 (30 min per chunk) is generous enough for OpenCode startup
+            # and slow shell tools while still letting a truly stuck stream surface
+            # as ReadTimeout — read=None blocks the heartbeat loop forever when the
+            # llm-api server degrades after many requests.
+            timeout=httpx.Timeout(connect=10.0, read=1800.0, write=60.0, pool=60.0),
             trust_env=False,
             limits=httpx.Limits(
                 max_connections=10,
