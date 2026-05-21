@@ -7,6 +7,7 @@ Mirrors OpenClaude's AgentTool:
   - "explore"  subagent: read-only tools (file_reader, grep, file_navigator, websearch)
   - "general"  subagent: full toolset minus "agent" (no infinite recursion)
 """
+import asyncio
 from typing import Any, Dict, Optional
 
 import config
@@ -62,8 +63,15 @@ class SubAgentTool:
         )
 
         messages = [{"role": "user", "content": prompt}]
+        timeout = getattr(config, "SUBAGENT_TIMEOUT_SECONDS", 1800)
         try:
-            result_text = await sub_loop.run(messages)
+            result_text = await asyncio.wait_for(sub_loop.run(messages), timeout=timeout)
+        except asyncio.TimeoutError:
+            return {
+                "success": False,
+                "error": f"Subagent exceeded {timeout}s wall-clock deadline and was cancelled",
+                "subagent_type": subagent_type,
+            }
         except Exception as exc:
             return {
                 "success": False,

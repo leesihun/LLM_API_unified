@@ -20,11 +20,19 @@ class DispatchMixin:
     def _tool_parameters(self, name: str) -> Dict[str, Any]:
         return config.TOOL_PARAMETERS.get(name, {})
 
-    def _tool_timeout(self, name: str, arguments: Dict[str, Any], default: Optional[int] = None) -> Optional[int]:
+    def _tool_timeout(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        default: Optional[int] = None,
+        hard_cap: Optional[int] = None,
+    ) -> Optional[int]:
         timeout = arguments.get("timeout")
-        if timeout is not None:
-            return timeout
-        return self._tool_parameters(name).get("timeout", default)
+        if timeout is None:
+            timeout = self._tool_parameters(name).get("timeout", default)
+        if hard_cap is not None and timeout is not None and timeout > hard_cap:
+            return hard_cap
+        return timeout
 
     async def execute_tool(self, name: str, arguments: Dict[str, Any],
                            tool_call_id: str = None) -> Dict[str, Any]:
@@ -341,7 +349,12 @@ class DispatchMixin:
                 print(f"  [shell_exec] {desc}")
             return await cache["shell_exec"].execute(
                 command=arguments["command"],
-                timeout=self._tool_timeout("shell_exec", arguments, 300),
+                timeout=self._tool_timeout(
+                    "shell_exec",
+                    arguments,
+                    300,
+                    hard_cap=getattr(config, "SHELL_EXEC_HARD_CAP_SECONDS", 3600),
+                ),
                 working_directory=arguments.get("working_directory"),
             )
 

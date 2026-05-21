@@ -22,6 +22,12 @@ _CURL_HTTP_RE = re.compile(r"(?i)(^|[\s;&|()])(?:curl|curl\.exe)(?=$|[\s])")
 _HTTP_URL_RE = re.compile(r"(?i)https?://")
 _CURL_FAIL_LONG_RE = re.compile(r"(?<!\S)--fail(?:-with-body)?(?:\s|=|$)")
 _CURL_FAIL_SHORT_RE = re.compile(r"(?<!\S)-[A-Za-z]*f[A-Za-z]*(?=\s|$)")
+_SUDO_RE = re.compile(r"(?:^|[\s;&|`(])sudo\b")
+
+
+def _uses_sudo(command: str) -> bool:
+    """Return True if the command attempts privilege escalation via sudo."""
+    return bool(_SUDO_RE.search(command))
 
 
 def _needs_curl_fail_flag(command: str) -> bool:
@@ -121,6 +127,17 @@ class ShellExecTool:
             }
 
         start = time.time()
+        if _uses_sudo(command):
+            return {
+                "success": False,
+                "error": (
+                    "sudo is not permitted in shell_exec. Run the command without sudo "
+                    "(read-only `sysctl`, `cat /proc/...`, `ss`, etc. work as a normal user)."
+                ),
+                "hint": "Drop the `sudo` prefix. If you genuinely need root, ask the human operator.",
+                "duration": round(time.time() - start, 2),
+                "command": command,
+            }
         if _needs_curl_fail_flag(command):
             return {
                 "success": False,

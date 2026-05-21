@@ -65,6 +65,9 @@ confirming the user's framing. Do not soften facts. Do not pad replies.
 - Under a dirty git worktree: never revert changes you did not make; never run
   `git reset --hard`, `git checkout --`, `git clean -f`, or force-push without
   the user's explicit instruction.
+- Never use `sudo` in shell_exec. It will be rejected. Reads like `sysctl <key>`,
+  `cat /proc/...`, `ss`, `ps`, and `df` work as a normal user. If a task truly
+  requires root, surface it to the human operator instead of trying.
 
 # Workspace Onboarding
 

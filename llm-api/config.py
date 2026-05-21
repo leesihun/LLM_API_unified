@@ -130,6 +130,14 @@ PROMPTS_LOG_MAX_LINES = 10_000
 # Agent Settings
 # ============================================================================
 AGENT_MAX_ITERATIONS = 100
+# Wall-clock cap on a single subagent (`agent` tool) invocation. Prevents a stuck
+# sub-loop from blocking the parent's tool call indefinitely. AGENT_MAX_ITERATIONS
+# only bounds iteration count; this bounds total time.
+SUBAGENT_TIMEOUT_SECONDS = 1800
+# Hard upper bound on the `timeout` argument the LLM may pass to shell_exec.
+# The model can still request lower values; this only clamps obvious mistakes
+# (e.g. timeout=86400) that would let a runaway command wedge the agent loop.
+SHELL_EXEC_HARD_CAP_SECONDS = 3600
 AGENT_TOOL_LOOP_MAX_TOKENS = 8192
 AGENT_SYSTEM_PROMPT = "system.txt"
 AGENT_DYNAMIC_CONTEXT_MAX_CHARS = 12000
