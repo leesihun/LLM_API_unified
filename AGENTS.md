@@ -8,7 +8,7 @@ This repository contains three modular services plus cluster launch scripts.
 ## Build, Test, and Development Commands
 
 - `./start-master.sh --build` or `.\start-master.ps1 -Build`: install/build and start the master stack.
-- `cd llm-api && ./start.sh --build`: install Python dependencies and start the API on port `10007`; start llama.cpp separately first.
+- `cd llm-api && ./start.sh --build`: install Python dependencies and start the API on port `10002`; start vLLM separately first.
 - `cd messenger && ./start.sh --build` or `npm.cmd run build:web`: install/build Messenger and refresh the served web bundle.
 - `cd messenger && npm.cmd run typecheck`: run TypeScript checks for server and client.
 - `cd hoonbot && ./start.sh --build`: install Python dependencies, set up credentials if missing, and start the bot on port `10001`.
@@ -28,4 +28,4 @@ Recent history uses very terse timestamp-like subjects. For new work, use small 
 
 ## Security & Configuration Tips
 
-Do not commit `data/`, credentials, `.env` files, model files, or generated binaries. Keep ports and service URLs in the app-owned config files: `llm-api/config.py`, `hoonbot/config.py`, `messenger/config.py`, plus cluster role settings in `cluster_config.py`.
+Do not commit `data/`, credentials, `.env` files, model files, or generated binaries. The root `cluster_config.py` `EDIT HERE` block is the single user-facing config for all three services (role, IPs, ports, vLLM URL, secrets, per-service knobs); the app-owned `llm-api/config.py`, `hoonbot/config.py`, and `messenger/config.py` hold advanced per-service tuning and read the common values from `cluster_config.py`.

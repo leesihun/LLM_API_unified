@@ -5,10 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
 export CLUSTER_ROLE=slave
-export NODE_NAME="${NODE_NAME:-slave-01}"
+# NODE_NAME comes from cluster_config.py (NAME) unless already set in the env.
+[[ -n "${NODE_NAME:-}" ]] && export NODE_NAME || true
 PYTHON_BIN="${PYTHON:-python3}"
 
 "$PYTHON_BIN" -c "import cluster_config; print('cluster config:', cluster_config.NODE_ROLE, cluster_config.NODE_NAME, 'master=', cluster_config.CLUSTER_MASTER_API_URL)"
+NODE_NAME="$("$PYTHON_BIN" -c "import cluster_config; print(cluster_config.NODE_NAME)")"
 
 die() {
   echo "[ERROR] $*" >&2

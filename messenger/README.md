@@ -7,7 +7,7 @@ A self-hosted real-time team chat platform with bot integration, file sharing, a
 ```bash
 # Build/install dependencies, build web client, and start
 ./start.sh --build
-# -> http://127.0.0.1:10006
+# -> http://127.0.0.1:10003
 ```
 
 On Windows:
@@ -22,7 +22,7 @@ On Windows:
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `PORT` | `10006` | HTTP/Socket.IO listen port |
+| `PORT` | `10003` | HTTP/Socket.IO listen port |
 | `MESSENGER_DATA_DIR` | auto | SQLite DB directory |
 | `MESSENGER_UPLOADS_DIR` | auto | User-uploaded file storage |
 | `WORKSPACE_DIR` | `/scratch0` | Working dir for /claude and /opencode terminals |

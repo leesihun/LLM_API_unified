@@ -18,9 +18,9 @@ async def list_models():
     try:
         model_names = await llm_backend.list_models()
         if not model_names:
-            model_names = [config.LLAMACPP_MODEL]
+            model_names = [config.VLLM_MODEL]
     except Exception:
-        model_names = [config.LLAMACPP_MODEL]
+        model_names = [config.VLLM_MODEL]
 
     models = [
         ModelObject(id=name, created=int(time.time()), owned_by="system")

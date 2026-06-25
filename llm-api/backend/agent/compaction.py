@@ -28,13 +28,13 @@ def _looks_like_failure(content: str) -> bool:
 
 
 class CompactionMixin:
-    """Compresses old tool results and auto-compacts on llama.cpp context overflow."""
+    """Compresses old tool results and auto-compacts on vLLM context overflow."""
 
     def _compress_old_iterations(self, msgs: List[Dict[str, Any]], current_iteration: int) -> List[Dict[str, Any]]:
         """
         Return a copy of msgs with old-iteration tool results and assistant
         tool-call messages compressed to short summaries. The original msgs list
-        is NEVER mutated so the llama.cpp KV-cache prefix stays byte-stable
+        is NEVER mutated so the vLLM KV-cache prefix stays byte-stable
         across iterations.
 
         Only messages before the warm-window boundary are compressed; the hot
@@ -118,7 +118,7 @@ class CompactionMixin:
             # Inject a system-reminder into the VIEW so the model knows context was compressed.
             # Insert at the boundary index so it appears right before the uncompressed tail.
             # CRITICAL: mutate `result` (the copy), never `msgs` — mutating msgs would
-            # invalidate the llama.cpp KV-cache prefix for all future iterations.
+            # invalidate the vLLM KV-cache prefix for all future iterations.
             sid = getattr(self, "session_id", None) or "session"
             reminder = {
                 "role": "system",
@@ -227,7 +227,7 @@ class CompactionMixin:
 
     @staticmethod
     def _is_context_overflow_error(exc: BaseException) -> bool:
-        """True if exc is an llama.cpp HTTP error caused by context-window overflow."""
+        """True if exc is a vLLM HTTP error caused by context-window overflow."""
         import httpx
         if not isinstance(exc, httpx.HTTPStatusError):
             return False
@@ -350,8 +350,8 @@ class CompactionMixin:
     ) -> AsyncIterator[StreamEvent]:
         """Wraps self.llm.chat_stream with reactive auto-compaction.
 
-        On a llama.cpp context-overflow error, summarizes the older half of msgs
-        (mutating in place) and retries from scratch. Safe because llama.cpp
+        On a vLLM context-overflow error, summarizes the older half of msgs
+        (mutating in place) and retries from scratch. Safe because vLLM
         rejects context overflow BEFORE streaming any tokens — we re-raise
         immediately if any events were yielded prior to the error.
         """

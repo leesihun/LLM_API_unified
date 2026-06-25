@@ -42,7 +42,7 @@ HEARTBEAT_OK
 
 Local LLM API down:
 ```
-Local LLM API unreachable at http://127.0.0.1:10007 (connection refused).
+Local LLM API unreachable at http://127.0.0.1:10002 (connection refused).
 Slave cannot lease tasks until LLM API recovers.
 ```
 
@@ -54,6 +54,6 @@ to recreate.
 
 Master unreachable:
 ```
-Cluster master http://192.168.0.10:10007 unreachable (timeout 5s).
+Cluster master http://192.168.0.10:10002 unreachable (timeout 5s).
 Last successful heartbeat: 2m18s ago.
 ```

@@ -1,21 +1,20 @@
 # LLM API
 
-A self-hosted, OpenAI-compatible LLM API server that wraps **llama.cpp** with a full agentic loop, JWT auth, RAG, and 10 built-in tools.
+A self-hosted, OpenAI-compatible LLM API server that wraps **vLLM** with a full agentic loop, JWT auth, RAG, and 10 built-in tools.
 
 ## Quick Start
 
 ```bash
-# 1. Edit config (point at your llama.cpp server and model)
+# 1. Edit config (point at your vLLM server and model)
 nano config.py
 
-# 2. Start llama.cpp separately (example: adjust model path)
-llama-server --model /path/to/model.gguf --port 5905 --parallel 4
-# Optional backup llama.cpp: use --port 10000
+# 2. Start vLLM separately (example: adjust model path)
+vllm serve /path/to/model --port 10000
 
 # 3. Build/install dependencies and start the API
 ./start.sh --build
-# -> http://127.0.0.1:10007
-# -> Swagger UI: http://127.0.0.1:10007/docs
+# -> http://127.0.0.1:10002
+# -> Swagger UI: http://127.0.0.1:10002/docs
 ```
 
 On Windows:
@@ -33,9 +32,8 @@ under `prompts/agent/`, and tool templates under `prompts/tools/`.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `SERVER_PORT` | `10007` | API listen port |
-| `LLAMACPP_HOST` | `http://127.0.0.1:5905` | llama.cpp server URL |
-| `LLAMACPP_BACKUP_HOST` | `http://127.0.0.1:10000` | fallback llama.cpp server URL |
+| `SERVER_PORT` | `10002` | API listen port |
+| `VLLM_HOST` | `http://127.0.0.1:10000` | vLLM server URL |
 | `AVAILABLE_TOOLS` | (list) | Tools exposed to the LLM |
 | `AGENT_MAX_ITERATIONS` | `30` | Max tool-call iterations per request |
 | `JWT_SECRET_KEY` | env or hardcoded | Set via `JWT_SECRET_KEY` env var in prod |
@@ -55,7 +53,7 @@ llm-api/
 ├── backend/
 │   ├── agent/         Agentic loop (tool dispatch, compaction, streaming)
 │   ├── api/           FastAPI app + routes (auth, chat, sessions, jobs, RAG)
-│   ├── core/          llm_backend (httpx→llama.cpp), database (SQLite), job store
+│   ├── core/          llm_backend (httpx→vLLM), database (SQLite), job store
 │   ├── models/        Pydantic schemas
 │   └── utils/         Auth (JWT), file handler, logging helpers
 ├── tools/             10 built-in tools (websearch, RAG, code_exec, shell, ...)
@@ -70,7 +68,7 @@ llm-api/
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|
 | `/` | GET | No | Status |
-| `/health` | GET | No | Server + llama.cpp health |
+| `/health` | GET | No | Server + vLLM health |
 | `/api/auth/login` | POST | No | Returns JWT |
 | `/api/auth/signup` | POST | No | Create account |
 | `/v1/models` | GET | Optional | List models |
@@ -107,7 +105,7 @@ python3 scripts/stop_inference.py clear   # removes data/STOP
 
 - **Single `while` loop** in `backend/agent/` — no sub-agents, no chains.
 - **Parallel tool execution** — `asyncio.gather` runs all tool calls concurrently.
-- **Prompt caching** — system prompt cached at module import; `cache_prompt=True` sent to llama.cpp.
+- **Prompt caching** — system prompt cached at module import; `cache_prompt=True` sent to vLLM.
 - **Microcompaction** — old iterations are compressed; oversize results spill to `data/tool_results/`.
-- **Session slot pinning** — `id_slot = hash(session_id) % LLAMACPP_SLOTS` for stable KV cache hits.
+- **Session slot pinning** — `id_slot = hash(session_id) % VLLM_SLOTS` for stable KV cache hits.
 - **Workers > 1** — multiple processes share no state; use `workers=1` for development.

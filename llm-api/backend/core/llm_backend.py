@@ -1,5 +1,5 @@
 """
-LLM Backend for llama.cpp
+LLM Backend for vLLM
 Fully async, with native tool calling support via OpenAI-compatible API.
 """
 import json
@@ -76,21 +76,17 @@ class ToolStatusEvent(StreamEvent):
 
 
 # ============================================================================
-# llama.cpp Backend
+# vLLM Backend
 # ============================================================================
 
-class LlamaCppBackend:
-    """llama.cpp backend: fully async, OpenAI-compatible, native tool calling."""
+class VllmBackend:
+    """vLLM backend: fully async, OpenAI-compatible, native tool calling."""
 
     def __init__(self, host: str = None):
-        primary_host = (host or config.LLAMACPP_HOST).rstrip("/")
-        backup_host = str(getattr(config, "LLAMACPP_BACKUP_HOST", "") or "").strip().rstrip("/")
-        self.primary_host = primary_host
-        self.backup_host = backup_host if backup_host and backup_host != primary_host else ""
-        self.host = primary_host
+        self.host = (host or config.VLLM_HOST).rstrip("/")
         self._ssl_verify = self._resolve_ssl()
         # Persistent connection pool — reuses TCP connections across requests
-        pool_size = getattr(config, 'LLAMACPP_CONNECTION_POOL_SIZE', 20)
+        pool_size = getattr(config, 'VLLM_CONNECTION_POOL_SIZE', 20)
         self._client = httpx.AsyncClient(
             verify=self._ssl_verify,
             timeout=config.STREAM_TIMEOUT,
@@ -107,32 +103,15 @@ class LlamaCppBackend:
             return str(cert_path)
         return True
 
-    def _candidate_hosts(self, prefer_active: bool = False) -> list[str]:
-        hosts = [self.primary_host]
-        if self.backup_host:
-            hosts.append(self.backup_host)
-        if prefer_active and self.host in hosts:
-            return [self.host] + [host for host in hosts if host != self.host]
-        return hosts
-
-    def _activate_host(self, host: str) -> None:
-        if host != self.host:
-            print(f"[LLM] Switching llama.cpp host: {self.host} -> {host}")
-            self.host = host
-
     async def _select_available_host(self, *, prefer_active: bool = False) -> bool:
-        for host in self._candidate_hosts(prefer_active=prefer_active):
-            try:
-                resp = await self._client.get(
-                    f"{host}/v1/models",
-                    timeout=httpx.Timeout(3.0),
-                )
-                if resp.status_code == 200:
-                    self._activate_host(host)
-                    return True
-            except Exception:
-                continue
-        return False
+        try:
+            resp = await self._client.get(
+                f"{self.host}/v1/models",
+                timeout=httpx.Timeout(3.0),
+            )
+            return resp.status_code == 200
+        except Exception:
+            return False
 
     async def close(self):
         """Shut down the persistent HTTP client."""
@@ -168,7 +147,7 @@ class LlamaCppBackend:
         repeat_penalty: Optional[float] = None,
         id_slot: Optional[int] = None,
     ) -> dict[str, Any]:
-        """Assemble the request payload with all llama.cpp parameters.
+        """Assemble the request payload with all vLLM parameters.
 
         Always uses streaming — there is no non-streaming path in this backend.
         """
@@ -182,7 +161,7 @@ class LlamaCppBackend:
             payload["tools"] = tools
             payload["parallel_tool_calls"] = True
         # KV cache reuse — skip re-evaluating shared prompt prefix
-        if getattr(config, 'LLAMACPP_CACHE_PROMPT', True):
+        if getattr(config, 'VLLM_CACHE_PROMPT', True):
             payload["cache_prompt"] = True
         # Pin to a specific KV cache slot for consistent cache hits
         if id_slot is not None:
@@ -237,12 +216,12 @@ class LlamaCppBackend:
             json=payload,
         ) as resp:
             if resp.status_code >= 400:
-                # Read the body so the actual llama.cpp error reaches the log
+                # Read the body so the actual vLLM error reaches the log
                 # instead of an opaque "400 Bad Request" with no detail.
                 body_bytes = await resp.aread()
                 body = body_bytes.decode("utf-8", errors="replace")[:2000]
                 raise httpx.HTTPStatusError(
-                    f"llama.cpp returned {resp.status_code}: {body}",
+                    f"vLLM returned {resp.status_code}: {body}",
                     request=resp.request,
                     response=resp,
                 )
@@ -344,5 +323,5 @@ class LlamaCppBackend:
 
 from backend.core.llm_interceptor import LLMInterceptor
 
-_backend = LlamaCppBackend()
+_backend = VllmBackend()
 llm_backend = LLMInterceptor(_backend)

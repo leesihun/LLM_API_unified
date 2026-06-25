@@ -15,7 +15,7 @@ if (process.platform === 'win32') {
   app.commandLine.appendSwitch('high-dpi-support', '1');
 }
 
-const SERVER_PORT = 10006;
+const SERVER_PORT = 10003;
 
 function getIconPath(): string {
   if (app.isPackaged) {

@@ -1,5 +1,5 @@
 param(
-    [string]$NodeName = "master"
+    [string]$NodeName = ""   # optional; overrides NAME in cluster_config.py
 )
 
 $ErrorActionPreference = "Stop"
@@ -7,7 +7,7 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
 
 $env:CLUSTER_ROLE = "master"
-$env:NODE_NAME = $NodeName
+if ($NodeName) { $env:NODE_NAME = $NodeName }
 
 function Find-Python {
     if ($env:PYTHON) { return $env:PYTHON }
@@ -69,4 +69,4 @@ Install-PythonRequirements "hoonbot\deps\requirements.txt"
 Write-Host "[install] Messenger dependencies"
 Install-MessengerNodeModules
 
-Write-Host "[ok] Master node '$NodeName' installed."
+Write-Host "[ok] Master node installed."

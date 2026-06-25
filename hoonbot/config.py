@@ -72,8 +72,8 @@ def _read_credential_file(name: str) -> str:
 # ---------------------------------------------------------------------------
 HOONBOT_PORT = int(getattr(_CLUSTER, "HOONBOT_PORT", 10001))
 HOONBOT_HOST = getattr(_CLUSTER, "HOONBOT_BIND_HOST", "0.0.0.0")
-MESSENGER_PORT = int(getattr(_CLUSTER, "MESSENGER_PORT", 10006))
-LLM_API_PORT = int(getattr(_CLUSTER, "LLM_API_PORT", 10007))
+MESSENGER_PORT = int(getattr(_CLUSTER, "MESSENGER_PORT", 10003))
+LLM_API_PORT = int(getattr(_CLUSTER, "LLM_API_PORT", 10002))
 
 
 
@@ -117,11 +117,12 @@ LLM_MODEL = _read_credential_file(".llm_model")
 # ---------------------------------------------------------------------------
 # Bot Identity
 # ---------------------------------------------------------------------------
-MESSENGER_BOT_NAME = "Bot"
+# Bot name + home room — edit in the root cluster_config.py EDIT HERE block.
+MESSENGER_BOT_NAME = getattr(_CLUSTER, "BOT_NAME", "Bot")
 # When MESSENGER_HOME_ROOM_NAME is set, the room is resolved by name at
 # startup and MESSENGER_HOME_ROOM_ID is overwritten with the resolved id.
 # Set MESSENGER_HOME_ROOM_NAME = "" to fall back to the numeric id below.
-MESSENGER_HOME_ROOM_NAME = "Heartbeat"
+MESSENGER_HOME_ROOM_NAME = getattr(_CLUSTER, "BOT_HOME_ROOM_NAME", "Heartbeat")
 MESSENGER_HOME_ROOM_ID = 1
 # Populated at startup from /api/bots/me — used for context injection.
 BOT_USER_ID: int = 0
@@ -130,14 +131,15 @@ BOT_USER_ID: int = 0
 # ---------------------------------------------------------------------------
 # Heartbeat
 # ---------------------------------------------------------------------------
-HEARTBEAT_ENABLED = True
-HEARTBEAT_INTERVAL_SECONDS = 1200
+# Heartbeat settings — edit in the root cluster_config.py EDIT HERE block.
+HEARTBEAT_ENABLED = bool(getattr(_CLUSTER, "HEARTBEAT_ENABLED", True))
+HEARTBEAT_INTERVAL_SECONDS = int(getattr(_CLUSTER, "HEARTBEAT_INTERVAL_SECONDS", 1200))
 # If heartbeat hits LLM connectivity errors, pause heartbeat LLM calls
 # for this many seconds.
 HEARTBEAT_LLM_COOLDOWN_SECONDS = 600
 # Active hours window (24h HH:MM). Heartbeat only runs in this window.
-HEARTBEAT_ACTIVE_START = "00:00"
-HEARTBEAT_ACTIVE_END = "23:59"
+HEARTBEAT_ACTIVE_START = getattr(_CLUSTER, "HEARTBEAT_ACTIVE_START", "00:00")
+HEARTBEAT_ACTIVE_END = getattr(_CLUSTER, "HEARTBEAT_ACTIVE_END", "23:59")
 
 
 # ---------------------------------------------------------------------------

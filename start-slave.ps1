@@ -1,6 +1,6 @@
 param(
     [switch]$Build,
-    [string]$NodeName = "slave-01"
+    [string]$NodeName = ""   # optional; overrides NAME in cluster_config.py
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,7 +8,7 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $Root
 
 $env:CLUSTER_ROLE = "slave"
-$env:NODE_NAME = $NodeName
+if ($NodeName) { $env:NODE_NAME = $NodeName }
 
 function Find-Python {
     if ($env:PYTHON) { return $env:PYTHON }
@@ -30,4 +30,4 @@ Push-Location "hoonbot"
 & ".\start.ps1" -Build:$Build -Background
 Pop-Location
 
-Write-Host "[ok] Slave node '$NodeName' startup requested."
+Write-Host "[ok] Slave node startup requested."

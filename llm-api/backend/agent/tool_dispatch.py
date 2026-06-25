@@ -436,7 +436,7 @@ class DispatchMixin:
                 from tools.agent import SubAgentTool
                 cache["agent"] = SubAgentTool(session_id=self.session_id, username=self.username)
             # Derive a unique session_id per sub-agent invocation so each gets
-            # a distinct llama.cpp KV slot — prevents parallel sub-agents from
+            # a distinct vLLM KV slot — prevents parallel sub-agents from
             # serializing on the parent's slot.
             child_session_id = f"{self.session_id}::{tool_call_id}" if tool_call_id else self.session_id
             # SubAgentTool.execute is async — await directly (not to_thread)

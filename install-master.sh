@@ -5,12 +5,14 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
 export CLUSTER_ROLE=master
-export NODE_NAME="${NODE_NAME:-master}"
+# NODE_NAME comes from cluster_config.py (NAME) unless already set in the env.
+[[ -n "${NODE_NAME:-}" ]] && export NODE_NAME || true
 PYTHON_BIN="${PYTHON:-python3}"
 NPM_BIN="${NPM:-npm}"
 MESSENGER_DIR="$ROOT_DIR/messenger"
 
 "$PYTHON_BIN" -c "import cluster_config; cluster_config.require_valid_advertised_urls(); print('cluster config ok:', cluster_config.NODE_ROLE, cluster_config.NODE_NAME)"
+NODE_NAME="$("$PYTHON_BIN" -c "import cluster_config; print(cluster_config.NODE_NAME)")"
 
 die() {
   echo "[ERROR] $*" >&2

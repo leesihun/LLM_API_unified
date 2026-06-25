@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Three independent services live side-by-side in this repo, plus a shared cluster control plane:
 
-- **`llm-api/`** (port 10007, Python/FastAPI) — OpenAI-compatible API wrapping a separately-run `llama.cpp` server, with an agentic loop, JWT auth, RAG, and tool calling.
+- **`llm-api/`** (port 10002, Python/FastAPI) — OpenAI-compatible API wrapping a separately-run `vLLM` server, with an agentic loop, JWT auth, RAG, and tool calling.
 - **`hoonbot/`** (port 10001, Python/FastAPI) — Bridges Messenger ↔ LLM API; handles webhooks, debouncing, persistent memory, heartbeat loop, and (on master) cluster delegation.
-- **`messenger/`** (port 10006, Node/Express + React/Vite) — Real-time chat UI with Socket.IO, file uploads, and embedded `claude` / `opencode` terminals over WebSocket. Master-only.
+- **`messenger/`** (port 10003, Node/Express + React/Vite) — Real-time chat UI with Socket.IO, file uploads, and embedded `claude` / `opencode` terminals over WebSocket. Master-only.
 - **`cluster_config.py`** at the repo root — single source of truth for node role, name, IPs, ports, prompt/heartbeat/skill profiles, and cluster token. Each app's local `config.py` imports it via `_load_cluster_config()` and exposes only what that app needs.
 
-`llama.cpp` is **not** in this repo. It must be running before `llm-api` starts (default `http://127.0.0.1:5905`, optional backup at `:10000`).
+`vLLM` is **not** in this repo. It must be running before `llm-api` starts (default `http://127.0.0.1:10000`).
 
 ## Common Commands
 
@@ -31,7 +31,7 @@ On Linux, `OFFLINE_DEPS_DIR` is the airgap contract for staged Messenger runtime
 ### Per-service (run individually)
 
 ```powershell
-cd llm-api    ; .\start.ps1 -Build      # llama.cpp must already be running
+cd llm-api    ; .\start.ps1 -Build      # vLLM must already be running
 cd messenger  ; .\start.ps1 -Build      # builds web client (npm run build:web) then starts
 cd hoonbot    ; .\start.ps1 -Build      # depends on messenger + llm-api being up
 ```
@@ -65,17 +65,41 @@ The cluster is a master + N slaves over plain HTTP on the LAN. Roles are picked 
 
 ## Per-Service Architecture Notes
 
-**llm-api** — single `while` loop in `backend/agent/`, no sub-agents or chains. Tool calls run via `asyncio.gather`. The system prompt is cached at module import and `cache_prompt=True` is passed to llama.cpp. Sessions are slot-pinned (`id_slot = hash(session_id) % LLAMACPP_SLOTS`) for stable KV-cache hits. Microcompaction compresses old iterations and spills oversize tool results to `data/tool_results/`. Workers > 1 share no state — use `SERVER_WORKERS = 1` during development. Default admin: `admin` / `administrator`.
+**llm-api** — single `while` loop in `backend/agent/`, no sub-agents or chains. Tool calls run via `asyncio.gather`. The system prompt is cached at module import and `cache_prompt=True` is passed to vLLM. Sessions are slot-pinned (`id_slot = hash(session_id) % VLLM_SLOTS`) for stable KV-cache hits. Microcompaction compresses old iterations and spills oversize tool results to `data/tool_results/`. Workers > 1 share no state — use `SERVER_WORKERS = 1` during development. Default admin: `admin` / `administrator`.
 
-**hoonbot** — FastAPI webhook receiver. `handlers/webhook.py` validates → `mark_read` → debounces (`DEBOUNCE_SECONDS=1.5`) → calls LLM API. Memory lives at `hoonbot/data/memory.md` and is injected into the system prompt with an absolute path so the LLM can use file_reader/file_writer tools — **don't move `data/` after startup without restarting**. Heartbeat first tick is delayed one full interval (never immediate). Bot API key is persisted at `hoonbot/data/.apikey`; deleting forces re-registration with Messenger.
+The `AgentLoop` class (`backend/agent/loop.py`) is composed from five mixins — each in its own file under `backend/agent/`:
 
-**messenger** — `sql.js` runs the SQLite DB **in memory**, auto-saved to `data/messenger.db` every 5s — unclean shutdown can lose up to 5s. No TLS built-in; expects LAN/VPN. Terminal WS endpoints (`/claude`, `/opencode`) gate access via `SECRET_TOKEN` (default `leesihun` — change in prod). The Electron portable build is Windows-only by default (`--linux` for AppImage).
+| Mixin | File | Responsibility |
+|---|---|---|
+| `LoggingMixin` | `logging_helpers.py` | Per-tool and per-iteration logging |
+| `CompactionMixin` | `compaction.py` | Microcompaction, auto-compact on context overflow, anti-spiral state |
+| `DispatchMixin` | `tool_dispatch.py` | In-process tool execution, parallel via `asyncio.gather` |
+| `FormattingMixin` | `result_formatting.py` | Tool result formatting before feeding back to LLM |
+| `PromptMixin` | `prompt_assembly.py` | System prompt, dynamic context (git, env, RAG collections) |
+
+Add new agent capabilities by extending the appropriate mixin or adding a new one. Tool schemas live in `llm-api/tools/schemas.py`; each tool's implementation is under `llm-api/tools/<name>/`.
+
+**Available agent tools:** `shell_exec`, `file_reader`, `file_writer`, `file_navigator`, `file_editor`, `apply_patch`, `grep`, `web_search`, `rag`, `memo`, `recall`, `todo`, `code_exec`, `process_monitor`, `agent`. Tool parameters are in `config.TOOL_PARAMETERS`; the enabled subset per-request is `config.AVAILABLE_TOOLS`.
+
+**Per-session workspace:** The `AgentLoop` accepts a `workspace_dir` parameter. When set, `file_reader`, `file_writer`, `file_navigator`, `file_editor`, `apply_patch`, `grep`, and `shell_exec` all treat it as the project root and relative paths resolve against it.
+
+**Data layout** (`llm-api/data/`, never committed):
+- `sessions/{id}.jsonl` — full conversation history; `.recent.json` — last N messages for fast startup
+- `jobs/{id}.json` — async background job state (RAG uploads via `/jobs/*` routes + `backend/core/job_store.py`)
+- `tool_results/{id}.json` — spilled oversize tool outputs from microcompaction
+- `logs/`, `scratch/` — agent logs and temp files
+
+**Swagger UI** is served at `http://localhost:10002/docs` (ReDoc at `/redoc`) in development.
+
+**hoonbot** — FastAPI webhook receiver. `handlers/webhook.py` validates → `mark_read` → debounces (`DEBOUNCE_SECONDS=1.5`) → calls LLM API. Memory lives at `hoonbot/data/memory.md` and is injected into the system prompt with an absolute path so the LLM can use file_reader/file_writer tools — **don't move `data/` after startup without restarting**. Heartbeat first tick is delayed one full interval (never immediate). Bot API key is persisted at `hoonbot/data/.apikey`; deleting forces re-registration with Messenger. Skills are plain Markdown files in `hoonbot/skills/`; the agent discovers them via `file_navigator` — no loader code needed.
+
+**messenger** — `sql.js` runs the SQLite DB **in memory**, auto-saved to `data/messenger.db` every 5s — unclean shutdown can lose up to 5s. No TLS built-in; expects LAN/VPN. Terminal WebSocket (`/claude`, `/opencode`) must be registered on the HTTP server **before** Socket.IO attaches (order in `server/src/index.ts`); it gates access via `SECRET_TOKEN` (default `leesihun` — change in prod). Terminal executable paths are configurable via `CLAUDE_CMD`, `OPENCODE_CMD`, and `WORKSPACE_DIR` env vars (set in `messenger/config.py`). Web watchers (`server/src/services/web-poller.ts`) poll URLs on interval, hash responses, and post diffs to rooms when content changes. The Electron portable build is Windows-only by default (`--linux` for AppImage).
 
 ## Configuration Conventions
 
-- Each app's `config.py` is the **single runtime configuration surface** for that app. Edit it directly. Do NOT introduce hidden `.env` runtime requirements.
-- Cluster-wide values (role, name, IPs, ports, profiles, token) live in `/cluster_config.py`. App-local `config.py` files import it via `_load_cluster_config()` and surface what they need with `getattr(_CLUSTER, ..., default)`.
-- Legitimate runtime env overrides are limited and explicit: e.g. `LLM_API_URL` for hoonbot, `LLAMACPP_HOST` for llm-api, the `MESSENGER_*_DIR` paths for messenger. Don't add new env-var knobs casually.
+- **`/cluster_config.py` is the single user-facing config surface.** Its top-of-file `EDIT HERE` block holds every commonly-changed setting for all three services: role, node name, LAN IPs, the vLLM backend URL, ports, cluster secret, llm-api admin creds + Tavily key + RAG model paths, hoonbot bot name + heartbeat, and the Messenger terminal token. Each value is also overridable by an env var of the same name (that's how the launchers set `CLUSTER_ROLE`).
+- Each app's `config.py` holds **advanced per-service tuning** and reads the common knobs from `cluster_config.py` via `_load_cluster_config()` + `getattr(_CLUSTER, NAME, default)`. When adding a new commonly-changed setting, expose it in the `cluster_config.py` `EDIT HERE` block and read it in the app config with a `getattr` fallback — don't hardcode deployment-specific values in app configs.
+- Do NOT introduce hidden `.env` runtime requirements. Legitimate runtime env overrides are limited and explicit: e.g. `LLM_API_URL` for hoonbot, `VLLM_HOST` for llm-api, the `MESSENGER_*_DIR` paths for messenger. Don't add new env-var knobs casually.
 - Never commit: `data/` (any service's runtime dir), `*.gguf`, `models/`, `llamacpp/`, `offline_models/`, `.env*`, `.apikey`, `.llm_key`, `.llm_model`, `node_modules/`, `dist*/`.
 
 ## Style (from AGENTS.md)

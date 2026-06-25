@@ -218,7 +218,7 @@ async def chat_completions(
     try:
         parsed = await _parse_request(request)
         messages_data = parsed["messages_data"]
-        model_name = parsed["model"] or config.LLAMACPP_MODEL
+        model_name = parsed["model"] or config.VLLM_MODEL
         is_streaming = parsed["stream"]
         temp = parsed["temperature"] if parsed["temperature"] is not None else config.DEFAULT_TEMPERATURE
         session_id = parsed["session_id"]

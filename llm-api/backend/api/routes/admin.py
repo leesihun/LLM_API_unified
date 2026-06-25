@@ -43,7 +43,7 @@ def change_model(
     Note: This updates the runtime config, not persistent storage
     """
     # Update the global config
-    config.LLAMACPP_MODEL = request.model
+    config.VLLM_MODEL = request.model
 
     return {
         "status": "success",

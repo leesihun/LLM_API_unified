@@ -26,7 +26,7 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
-│                          LLM_API_fast (port 10007)                         │
+│                          LLM_API_fast (port 10002)                         │
 │                                                                            │
 │  ┌──────────────┐   ┌─────────────┐   ┌─────────────────────────────────┐ │
 │  │   FastAPI     │   │  AgentLoop  │   │          Tools (in-process)     │ │
@@ -38,8 +38,8 @@
 │  └──────────────┘   └─────┬───────┘                                        │
 │                            │                                               │
 │                    ┌───────▼──────┐                                        │
-│                    │ LLMInterceptor│  (wraps LlamaCppBackend)              │
-│                    │  + logger     │──▶  llama.cpp (port 5905)             │
+│                    │ LLMInterceptor│  (wraps VllmBackend)                  │
+│                    │  + logger     │──▶  vLLM (port 10000)                 │
 │                    └──────────────┘                                        │
 │                                                                            │
 │  Storage:  SQLite · JSONL sessions · FAISS indices · job files             │
@@ -53,7 +53,7 @@
 ```
 
 **Core invariants:**
-- One port (10007), one `AgentLoop`, native llama.cpp tool calling (`--jinja` required)
+- One port (10002), one `AgentLoop`, native vLLM tool calling
 - All tools execute in-process — zero HTTP hops agent → tool
 - KV cache reuse via `cache_prompt=true` + `id_slot` pinning per session
 - Byte-stable `_CACHED_SYSTEM_PROMPT` and `_CACHED_TOOL_SCHEMAS` built at module load
@@ -194,12 +194,12 @@ Every LLM call sends (when set in config):
 | `temperature` | `DEFAULT_TEMPERATURE` | 0.7 | Overridable per request |
 | `top_p` | `DEFAULT_TOP_P` | 0.9 | |
 | `top_k` | `DEFAULT_TOP_K` | 40 | |
-| `min_p` | `DEFAULT_MIN_P` | 0.05 | llama.cpp's most effective sampler |
+| `min_p` | `DEFAULT_MIN_P` | 0.05 | most effective sampler |
 | `repeat_penalty` | `DEFAULT_REPEAT_PENALTY` | 1.1 | |
 | `max_tokens` | `AGENT_TOOL_LOOP_MAX_TOKENS` | 4096 | Tool-loop calls |
 | `max_tokens` | `DEFAULT_MAX_TOKENS` | 128000 | Final response calls |
-| `id_slot` | `hash(session_id) % LLAMACPP_SLOTS` | — | KV cache slot pinning |
-| `cache_prompt` | `LLAMACPP_CACHE_PROMPT` | True | Prefix reuse |
+| `id_slot` | `hash(session_id) % VLLM_SLOTS` | — | KV cache slot pinning |
+| `cache_prompt` | `VLLM_CACHE_PROMPT` | True | Prefix reuse |
 
 ### 3.2 Microcompaction Strategy
 
@@ -265,7 +265,7 @@ Each iteration calls `check_stop()`:
 
 ## 4. LLM Backend & Interceptor
 
-### 4.1 LlamaCppBackend
+### 4.1 VllmBackend
 
 **Connection pool:**
 ```python
@@ -273,13 +273,13 @@ httpx.AsyncClient(
     verify=ssl_cert_if_exists("C:/DigitalCity.crt"),
     timeout=STREAM_TIMEOUT,          # 864000s
     limits=Limits(
-        max_connections=LLAMACPP_CONNECTION_POOL_SIZE,        # 20
-        max_keepalive_connections=LLAMACPP_CONNECTION_POOL_SIZE // 2  # 10
+        max_connections=VLLM_CONNECTION_POOL_SIZE,        # 20
+        max_keepalive_connections=VLLM_CONNECTION_POOL_SIZE // 2  # 10
     )
 )
 ```
 
-**Wire format → llama.cpp:**
+**Wire format → vLLM:**
 ```json
 {
   "model": "default",
@@ -309,7 +309,7 @@ Every LLM call logs two entries to `prompts.log`:
 **Request entry:**
 ```
 ================================================================================
-[REQUEST] model=default  backend=LlamaCppBackend  temp=0.7
+[REQUEST] model=default  backend=VllmBackend  temp=0.7
   agent=agent  session=abc123  streaming=No
   messages=3 (1 system, 1 user, 1 tool)  tools=10
   est_input_tokens=1234
@@ -320,7 +320,7 @@ Every LLM call logs two entries to `prompts.log`:
 **Response entry (updated):**
 ```
 ================================================================================
-[RESPONSE] model=default  backend=LlamaCppBackend  temp=0.7
+[RESPONSE] model=default  backend=VllmBackend  temp=0.7
   agent=agent  session=abc123  streaming=No
   duration=2.34s
   est_tokens: input=1234  output=456  total=1690
@@ -381,7 +381,7 @@ Token estimation: `len(str(content)) // 4` (rough, character-based)
 - Script detection: newly created .py → mentioned in output → most recently modified .py
 
 **`"native"`:**
-- Stage 1: Async LLM call to llama.cpp (httpx direct, separate from main backend)
+- Stage 1: Async LLM call to vLLM (httpx direct, separate from main backend)
 - Stage 2: `subprocess.run([sys.executable, script.py])`
 - Workspace context injected: lists existing .py files + their contents
 - Temperature: 0.5 (from `TOOL_PARAMETERS["python_coder"]`)
@@ -562,7 +562,7 @@ data/
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/` | — | Service status (version, backend, host) |
-| GET | `/health`, `/api/health` | — | Full health (llama.cpp, OpenCode, disk, config) |
+| GET | `/health`, `/api/health` | — | Full health (vLLM, OpenCode, disk, config) |
 | POST | `/api/auth/signup` | — | Create user |
 | POST | `/api/auth/login` | — | Login → JWT (7 days) |
 | POST | `/v1/chat/completions` | JWT | Chat (stream or sync, file upload) |
@@ -601,7 +601,7 @@ data/
 ### 8.1 Architecture
 
 ```
-Messenger (port 3000) ◄──► Hoonbot (port 10001) ◄──► LLM API (port 10007)
+Messenger (port 10003) ◄──► Hoonbot (port 10001) ◄──► LLM API (port 10002)
 ```
 
 Hoonbot is a standalone FastAPI app that:
@@ -759,10 +759,10 @@ Verbosity: `OPENCODE_LOG_VERBOSITY = "summary"` (summary/debug)
 
 | Key | Default | Notes |
 |-----|---------|-------|
-| `SERVER_PORT` | 10007 | Main API port |
-| `LLAMACPP_HOST` | `http://localhost:5905` | llama.cpp server |
-| `LLAMACPP_SLOTS` | 4 | Must match `--parallel` on llama.cpp |
-| `LLAMACPP_CONNECTION_POOL_SIZE` | 20 | Keep-alive pool |
+| `SERVER_PORT` | 10002 | Main API port |
+| `VLLM_HOST` | `http://localhost:10000` | vLLM server |
+| `VLLM_SLOTS` | 4 | KV cache slots for session pinning |
+| `VLLM_CONNECTION_POOL_SIZE` | 20 | Keep-alive pool |
 | `STREAM_TIMEOUT` | 864000 | 10 days (effectively unlimited) |
 | `CORS_ORIGINS` | `["*"]` | Open CORS — restrict in production |
 
@@ -1010,7 +1010,7 @@ Open CORS allows any origin to make authenticated requests. Restrict to your act
 A single user can fire unlimited concurrent requests. Consider `slowapi` or a per-user token bucket middleware.
 
 #### L3. `KV Cache Slot Collision`
-With `LLAMACPP_SLOTS = 4` and many sessions, `hash(session_id) % 4` creates hot spots. Sessions sharing a slot evict each other's KV cache. Consider increasing `LLAMACPP_SLOTS` to 8–16 if your GPU VRAM allows.
+With `VLLM_SLOTS = 4` and many sessions, `hash(session_id) % 4` creates hot spots. Sessions sharing a slot evict each other's KV cache. Consider increasing `VLLM_SLOTS` to 8–16 if your GPU VRAM allows.
 
 #### L4. `AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 40` Is Extremely Aggressive
 Compressing old tool results to 40 characters discards most of the content. Consider 80–120 chars to preserve more context for long multi-step tasks.

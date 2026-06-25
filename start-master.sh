@@ -13,10 +13,12 @@ for arg in "$@"; do
 done
 
 export CLUSTER_ROLE=master
-export NODE_NAME="${NODE_NAME:-master}"
+# NODE_NAME comes from cluster_config.py (NAME) unless already set in the env.
+[[ -n "${NODE_NAME:-}" ]] && export NODE_NAME || true
 PYTHON_BIN="${PYTHON:-python3}"
 
 "$PYTHON_BIN" -c "import cluster_config; cluster_config.require_valid_advertised_urls(); print('starting master:', cluster_config.NODE_NAME, cluster_config.MASTER_LLM_API_URL)"
+NODE_NAME="$("$PYTHON_BIN" -c "import cluster_config; print(cluster_config.NODE_NAME)")"
 
 auto_detect_offline_deps_dir() {
   if [[ -n "${OFFLINE_DEPS_DIR:-}" && -d "$OFFLINE_DEPS_DIR" ]]; then

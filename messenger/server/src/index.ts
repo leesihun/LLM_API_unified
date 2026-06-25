@@ -101,7 +101,7 @@ export async function main() {
   startAllWatchers();
   startCleanupCron();
 
-  const PORT = Number(getMessengerEnv('PORT', '3000')) || 3000;
+  const PORT = Number(getMessengerEnv('PORT', '10003')) || 10003;
 
   // Disable all Node.js HTTP server timeouts so large uploads never get cut off
   server.setTimeout(0);

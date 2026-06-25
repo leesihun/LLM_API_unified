@@ -24,7 +24,7 @@ Hoonbot is a tool-driven personal AI assistant that bridges Huni Messenger (chat
            │ /v1/chat/completions (streaming SSE)
            │
 ┌──────────▼──────────┐
-│ LLM_API_fast        │ (Agent system on port 10007)
+│ LLM_API_fast        │ (Agent system on port 10002)
 │ (Python)            │
 │                     │
 │ • websearch         │

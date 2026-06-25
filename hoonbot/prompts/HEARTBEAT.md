@@ -52,7 +52,7 @@ HEARTBEAT_OK
 
 Service down:
 ```
-LLM API unreachable at http://192.168.0.10:10007 (last 3 attempts timed out).
+LLM API unreachable at http://192.168.0.10:10002 (last 3 attempts timed out).
 Hoonbot will keep retrying.
 ```
 

@@ -21,7 +21,7 @@ _START_TIME = time.time()
 
 app = FastAPI(
     title="LLM API",
-    description="OpenAI-compatible LLM API with native tool calling via llama.cpp",
+    description="OpenAI-compatible LLM API with native tool calling via vLLM",
     version="2.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -254,14 +254,11 @@ async def startup_event():
 
     from backend.core.llm_backend import llm_backend
     available = await llm_backend.is_available()
-    active_host = getattr(llm_backend.backend, "host", config.LLAMACPP_HOST)
+    active_host = getattr(llm_backend.backend, "host", config.VLLM_HOST)
     if available:
-        print(f"[Startup] llama.cpp backend available at {active_host}")
+        print(f"[Startup] vLLM backend available at {active_host}")
     else:
-        print(
-            "[Startup] WARNING: llama.cpp backend NOT available at "
-            f"{config.LLAMACPP_HOST} or {getattr(config, 'LLAMACPP_BACKUP_HOST', '')}"
-        )
+        print(f"[Startup] WARNING: vLLM backend NOT available at {config.VLLM_HOST}")
 
     async def _periodic_llm_cleanup():
         while True:
@@ -302,28 +299,24 @@ def root():
             "advertised_url": config.ADVERTISED_LLM_API_URL,
         },
         "backend": {
-            "type": "llamacpp",
-            "host": getattr(llm_backend.backend, "host", config.LLAMACPP_HOST),
-            "primary_host": config.LLAMACPP_HOST,
-            "backup_host": getattr(config, "LLAMACPP_BACKUP_HOST", ""),
+            "type": "vllm",
+            "host": getattr(llm_backend.backend, "host", config.VLLM_HOST),
         },
     }
 
 
 async def _get_health_data() -> dict:
     from backend.core.llm_backend import llm_backend
-    llamacpp_ok = await llm_backend.is_available()
-    active_host = getattr(llm_backend.backend, "host", config.LLAMACPP_HOST)
+    vllm_ok = await llm_backend.is_available()
+    active_host = getattr(llm_backend.backend, "host", config.VLLM_HOST)
     disk = shutil.disk_usage(".")
     opencode_enabled = config.PYTHON_EXECUTOR_MODE == "opencode"
     return {
-        "status": "ok" if llamacpp_ok else "degraded",
+        "status": "ok" if vllm_ok else "degraded",
         "uptime_s": round(time.time() - _START_TIME),
-        "llamacpp": {
-            "available": llamacpp_ok,
+        "vllm": {
+            "available": vllm_ok,
             "host": active_host,
-            "primary_host": config.LLAMACPP_HOST,
-            "backup_host": getattr(config, "LLAMACPP_BACKUP_HOST", ""),
         },
         "opencode": {
             "enabled": opencode_enabled,

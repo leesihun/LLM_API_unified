@@ -4,7 +4,7 @@ setlocal
 set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
 
-rem Runs llama.cpp server for llm-api on port 5905.
+rem Runs llama.cpp server for llm-api on port 10000 (the vLLM backend port).
 rem Prefers a user-level Downloads llama.cpp install to keep the repo clean.
 rem Default model is the MoE GGUF found in the user's Downloads folder.
 rem Override any setting before running, for example:
@@ -48,7 +48,7 @@ if not defined MMPROJ_PATH (
     )
 )
 if not defined HOST set "HOST=0.0.0.0"
-if not defined PORT set "PORT=5905"
+if not defined PORT set "PORT=10000"
 if not defined CTX_SIZE set "CTX_SIZE=65536"
 if not defined PARALLEL set "PARALLEL=2"
 if not defined GPU_LAYERS set "GPU_LAYERS=auto"

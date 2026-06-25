@@ -79,7 +79,7 @@ Use the async endpoint for real-time progress updates:
 
 ```bash
 # Upload via API with streaming progress
-curl -X POST "http://localhost:10006/api/rag/upload/stream" \
+curl -X POST "http://localhost:10002/api/rag/upload/stream" \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -F "collection_name=my_collection" \
   -F "file=@large_document.pdf"

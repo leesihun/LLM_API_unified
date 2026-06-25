@@ -21,8 +21,8 @@ On Windows:
 
 | Service | Port | How to start |
 |---|---|---|
-| Huni Messenger | 10006 | `cd ../messenger && ./start.sh` |
-| LLM API | 10007 | `cd ../llm-api && ./start.sh` |
+| Huni Messenger | 10003 | `cd ../messenger && ./start.sh` |
+| LLM API | 10002 | `cd ../llm-api && ./start.sh` |
 
 ## Configuration
 
@@ -35,8 +35,8 @@ in `prompts/master/` and `prompts/slave/`.
 | Setting | Default | Purpose |
 |---|---|---|
 | `HOONBOT_PORT` | `10001` | Bot webhook listener port |
-| `MESSENGER_URL` | `http://127.0.0.1:10006` | Messenger server URL |
-| `LLM_API_URL` | `http://127.0.0.1:10007` | LLM API URL (`LLM_API_URL` env var overrides) |
+| `MESSENGER_URL` | `http://127.0.0.1:10003` | Messenger server URL |
+| `LLM_API_URL` | `http://127.0.0.1:10002` | LLM API URL (`LLM_API_URL` env var overrides) |
 | `LLM_API_USERNAME` | `admin` | Used by setup to obtain a token |
 | `LLM_API_PASSWORD` | `administrator` | Used by setup to obtain a token |
 | `MESSENGER_BOT_NAME` | `Bot` | Display name in Messenger |
@@ -108,7 +108,7 @@ handlers/webhook.py
     └── process_message()
             │  POST /v1/chat/completions
             ▼
-        LLM API (port 10007) — full agentic loop with tools
+        LLM API (port 10002) — full agentic loop with tools
             │  SSE stream or JSON
             ▼
         Hoonbot → sends threaded reply via Messenger API

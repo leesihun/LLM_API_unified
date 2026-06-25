@@ -11,7 +11,7 @@ class FormattingMixin:
 
     def _build_assistant_tool_msg(self, tool_calls: List[ToolCall],
                                   content: Optional[str] = None) -> Dict[str, Any]:
-        # Always send content as a string. Some llama.cpp chat templates
+        # Always send content as a string. Some vLLM chat templates
         # (Qwen, GLM, certain Llama-3 tool variants) reject content=null on
         # assistant messages with tool_calls and return 400 Bad Request
         # during chat-template rendering — manifests as 0-duration, 0-token

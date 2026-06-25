@@ -2,7 +2,7 @@
 Tool schemas for the LLM agent (OpenAI function-calling format).
 
 Consumed by backend/agent.py at module load time to build the tool list
-sent to llama.cpp. Parameter names must exactly match what _dispatch_tool()
+sent to vLLM. Parameter names must exactly match what _dispatch_tool()
 passes to each tool's execute/read/write/navigate/edit/search method.
 """
 

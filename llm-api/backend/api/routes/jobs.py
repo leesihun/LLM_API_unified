@@ -185,7 +185,7 @@ async def submit_job(
     parsed = await _parse_job_request(request)
     messages_data = parsed["messages_data"]
     username = current_user["username"] if current_user else "guest"
-    model_name = parsed["model"] or config.LLAMACPP_MODEL
+    model_name = parsed["model"] or config.VLLM_MODEL
     temp = parsed["temperature"] if parsed["temperature"] is not None else config.DEFAULT_TEMPERATURE
     session_id = parsed["session_id"]
     files: List[UploadFile] = parsed["files"]

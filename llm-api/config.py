@@ -1,7 +1,7 @@
 """
 LLM API Configuration
 All settings are configurable here.
-Single server, llama.cpp backend, native tool calling.
+Single server, vLLM backend, native tool calling.
 """
 import importlib.util
 import os
@@ -64,16 +64,15 @@ _CLUSTER = _load_cluster_config()
 # Server Settings
 # ============================================================================
 SERVER_HOST = getattr(_CLUSTER, "LLM_API_BIND_HOST", "0.0.0.0")
-SERVER_PORT = int(getattr(_CLUSTER, "LLM_API_PORT", 10007))
+SERVER_PORT = int(getattr(_CLUSTER, "LLM_API_PORT", 10002))
 SERVER_WORKERS = 2
 LOG_LEVEL = "INFO"
 
 # ============================================================================
-# llama.cpp Backend
+# vLLM Backend
 # ============================================================================
-LLAMACPP_HOST = os.environ.get("LLAMACPP_HOST", getattr(_CLUSTER, "LOCAL_LLAMACPP_URL", "http://127.0.0.1:5905"))
-LLAMACPP_BACKUP_HOST = os.environ.get("LLAMACPP_BACKUP_HOST", getattr(_CLUSTER, "LOCAL_LLAMACPP_BACKUP_URL", "http://127.0.0.1:10000"))
-LLAMACPP_MODEL = "default"
+VLLM_HOST = os.environ.get("VLLM_HOST", getattr(_CLUSTER, "LOCAL_VLLM_URL", "http://127.0.0.1:10000"))
+VLLM_MODEL = "default"
 OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "llama.cpp/default", "opencode/minimax-m2.5-free")
 
 # ============================================================================
@@ -113,11 +112,11 @@ MODEL_TEMPERATURE_OVERRIDES = {
 }
 
 # ============================================================================
-# llama.cpp Performance Tuning
+# vLLM Performance Tuning
 # ============================================================================
-LLAMACPP_CACHE_PROMPT = True
-LLAMACPP_CONNECTION_POOL_SIZE = 20
-LLAMACPP_SLOTS = 2
+VLLM_CACHE_PROMPT = True
+VLLM_CONNECTION_POOL_SIZE = 20
+VLLM_SLOTS = 2
 
 # ============================================================================
 # Logging Settings (before Agent — agent log target references PROMPTS_LOG_PATH)
@@ -147,7 +146,7 @@ AGENT_FILE_PREVIEW_MAX_CHARS = 120
 AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 4000  # MiniMax M2 / Qwen3 handle long context fine; aggressive compaction was erasing useful detail
 AGENT_COMPACTION_WARM_WINDOW = 10  # multi-file edit flows need more headroom than 5
 
-# Auto-compact: triggered when llama.cpp returns a context-overflow error.
+# Auto-compact: triggered when vLLM returns a context-overflow error.
 # We summarize the older half of the conversation via a single LLM call and
 # replace it with a compact system message, then retry. Only fires reactively.
 AGENT_AUTOCOMPACT_ENABLED = True
@@ -208,8 +207,9 @@ JWT_SECRET_KEY = os.environ.get("JWT_SECRET_KEY", "tvly-dev-CbkzkssG5YZNaM3Ek8JG
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24 * 7
 
-DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "administrator"
+# Admin credentials — edit in the root cluster_config.py EDIT HERE block.
+DEFAULT_ADMIN_USERNAME = getattr(_CLUSTER, "LLM_API_ADMIN_USERNAME", "admin")
+DEFAULT_ADMIN_PASSWORD = getattr(_CLUSTER, "LLM_API_ADMIN_PASSWORD", "administrator")
 
 # ============================================================================
 # File Storage Settings
@@ -289,7 +289,7 @@ TOOL_RESULTS_DIR = DATA_DIR / "tool_results"
 # ============================================================================
 # Web Search Tool Settings
 # ============================================================================
-TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "your-secret-key-change-in-production")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", getattr(_CLUSTER, "TAVILY_API_KEY", "your-secret-key-change-in-production"))
 TAVILY_SEARCH_DEPTH = "advanced"
 TAVILY_INCLUDE_DOMAINS = []
 TAVILY_EXCLUDE_DOMAINS = []
@@ -308,8 +308,9 @@ RAG_DOCUMENTS_DIR = DATA_DIR / "rag_documents"
 RAG_INDEX_DIR = DATA_DIR / "rag_indices"
 RAG_METADATA_DIR = DATA_DIR / "rag_metadata"
 
-RAG_EMBEDDING_MODEL = "/scratch0/LLM_models/offline_models/bge-m3"
-RAG_EMBEDDING_DEVICE = "cuda"
+# RAG model paths/device — edit in the root cluster_config.py EDIT HERE block.
+RAG_EMBEDDING_MODEL = getattr(_CLUSTER, "RAG_EMBEDDING_MODEL", "/scratch0/LLM_models/offline_models/bge-m3")
+RAG_EMBEDDING_DEVICE = getattr(_CLUSTER, "RAG_EMBEDDING_DEVICE", "cuda")
 RAG_EMBEDDING_BATCH_SIZE = 16
 
 RAG_INDEX_TYPE = "Flat"
@@ -326,7 +327,7 @@ RAG_USE_HYBRID_SEARCH = True
 RAG_HYBRID_ALPHA = 0.5
 
 RAG_USE_RERANKING = True
-RAG_RERANKER_MODEL = "/scratch0/LLM_models/offline_models/mmarco-mMiniLMv2-L12-H384-v1"
+RAG_RERANKER_MODEL = getattr(_CLUSTER, "RAG_RERANKER_MODEL", "/scratch0/LLM_models/offline_models/mmarco-mMiniLMv2-L12-H384-v1")
 RAG_RERANKING_TOP_K = 20
 # Preload RAG models by default on non-Windows platforms. Windows local
 # bring-up often runs without the offline embedding/reranker assets staged.
@@ -392,7 +393,7 @@ STREAM_TIMEOUT = 600
 # CORS Settings
 # ============================================================================
 CORS_ORIGINS = [
-    "http://127.0.0.1:10007",
+    "http://127.0.0.1:10002",
     "*",
 ]
 

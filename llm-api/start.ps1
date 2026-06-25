@@ -31,23 +31,16 @@ if (-not (Test-Path "config.py")) {
     throw "config.py not found. Run this from llm-api."
 }
 
-$LlamaHost = & $Python -c "import config; print(getattr(config, 'LLAMACPP_HOST', 'http://127.0.0.1:5905'))"
-$BackupHost = & $Python -c "import config; print(getattr(config, 'LLAMACPP_BACKUP_HOST', 'http://127.0.0.1:10000'))"
-$ServerPort = & $Python -c "import config; print(getattr(config, 'SERVER_PORT', 10007))"
+$VllmHost = & $Python -c "import config; print(getattr(config, 'VLLM_HOST', 'http://127.0.0.1:10000'))"
+$ServerPort = & $Python -c "import config; print(getattr(config, 'SERVER_PORT', 10002))"
 $LogFile = & $Python -c "import config; print(config.LOG_DIR / 'llm_api.log')"
 
-Write-Host "[check] llama.cpp primary: $LlamaHost"
+Write-Host "[check] vLLM: $VllmHost"
 try {
-    Invoke-WebRequest -UseBasicParsing -Uri "$LlamaHost/health" -TimeoutSec 3 | Out-Null
-    Write-Host "[ok] primary llama.cpp reachable."
+    Invoke-WebRequest -UseBasicParsing -Uri "$VllmHost/health" -TimeoutSec 3 | Out-Null
+    Write-Host "[ok] vLLM reachable."
 } catch {
-    Write-Host "[warn] primary llama.cpp not reachable."
-    try {
-        Invoke-WebRequest -UseBasicParsing -Uri "$BackupHost/health" -TimeoutSec 3 | Out-Null
-        Write-Host "[ok] backup llama.cpp reachable: $BackupHost"
-    } catch {
-        Write-Host "[warn] inference will fail until llama.cpp is reachable."
-    }
+    Write-Host "[warn] inference will fail until vLLM is reachable."
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $LogFile) | Out-Null

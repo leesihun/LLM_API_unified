@@ -1,6 +1,6 @@
 """
 LLM Interceptor for logging all LLM interactions.
-Wraps LlamaCppBackend and logs requests/responses to prompts.log.
+Wraps VllmBackend and logs requests/responses to prompts.log.
 """
 import asyncio
 import json
@@ -223,7 +223,7 @@ class LLMInterceptor:
         start_time = time.time()
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_id = str(uuid.uuid4())[:8]
-        backend_name = "LlamaCppBackend"
+        backend_name = "VllmBackend"
         input_tokens = self._estimate_tokens(messages)
 
         self._log_interaction({

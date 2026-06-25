@@ -227,7 +227,7 @@ async def query_rag(request: RAGQueryRequest, current_user: Optional[dict] = Dep
         rag_params = config.TOOL_PARAMETERS.get("rag", {})
         llm_response = await llm_backend.chat(
             [{"role": "user", "content": synthesis_prompt}],
-            config.LLAMACPP_MODEL,
+            config.VLLM_MODEL,
             rag_params.get("temperature", 0.5),
             max_tokens=rag_params.get("max_tokens"),
         )

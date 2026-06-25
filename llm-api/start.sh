@@ -69,21 +69,15 @@ if [[ ! -f "config.py" ]]; then
     exit 1
 fi
 
-LLAMACPP_HOST=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'LLAMACPP_HOST', 'http://127.0.0.1:5905'))")
-LLAMACPP_BACKUP_HOST=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'LLAMACPP_BACKUP_HOST', 'http://127.0.0.1:10000'))")
-SERVER_PORT=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'SERVER_PORT', 10007))")
+VLLM_HOST=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'VLLM_HOST', 'http://127.0.0.1:10000'))")
+SERVER_PORT=$("$PYTHON_BIN" -c "import config; print(getattr(config, 'SERVER_PORT', 10002))")
 LOG_FILE=$("$PYTHON_BIN" -c "import config; print(config.LOG_DIR / 'llm_api.log')")
 
-echo "[check] llama.cpp primary: $LLAMACPP_HOST"
-if curl -fsS "${LLAMACPP_HOST}/health" >/dev/null 2>&1; then
-    echo "[ok] primary llama.cpp reachable."
+echo "[check] vLLM: $VLLM_HOST"
+if curl -fsS "${VLLM_HOST}/health" >/dev/null 2>&1; then
+    echo "[ok] vLLM reachable."
 else
-    echo "[warn] primary llama.cpp not reachable."
-    if [[ -n "$LLAMACPP_BACKUP_HOST" ]] && curl -fsS "${LLAMACPP_BACKUP_HOST}/health" >/dev/null 2>&1; then
-        echo "[ok] backup llama.cpp reachable: $LLAMACPP_BACKUP_HOST"
-    else
-        echo "[warn] inference will fail until llama.cpp is reachable."
-    fi
+    echo "[warn] inference will fail until vLLM is reachable."
 fi
 
 mkdir -p "$(dirname "$LOG_FILE")"

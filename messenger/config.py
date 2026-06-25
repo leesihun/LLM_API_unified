@@ -35,7 +35,7 @@ def _load_cluster_config():
 
 _CLUSTER = _load_cluster_config()
 
-PORT = int(os.environ.get("PORT", str(getattr(_CLUSTER, "MESSENGER_PORT", 10006))))
+PORT = int(os.environ.get("PORT", str(getattr(_CLUSTER, "MESSENGER_PORT", 10003))))
 
 def _path_setting(name: str, default: Path) -> Path:
     raw = os.environ.get(name)
@@ -52,7 +52,8 @@ MESSENGER_STORAGE_DIR = _path_setting("MESSENGER_STORAGE_DIR", SERVER_DIR / "sto
 MESSENGER_PUBLIC_DIR = _path_setting("MESSENGER_PUBLIC_DIR", SERVER_DIR / "public")
 MESSENGER_WEB_DIR = _path_setting("MESSENGER_WEB_DIR", CLIENT_DIR / "dist-web")
 
-SECRET_TOKEN = os.environ.get("SECRET_TOKEN", "leesihun")
+# Terminal access token — edit in the root cluster_config.py EDIT HERE block.
+SECRET_TOKEN = os.environ.get("SECRET_TOKEN", getattr(_CLUSTER, "MESSENGER_TERMINAL_TOKEN", "leesihun"))
 WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", str(APP_DIR.parent))
 CLAUDE_CMD = os.environ.get("CLAUDE_CMD", "claude")
 OPENCODE_CMD = os.environ.get("OPENCODE_CMD", "opencode")

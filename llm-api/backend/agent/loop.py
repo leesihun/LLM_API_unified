@@ -45,7 +45,7 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         tools: Optional[List[str]] = None,
         workspace_dir: Optional[str] = None,
     ):
-        self.model = model or config.LLAMACPP_MODEL
+        self.model = model or config.VLLM_MODEL
         self.temperature = self._resolve_temperature(temperature)
         self.session_id = session_id
         self.username = username
@@ -101,12 +101,12 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         self._pending_postcheck_reminder: Optional[str] = None
 
     # ------------------------------------------------------------------
-    # Sampling parameters forwarded to llama.cpp
+    # Sampling parameters forwarded to vLLM
     # ------------------------------------------------------------------
 
     def _slot_id(self) -> int:
         digest = hashlib.sha256(self.session_id.encode("utf-8")).digest()
-        return int.from_bytes(digest[:8], "big") % config.LLAMACPP_SLOTS
+        return int.from_bytes(digest[:8], "big") % config.VLLM_SLOTS
 
     def _resolve_temperature(self, requested: Optional[float]) -> float:
         """Pick the temperature for this session.
@@ -420,8 +420,8 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
             kwargs["max_tokens"] = config.DEFAULT_MAX_TOKENS
         else:
             kwargs["max_tokens"] = config.AGENT_TOOL_LOOP_MAX_TOKENS
-        # Pin session to a stable llama.cpp KV cache slot for consistent cache hits
-        if config.LLAMACPP_SLOTS > 0 and self.session_id:
+        # Pin session to a stable vLLM KV cache slot for consistent cache hits
+        if config.VLLM_SLOTS > 0 and self.session_id:
             kwargs["id_slot"] = self._slot_id()
         return kwargs
 

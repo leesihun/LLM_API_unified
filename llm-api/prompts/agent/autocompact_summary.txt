@@ -29,7 +29,7 @@ Keep durable, task-relevant facts:
 # Preservation Rules
 
 - Quote identifiers, paths, ports, and IDs verbatim. Do not rephrase
-  `LLAMACPP_HOST` to "the llama.cpp host variable".
+  `VLLM_HOST` to "the vLLM host variable".
 - Preserve numbers exactly: ports, timeouts, version numbers, sizes, counts.
 - Where conversation evidence conflicts, say so briefly and name both sides.
   Do not pick a winner unless the conversation already did.

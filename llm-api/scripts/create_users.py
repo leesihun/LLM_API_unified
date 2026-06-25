@@ -5,7 +5,7 @@ Run this to bulk-create users for testing
 import requests
 
 # Configuration
-API_URL = "http://localhost:10007"
+API_URL = "http://localhost:10002"
 ADMIN_USERNAME = "admin"
 ADMIN_PASSWORD = "administrator"
 

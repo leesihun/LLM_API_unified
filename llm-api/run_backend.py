@@ -47,9 +47,7 @@ def main():
     print(f"  Host:    {config.SERVER_HOST}")
     print(f"  Port:    {config.SERVER_PORT}")
     print(f"  Workers: {effective_workers}")
-    print(f"  Backend: llama.cpp @ {config.LLAMACPP_HOST}")
-    if getattr(config, "LLAMACPP_BACKUP_HOST", ""):
-        print(f"  Backup:  llama.cpp @ {config.LLAMACPP_BACKUP_HOST}")
+    print(f"  Backend: vLLM @ {config.VLLM_HOST}")
     print("=" * 70)
     print()
 
