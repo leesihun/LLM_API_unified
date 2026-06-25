@@ -109,7 +109,11 @@ install_messenger_runtime() {
   (
     cd "$MESSENGER_DIR"
 
-    if ensure_offline_dir; then
+    # If the built dist files are present, skip staging (node_modules only needed for terminals).
+    if [[ -f "server/dist/server.cjs" && -f "client/dist-web/index.html" ]]; then
+      echo "[ok] Messenger dist already present — skipping bundle copy."
+      [[ -d "node_modules" ]] || echo "[warn] node_modules absent — terminal features (/claude, /opencode) will be unavailable."
+    elif ensure_offline_dir; then
       local offline_node_modules="${MESSENGER_NODE_MODULES_DIR:-}"
       local offline_server_dist=""
       local offline_web_dist=""

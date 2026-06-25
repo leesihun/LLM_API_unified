@@ -246,7 +246,7 @@ stage_offline_runtime() {
 }
 
 require_prod_runtime() {
-    [[ -d "node_modules" ]] || die "Messenger node_modules missing. Run ./install-master.sh or stage OFFLINE_DEPS_DIR/messenger/node_modules."
+    [[ -d "node_modules" ]] || echo "[warn] node_modules absent — terminal features (/claude, /opencode) will be unavailable."
     [[ -f "server/dist/server.cjs" ]] || die "Messenger production server bundle missing. Expected server/dist/server.cjs."
     [[ -f "client/dist-web/index.html" ]] || die "Messenger web bundle missing. Expected client/dist-web/index.html."
 }
