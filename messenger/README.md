@@ -5,16 +5,21 @@ A self-hosted real-time team chat platform with bot integration, file sharing, a
 ## Quick Start
 
 ```bash
-# Build/install dependencies, build web client, and start
-./start.sh --build
-# -> http://127.0.0.1:10003
+# First time: install deps + build the bundle, then start
+./start.sh --build --prod
+# -> http://127.0.0.1:10006
 ```
 
 On Windows:
 
 ```powershell
-.\start.ps1 -Build
+.\start.ps1 -Build      # first time only — installs deps + builds the bundle
+.\start.ps1             # later runs: launches the prebuilt server.cjs (no npm)
+.\start.ps1 -Dev        # development: TypeScript dev server (tsx watch)
 ```
+
+`start.ps1` runs the prebuilt `server/dist/server.cjs` by default — no
+`npm install`, Vite, or tsx at runtime. Those only run when you pass `-Build`.
 
 ## Configuration
 
@@ -22,7 +27,7 @@ On Windows:
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `PORT` | `10003` | HTTP/Socket.IO listen port |
+| `PORT` | `10006` | HTTP/Socket.IO listen port |
 | `MESSENGER_DATA_DIR` | auto | SQLite DB directory |
 | `MESSENGER_UPLOADS_DIR` | auto | User-uploaded file storage |
 | `WORKSPACE_DIR` | `/scratch0` | Working dir for /claude and /opencode terminals |
@@ -39,10 +44,9 @@ messenger/
 ├── package.json            npm workspaces root (server, client, shared)
 ├── package-lock.json
 ├── config.py               Runtime config
-├── start.sh                Linux build-and-launch script
-├── start.ps1               Windows build-and-launch script
-├── deps/
-│   └── build-portable.mjs  Electron portable-build helper
+├── start.sh                Linux launch script (runs prebuilt bundle by default)
+├── start.ps1               Windows launch script (runs prebuilt bundle by default)
+├── build-portable.mjs      Builds the portable thin-client Messenger.exe
 ├── server/                 Express + Socket.IO backend
 │   ├── src/
 │   │   ├── index.ts        Entry point
@@ -104,8 +108,11 @@ npm run typecheck
 # Build web client only (no Electron)
 npm run build:web
 
-# Build Electron app (Windows)
-npm run build
+# Build the server bundle (server/dist/server.cjs)
+npm run build --workspace=server
+
+# Build the portable thin-client desktop app -> client/dist-portable/Messenger.exe
+npm run build:portable
 ```
 
 ## Gotchas
@@ -113,4 +120,4 @@ npm run build
 - **sql.js is in-memory** — DB lives in RAM, auto-saved to disk every 5 seconds. Unclean shutdown can lose up to 5 seconds of data.
 - **No TLS built-in** — expects a LAN/VPN reverse proxy if exposed beyond the node. The terminal `SECRET_TOKEN` provides access control.
 - **ClaudeWrapper references removed** — `WRAPPER_ENV_PATH` in `terminal.ts` gracefully no-ops if the file is absent.
-- **Electron build** — requires Windows to build Windows `.exe`; use `--linux` flag for AppImage.
+- **Desktop app is a thin client** — `Messenger.exe` (built by `npm run build:portable`) does **not** embed a server. It opens the master node's Messenger UI at `http://<master-ip>:10006`; the default URL is baked from `cluster_config.MESSENGER_URL` and is editable on first launch or via **Ctrl+,**. The master must be reachable. Building the `.exe` requires Windows + the dev toolchain; running it requires nothing.

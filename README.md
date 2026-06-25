@@ -9,7 +9,7 @@ configured from **one file at the repo root: [`cluster_config.py`](cluster_confi
 |---|---:|---|
 | `llm-api/` | 10002 | OpenAI-compatible LLM API wrapping vLLM, agent loop, auth, RAG, and tools |
 | `hoonbot/` | 10001 | Python bot bridging Messenger, LLM API, cluster delegation, and persistent memory |
-| `messenger/` | 10003 | Node.js real-time team chat with React UI, Socket.IO, files, and terminals |
+| `messenger/` | 10006 | Node.js real-time team chat with React UI, Socket.IO, files, and terminals |
 
 ## Configure everything in one file
 
@@ -37,14 +37,23 @@ at your running vLLM server.
 
 ## Quick Start
 
-1. Start your `llama.cpp` server (not included — see [llm-api/README.md](llm-api/README.md)).
+1. Start your `vLLM` server (not included — see [llm-api/README.md](llm-api/README.md)).
 2. Edit the `EDIT HERE` block in [`cluster_config.py`](cluster_config.py).
 3. Run the launcher for this machine's role:
 
 ```powershell
-# Windows — double-click Start-Master.cmd / Start-Slave.cmd, or:
-.\start-master.ps1 -Build      # master (messenger + llm-api + hoonbot)
-.\start-slave.ps1  -Build      # slave  (llm-api + hoonbot)
+# Windows — just double-click Start-Master.cmd (master) or Start-Slave.cmd (slave).
+```
+
+On Windows the `.cmd` launchers are **one-click**. The first run does the
+one-time setup automatically — creates a Python virtualenv (`.venv`), installs
+the Python deps, and builds the Messenger bundle once — then starts every
+service. **Later runs start instantly with no npm, no Vite, and no build step.**
+Pass `-Rebuild` to redo the one-time setup after dependency changes:
+
+```powershell
+.\setup-and-start-master.ps1            # same as double-clicking Start-Master.cmd
+.\setup-and-start-master.ps1 -Rebuild   # refresh venv + rebuild Messenger bundle
 ```
 
 ```bash
@@ -53,9 +62,23 @@ at your running vLLM server.
 ./start-slave.sh  --build
 ```
 
-`-Build` / `--build` is only needed the first time (or after dependency
-changes). The launcher sets the role for you; everything else comes from
-`cluster_config.py`.
+The first run needs Python (always) and, on the machine that hosts Messenger,
+Node/npm **once** to build the bundle. After that the host only runs prebuilt
+artifacts. Everything else comes from `cluster_config.py`.
+
+### Windows desktop Messenger app (end users)
+
+End users don't need any of the above. Build a portable app once and hand out
+the single `.exe` — it needs **no Python, Node, or npm** on the user's PC:
+
+```powershell
+cd messenger ; npm.cmd run build:portable   # -> client/dist-portable/Messenger.exe
+```
+
+The app is a **thin client**: it just opens the master node's Messenger UI
+(`http://<master-ip>:10006`). The default address is baked in from
+`cluster_config.MESSENGER_URL`; on first launch (or anytime via **Ctrl+,**) the
+user can point it at a different server. Double-click and chat.
 
 For airgapped Linux nodes, use the install step explicitly. The scripts now
 auto-detect an offline bundle if it is placed in one of these nearby paths:
@@ -129,13 +152,17 @@ cd messenger && ./start.sh --build --prod
 cd hoonbot && ./start.sh --build
 ```
 
-Windows uses the same shape:
+Windows uses the same shape (`-Build` is one-time; without it, Messenger runs
+the prebuilt `server/dist/server.cjs` directly — no npm, no Vite, no tsx):
 
 ```powershell
 cd llm-api; .\start.ps1 -Build
-cd ..\messenger; .\start.ps1 -Build
+cd ..\messenger; .\start.ps1 -Build   # first time only; later: .\start.ps1
 cd ..\hoonbot; .\start.ps1 -Build
 ```
+
+`messenger\start.ps1 -Dev` runs the TypeScript dev server (tsx watch) for
+development instead of the prebuilt bundle.
 
 ## Cluster Notes
 

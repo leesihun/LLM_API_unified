@@ -9,11 +9,18 @@ if ! git diff --cached --quiet; then
 
     # Pull remote changes first (rebase to keep linear history)
     echo "Pulling remote changes..."
-    git pull --rebase
+    if ! git pull --rebase; then
+        echo "Warning: Failed to pull from remote. You may need to manually sync."
+    fi
 
-    # Push to the current branch's upstream
+    # Push to the current branch's upstream (with timeout)
     echo "Pushing to remote..."
-    git push
+    if timeout 30 git push 2>&1; then
+        echo "Successfully pushed to remote!"
+    else
+        echo "Warning: Failed to push to remote. Changes are committed locally."
+        echo "Run 'git push' manually when ready."
+    fi
 else
     echo "No changes to commit."
 fi

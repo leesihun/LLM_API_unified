@@ -21,7 +21,7 @@ On Windows:
 
 | Service | Port | How to start |
 |---|---|---|
-| Huni Messenger | 10003 | `cd ../messenger && ./start.sh` |
+| Huni Messenger | 10006 | `cd ../messenger && ./start.sh` |
 | LLM API | 10002 | `cd ../llm-api && ./start.sh` |
 
 ## Configuration
@@ -35,7 +35,7 @@ in `prompts/master/` and `prompts/slave/`.
 | Setting | Default | Purpose |
 |---|---|---|
 | `HOONBOT_PORT` | `10001` | Bot webhook listener port |
-| `MESSENGER_URL` | `http://127.0.0.1:10003` | Messenger server URL |
+| `MESSENGER_URL` | `http://127.0.0.1:10006` | Messenger server URL |
 | `LLM_API_URL` | `http://127.0.0.1:10002` | LLM API URL (`LLM_API_URL` env var overrides) |
 | `LLM_API_USERNAME` | `admin` | Used by setup to obtain a token |
 | `LLM_API_PASSWORD` | `administrator` | Used by setup to obtain a token |

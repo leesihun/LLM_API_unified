@@ -58,9 +58,15 @@ MASTER_NODE_IP = "127.0.0.1"
 # vLLM server listens elsewhere. (vLLM is NOT part of this repo — start it
 # separately.)
 VLLM_SERVER_URL = "http://127.0.0.1:10000"
+# VLLM_MODEL: the model name sent in every request. This MUST match the name
+# vLLM serves it under (vLLM's --served-model-name, or the model path if that
+# flag is omitted). A wrong value — including the placeholder "default" — makes
+# vLLM reply 404 "model does not exist". Discover the exact name with:
+#     curl http://127.0.0.1:10000/v1/models
+VLLM_MODEL = "default"
 
 # ─── Service ports ──────────────────────────────────────────────────────────
-MESSENGER_PORT = 10003
+MESSENGER_PORT = 10006
 HOONBOT_PORT   = 10001
 LLM_API_PORT   = 10002
 
@@ -215,6 +221,7 @@ ADVERTISED_LLM_API_URL = _env("ADVERTISED_LLM_API_URL", _url(NODE_IP, LLM_API_PO
 HOONBOT_LLM_API_URL = _env("HOONBOT_LLM_API_URL", LOCAL_LLM_API_URL)
 
 LOCAL_VLLM_URL = _env("LOCAL_VLLM_URL", VLLM_SERVER_URL)
+VLLM_MODEL = _env("VLLM_MODEL", VLLM_MODEL)
 
 
 # ---------------------------------------------------------------------------

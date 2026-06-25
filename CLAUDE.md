@@ -8,7 +8,7 @@ Three independent services live side-by-side in this repo, plus a shared cluster
 
 - **`llm-api/`** (port 10002, Python/FastAPI) — OpenAI-compatible API wrapping a separately-run `vLLM` server, with an agentic loop, JWT auth, RAG, and tool calling.
 - **`hoonbot/`** (port 10001, Python/FastAPI) — Bridges Messenger ↔ LLM API; handles webhooks, debouncing, persistent memory, heartbeat loop, and (on master) cluster delegation.
-- **`messenger/`** (port 10003, Node/Express + React/Vite) — Real-time chat UI with Socket.IO, file uploads, and embedded `claude` / `opencode` terminals over WebSocket. Master-only.
+- **`messenger/`** (port 10006, Node/Express + React/Vite) — Real-time chat UI with Socket.IO, file uploads, and embedded `claude` / `opencode` terminals over WebSocket. Master-only.
 - **`cluster_config.py`** at the repo root — single source of truth for node role, name, IPs, ports, prompt/heartbeat/skill profiles, and cluster token. Each app's local `config.py` imports it via `_load_cluster_config()` and exposes only what that app needs.
 
 `vLLM` is **not** in this repo. It must be running before `llm-api` starts (default `http://127.0.0.1:10000`).
@@ -17,26 +17,41 @@ Three independent services live side-by-side in this repo, plus a shared cluster
 
 ### Whole-stack (cluster)
 
-```powershell
-.\start-master.ps1 -Build        # install deps, then start messenger + llm-api + hoonbot in background
-.\start-slave.ps1  -Build        # slaves run only llm-api + hoonbot (no messenger)
-```
-Bash equivalents: `./start-master.sh --build`, `./start-slave.sh --build`.
-On Linux, `--build` now means "run install-master.sh / install-slave.sh first, then launch".
-`Start-Master.cmd` / `Start-Slave.cmd` are double-click wrappers.
+**Windows** — double-click `Start-Master.cmd` or `Start-Slave.cmd`. These call `setup-and-start-master.ps1` / `setup-and-start-slave.ps1`, which create a `.venv`, install Python deps, build the Messenger bundle (master only), and launch all services. Later runs start instantly with no npm/build. `-Rebuild` redoes the one-time setup.
 
-`install-master.{sh,ps1}` and `install-slave.{sh,ps1}` are install-only (no launch).
-On Linux, `OFFLINE_DEPS_DIR` is the airgap contract for staged Messenger runtime assets. Supported Messenger bundle paths are `messenger/node_modules`, `messenger/server/dist`, `messenger/client/dist-web`, and a Linux Node runtime under `node/` or `node-v*-linux-*`. Linux scripts skip Python package installation entirely and assume the target server's Python environment is already provisioned. If `OFFLINE_DEPS_DIR` is unset, the scripts auto-detect nearby bundle directories such as `./llm_api_fast_airgap`, `./offline_deps`, `../llm_api_fast_airgap`, or `$HOME/llm_api_fast_airgap`. They also refuse online npm fallback and fail fast instead of contacting `registry.npmjs.org`.
+```powershell
+# Direct PowerShell (after first run, or with -Rebuild to redo setup):
+.\setup-and-start-master.ps1          # master: venv + messenger build + launch
+.\setup-and-start-master.ps1 -Rebuild # force redo setup
+.\setup-and-start-slave.ps1           # slave: venv + launch
+# Fast restart (no setup, uses existing venv set via $env:PYTHON):
+.\start-master.ps1
+.\start-slave.ps1
+```
+
+**Linux** — `./start-master.sh` / `./start-slave.sh`. Pass `--build` on first run to stage offline deps and build the Messenger bundle; later runs start directly.
+
+```bash
+./start-master.sh --build   # first run: stage deps (OFFLINE_DEPS_DIR) + launch
+./start-master.sh           # fast restart
+./start-slave.sh --build
+./start-slave.sh
+```
+
+On Linux, `OFFLINE_DEPS_DIR` is the airgap contract for staged Messenger runtime assets. Supported bundle paths: `messenger/node_modules`, `messenger/server/dist`, `messenger/client/dist-web`. Linux skips Python package installation and assumes the target server's Python environment is already provisioned. If `OFFLINE_DEPS_DIR` is unset, the scripts auto-detect nearby bundle directories such as `./llm_api_fast_airgap`, `./offline_deps`, `../llm_api_fast_airgap`, or `$HOME/llm_api_fast_airgap`. They refuse online npm fallback and fail fast instead of contacting `registry.npmjs.org`.
+
+`install-master.sh` and `install-slave.sh` are called internally by `start-*.sh --build` (not user-facing).
 
 ### Per-service (run individually)
 
 ```powershell
 cd llm-api    ; .\start.ps1 -Build      # vLLM must already be running
-cd messenger  ; .\start.ps1 -Build      # builds web client (npm run build:web) then starts
+cd messenger  ; .\start.ps1 -Build      # first time: npm install + build:web + bundle server, then run
+cd messenger  ; .\start.ps1             # later: runs prebuilt server/dist/server.cjs (no npm); -Dev for tsx watch
 cd hoonbot    ; .\start.ps1 -Build      # depends on messenger + llm-api being up
 ```
 
-For Linux Messenger production, `./start.sh --prod` now runs the prebuilt server bundle directly (`server/dist/server.cjs`) instead of `npm run start`.
+For Linux Messenger production, `./start.sh --prod` now runs the prebuilt server bundle directly (`server/dist/server.cjs`) instead of `npm run start`. On Windows, `messenger\start.ps1` runs that same bundle by default (npm/Vite/tsx only on `-Build`).
 
 ### Validation (no repo-wide test suite)
 
@@ -65,7 +80,9 @@ The cluster is a master + N slaves over plain HTTP on the LAN. Roles are picked 
 
 ## Per-Service Architecture Notes
 
-**llm-api** — single `while` loop in `backend/agent/`, no sub-agents or chains. Tool calls run via `asyncio.gather`. The system prompt is cached at module import and `cache_prompt=True` is passed to vLLM. Sessions are slot-pinned (`id_slot = hash(session_id) % VLLM_SLOTS`) for stable KV-cache hits. Microcompaction compresses old iterations and spills oversize tool results to `data/tool_results/`. Workers > 1 share no state — use `SERVER_WORKERS = 1` during development. Default admin: `admin` / `administrator`.
+**llm-api** — single `while` loop in `backend/agent/`, no sub-agents or chains. Tool calls use capability-based segmented parallel execution: consecutive `is_concurrency_safe` calls (reads, web/RAG, subagent fan-out) run via `asyncio.gather`; mutating tools (`shell_exec`, `file_edit`, `apply_patch`, `file_writer`, `code_exec`, `memo`, `todo_write`, `process_monitor`) are serial barriers. Metadata flags live in `llm-api/tools/schemas.py` (`TOOL_METADATA`). The system prompt is cached at module import; vLLM prefix caching is a server-side flag (`--enable-prefix-caching`), not a per-request field. Microcompaction compresses old iterations and spills oversize tool results to `data/tool_results/`. Workers > 1 share no state — use `SERVER_WORKERS = 1` during development. Default admin: `admin` / `administrator`.
+
+**vLLM tool-call parser (critical):** vLLM only streams tool-call deltas when launched with `--enable-auto-tool-choice --tool-call-parser <parser>`. `<parser>` must match the served model family (Qwen3→`hermes`, Llama 3.x→`llama3_json`, Mistral→`mistral`). Without this, tool calls arrive as raw text and mid-output dispatch never fires.
 
 The `AgentLoop` class (`backend/agent/loop.py`) is composed from five mixins — each in its own file under `backend/agent/`:
 
@@ -93,12 +110,16 @@ Add new agent capabilities by extending the appropriate mixin or adding a new on
 
 **hoonbot** — FastAPI webhook receiver. `handlers/webhook.py` validates → `mark_read` → debounces (`DEBOUNCE_SECONDS=1.5`) → calls LLM API. Memory lives at `hoonbot/data/memory.md` and is injected into the system prompt with an absolute path so the LLM can use file_reader/file_writer tools — **don't move `data/` after startup without restarting**. Heartbeat first tick is delayed one full interval (never immediate). Bot API key is persisted at `hoonbot/data/.apikey`; deleting forces re-registration with Messenger. Skills are plain Markdown files in `hoonbot/skills/`; the agent discovers them via `file_navigator` — no loader code needed.
 
-**messenger** — `sql.js` runs the SQLite DB **in memory**, auto-saved to `data/messenger.db` every 5s — unclean shutdown can lose up to 5s. No TLS built-in; expects LAN/VPN. Terminal WebSocket (`/claude`, `/opencode`) must be registered on the HTTP server **before** Socket.IO attaches (order in `server/src/index.ts`); it gates access via `SECRET_TOKEN` (default `leesihun` — change in prod). Terminal executable paths are configurable via `CLAUDE_CMD`, `OPENCODE_CMD`, and `WORKSPACE_DIR` env vars (set in `messenger/config.py`). Web watchers (`server/src/services/web-poller.ts`) poll URLs on interval, hash responses, and post diffs to rooms when content changes. The Electron portable build is Windows-only by default (`--linux` for AppImage).
+**messenger** — `sql.js` runs the SQLite DB **in memory**, auto-saved to `data/messenger.db` every 5s — unclean shutdown can lose up to 5s. No TLS built-in; expects LAN/VPN. Terminal WebSocket (`/claude`, `/opencode`) must be registered on the HTTP server **before** Socket.IO attaches (order in `server/src/index.ts`); it gates access via `SECRET_TOKEN` (default `leesihun` — change in prod). Terminal executable paths are configurable via `CLAUDE_CMD`, `OPENCODE_CMD`, and `WORKSPACE_DIR` env vars (set in `messenger/config.py`). Web watchers (`server/src/services/web-poller.ts`) poll URLs on interval, hash responses, and post diffs to rooms when content changes.
+
+**Run vs build:** `messenger/start.ps1` runs the prebuilt `server/dist/server.cjs` directly by default — npm/Vite/tsx only run on `-Build` (`-Dev` runs the tsx watch dev server). The bundle (`server/dist`, `client/dist-web`) is gitignored, so `setup-and-start-master.ps1` builds it once if missing. **Desktop app (`build-portable.mjs` at the messenger root → `npm run build:portable`)** is a **thin client**, not an embedded server: `electron/main.ts` loads the master URL (`http://<master-ip>:10006`, baked from `cluster_config.MESSENGER_URL` into `app-config.json`, editable via `electron/setup.html` / Ctrl+,). No server/web bundle/node-pty ships inside the `.exe`; the web client targets `window.location.origin` (`client/src/services/api.ts`), so loading the master origin routes axios + Socket.IO + terminals to the master.
 
 ## Configuration Conventions
 
 - **`/cluster_config.py` is the single user-facing config surface.** Its top-of-file `EDIT HERE` block holds every commonly-changed setting for all three services: role, node name, LAN IPs, the vLLM backend URL, ports, cluster secret, llm-api admin creds + Tavily key + RAG model paths, hoonbot bot name + heartbeat, and the Messenger terminal token. Each value is also overridable by an env var of the same name (that's how the launchers set `CLUSTER_ROLE`).
 - Each app's `config.py` holds **advanced per-service tuning** and reads the common knobs from `cluster_config.py` via `_load_cluster_config()` + `getattr(_CLUSTER, NAME, default)`. When adding a new commonly-changed setting, expose it in the `cluster_config.py` `EDIT HERE` block and read it in the app config with a `getattr` fallback — don't hardcode deployment-specific values in app configs.
+- **`VLLM_MODEL`** in `cluster_config.py` must match vLLM's `--served-model-name`. Discover via `curl http://127.0.0.1:10000/v1/models`. vLLM returns 404 on `/v1/chat/completions` if the `model` field doesn't match.
+- **`response_format` / `guided_json`** can be passed to `/v1/chat/completions` (JSON body or form) to enable vLLM guided/structured decoding. `AgentLoop` accepts them as constructor args and forwards them to every LLM call in the session.
 - Do NOT introduce hidden `.env` runtime requirements. Legitimate runtime env overrides are limited and explicit: e.g. `LLM_API_URL` for hoonbot, `VLLM_HOST` for llm-api, the `MESSENGER_*_DIR` paths for messenger. Don't add new env-var knobs casually.
 - Never commit: `data/` (any service's runtime dir), `*.gguf`, `models/`, `llamacpp/`, `offline_models/`, `.env*`, `.apikey`, `.llm_key`, `.llm_model`, `node_modules/`, `dist*/`.
 

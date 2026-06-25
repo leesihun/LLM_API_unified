@@ -20,24 +20,13 @@
   ],
   "extraResources": [
     {
-      "from": "../portable-staging/server",
-      "to": "server"
-    },
-    {
-      "from": "../portable-staging/web",
-      "to": "web"
-    },
-    {
-      "from": "../portable-staging/server-public",
-      "to": "server-public"
+      "from": "../portable-staging/app-config.json",
+      "to": "app-config.json"
     },
     {
       "from": "../portable-staging/icon.png",
       "to": "icon.png"
     }
   ],
-  "asar": true,
-  "asarUnpack": [
-    "**/*.node"
-  ]
+  "asar": true
 }

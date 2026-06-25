@@ -44,6 +44,8 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         username: str = None,
         tools: Optional[List[str]] = None,
         workspace_dir: Optional[str] = None,
+        response_format: Optional[dict] = None,
+        guided_json: Optional[dict] = None,
     ):
         self.model = model or config.VLLM_MODEL
         self.temperature = self._resolve_temperature(temperature)
@@ -52,6 +54,9 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         self.llm = llm_backend
         self.max_iterations = config.AGENT_MAX_ITERATIONS
         self.enabled_tools = tools or config.AVAILABLE_TOOLS
+        # Structured/guided decoding (opt-in, forwarded to vLLM on each call).
+        self.response_format = response_format
+        self.guided_json = guided_json
         self.tool_calls_log: List[Dict[str, Any]] = []
         self._iteration_boundaries: List[int] = []
         self._available_rag_collections: Optional[List[str]] = None
@@ -103,10 +108,6 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
     # ------------------------------------------------------------------
     # Sampling parameters forwarded to vLLM
     # ------------------------------------------------------------------
-
-    def _slot_id(self) -> int:
-        digest = hashlib.sha256(self.session_id.encode("utf-8")).digest()
-        return int.from_bytes(digest[:8], "big") % config.VLLM_SLOTS
 
     def _resolve_temperature(self, requested: Optional[float]) -> float:
         """Pick the temperature for this session.
@@ -409,20 +410,23 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
             view.append({"role": "system", "content": block})
 
     def _sampling_kwargs(self, final_response: bool = False) -> Dict[str, Any]:
-        """Return sampling + slot-pinning params to forward to the LLM backend."""
+        """Return sampling params to forward to the LLM backend."""
         kwargs: Dict[str, Any] = {
             "top_p": config.DEFAULT_TOP_P,
             "top_k": config.DEFAULT_TOP_K,
             "min_p": config.DEFAULT_MIN_P,
-            "repeat_penalty": config.DEFAULT_REPEAT_PENALTY,
+            "repetition_penalty": config.DEFAULT_REPETITION_PENALTY,
         }
         if final_response:
             kwargs["max_tokens"] = config.DEFAULT_MAX_TOKENS
         else:
             kwargs["max_tokens"] = config.AGENT_TOOL_LOOP_MAX_TOKENS
-        # Pin session to a stable vLLM KV cache slot for consistent cache hits
-        if config.VLLM_SLOTS > 0 and self.session_id:
-            kwargs["id_slot"] = self._slot_id()
+        # Structured/guided decoding is opt-in per request. When the caller sets
+        # it they want a constrained answer, so forward it on the agent's calls.
+        if getattr(self, "response_format", None) is not None:
+            kwargs["response_format"] = self.response_format
+        if getattr(self, "guided_json", None) is not None:
+            kwargs["guided_json"] = self.guided_json
         return kwargs
 
     def _can_start_tool_immediately(self, tool_name: str, deferred_seen: bool) -> bool:
@@ -509,8 +513,10 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
 
             self._iteration_boundaries.append(len(msgs))
 
-            # Collect all tool calls. Read-only safe tools may start during
-            # streaming; mutating/stateful tools run serially after.
+            # Collect all tool calls. Concurrency-safe tools (independent reads
+            # and subagent fan-out) run in parallel during resolution; mutating
+            # tools are serial barriers. Read-only safe tools additionally start
+            # mid-stream as soon as their args parse (see resolution below).
             all_tool_calls: list[ToolCall] = []
             # (tc, task_or_none) pairs; None means deferred serial execution.
             pending_tasks: list[tuple[ToolCall, Optional[asyncio.Task]]] = []
@@ -611,22 +617,64 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
                     self._tool_signature(tc.function.name, tc.function.arguments)
                 )
 
-            # Resolve results in model order.
-            results = []
-            for tc, task in pending_tasks:
-                _meta = TOOL_METADATA.get(tc.function.name, {})
-                if task is None:
+            # Resolve results. Like Claude Code / Cursor / Codex, independent
+            # work runs concurrently while mutations stay ordered: a maximal run
+            # of consecutive concurrency-safe calls (reads, subagent fan-out) is
+            # gathered in parallel, and every non-concurrency-safe call (writes,
+            # shell_exec, code_exec, memo, todo, process_monitor) is a serial
+            # barrier that runs alone. Because each group is awaited before the
+            # loop advances, all earlier tools finish before a barrier runs and
+            # the barrier finishes before any later tool starts — preserving
+            # read-after-write and write-after-write ordering within the turn.
+            # Tools already launched mid-stream (task is not None) are awaited in
+            # place; the rest are launched here. Results stay in model order.
+            results: List[Optional[Dict[str, Any]]] = [None] * len(pending_tasks)
+            idx = 0
+            n_pending = len(pending_tasks)
+            while idx < n_pending:
+                meta = TOOL_METADATA.get(pending_tasks[idx][0].function.name, {})
+                if meta.get("is_concurrency_safe"):
+                    group_idx: list[int] = []
+                    coros: list = []
+                    while idx < n_pending:
+                        g_tc, g_task = pending_tasks[idx]
+                        g_meta = TOOL_METADATA.get(g_tc.function.name, {})
+                        if not g_meta.get("is_concurrency_safe"):
+                            break
+                        if g_task is None:
+                            # Not started mid-stream — launch now and announce it.
+                            yield ToolStatusEvent(
+                                tool_name=g_tc.function.name,
+                                tool_call_id=g_tc.id,
+                                status="started",
+                                activity=g_meta.get("activity", ""),
+                                user_name=g_meta.get("user_name", ""),
+                            )
+                            coros.append(
+                                self.execute_tool(g_tc.function.name, g_tc.function.arguments, g_tc.id)
+                            )
+                        else:
+                            # Already running from the mid-stream early start.
+                            coros.append(g_task)
+                        group_idx.append(idx)
+                        idx += 1
+                    group_results = await asyncio.gather(*coros)
+                    for r_idx, r in zip(group_idx, group_results):
+                        results[r_idx] = r
+                else:
+                    # Serial barrier: mutating / stateful tool runs alone.
+                    tc, _ = pending_tasks[idx]
                     yield ToolStatusEvent(
                         tool_name=tc.function.name,
                         tool_call_id=tc.id,
                         status="started",
-                        activity=_meta.get("activity", ""),
-                        user_name=_meta.get("user_name", ""),
+                        activity=meta.get("activity", ""),
+                        user_name=meta.get("user_name", ""),
                     )
-                    result = await self.execute_tool(tc.function.name, tc.function.arguments, tc.id)
-                else:
-                    result = await task
-                results.append(result)
+                    results[idx] = await self.execute_tool(
+                        tc.function.name, tc.function.arguments, tc.id
+                    )
+                    idx += 1
 
             # Record iteration outcome (all-failed vs at-least-one-success)
             # for the consecutive-failure detector.

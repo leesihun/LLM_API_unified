@@ -72,7 +72,7 @@ LOG_LEVEL = "INFO"
 # vLLM Backend
 # ============================================================================
 VLLM_HOST = os.environ.get("VLLM_HOST", getattr(_CLUSTER, "LOCAL_VLLM_URL", "http://127.0.0.1:10000"))
-VLLM_MODEL = "default"
+VLLM_MODEL = os.environ.get("VLLM_MODEL", getattr(_CLUSTER, "VLLM_MODEL", "default"))
 OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "llama.cpp/default", "opencode/minimax-m2.5-free")
 
 # ============================================================================
@@ -99,7 +99,7 @@ DEFAULT_TOP_P = 0.95
 DEFAULT_TOP_K = 40
 DEFAULT_MIN_P = 0.1
 DEFAULT_MAX_TOKENS = 8192
-DEFAULT_REPEAT_PENALTY = 1
+DEFAULT_REPETITION_PENALTY = 1.0   # vLLM's field is `repetition_penalty` (1.0 = no penalty)
 
 # Per-model temperature overrides (substring match on model name, lowercase).
 # Reasoning-trained models have published optimal settings — using a generic
@@ -114,9 +114,11 @@ MODEL_TEMPERATURE_OVERRIDES = {
 # ============================================================================
 # vLLM Performance Tuning
 # ============================================================================
-VLLM_CACHE_PROMPT = True
+# Prefix caching is a vLLM *server* flag (`--enable-prefix-caching`), not a
+# per-request field, so there is no cache_prompt knob here. The agent still
+# keeps its system-prompt prefix byte-stable (see prompt_assembly) so vLLM's
+# automatic prefix cache hits across iterations.
 VLLM_CONNECTION_POOL_SIZE = 20
-VLLM_SLOTS = 2
 
 # ============================================================================
 # Logging Settings (before Agent — agent log target references PROMPTS_LOG_PATH)

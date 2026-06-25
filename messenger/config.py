@@ -35,7 +35,7 @@ def _load_cluster_config():
 
 _CLUSTER = _load_cluster_config()
 
-PORT = int(os.environ.get("PORT", str(getattr(_CLUSTER, "MESSENGER_PORT", 10003))))
+PORT = int(os.environ.get("PORT", str(getattr(_CLUSTER, "MESSENGER_PORT", 10006))))
 
 def _path_setting(name: str, default: Path) -> Path:
     raw = os.environ.get(name)

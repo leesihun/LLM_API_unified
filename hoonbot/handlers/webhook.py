@@ -554,6 +554,9 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
     running_tools: dict[str, str] = {}  # tool_call_id -> tool_name, insertion-ordered
     session_id_from_header: str | None = None
     status_msg_id: int | None = None  # ID of the live tool-status message in chat
+    draft_msg_id: int | None = None   # ID of the live text-draft message in chat
+    last_draft_edit: float = 0.0
+    _DRAFT_EDIT_INTERVAL = 0.8
 
     async def _refresh_typing() -> None:
         """Periodically re-fire the typing event so the indicator stays visible."""
@@ -609,8 +612,6 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                     status = ts.get("status", "")
                     if status == "started":
                         running_tools[tool_key] = tool_name
-                        # Discard any pre-tool reasoning text
-                        full_text = ""
                         status_text = _format_tool_status(running_tools)
                         if status_msg_id is None:
                             status_msg_id = await messenger.send_message_returning_id(
@@ -635,23 +636,37 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                 text = choices[0].get("delta", {}).get("content", "")
                 if text:
                     full_text += text
+                    now = time.monotonic()
+                    if now - last_draft_edit >= _DRAFT_EDIT_INTERVAL and full_text.strip():
+                        if draft_msg_id is None:
+                            draft_msg_id = await messenger.send_message_returning_id(
+                                room_id, full_text.strip(), reply_to_id
+                            )
+                        else:
+                            await messenger.edit_message(draft_msg_id, full_text.strip())
+                        last_draft_edit = now
 
     except httpx.ReadTimeout:
         logger.warning(f"{log_prefix} Stream read timeout after collecting {len(full_text)} chars")
         if status_msg_id is not None:
             await messenger.delete_message(status_msg_id)
         if full_text.strip():
-            await messenger.send_message(
-                room_id,
-                full_text.strip() + "\n\n⚠️ (응답이 시간 초과로 잘렸어요)",
-                reply_to_id=reply_to_id,
-            )
+            msg = full_text.strip() + "\n\n⚠️ (응답이 시간 초과로 잘렸어요)"
+            if draft_msg_id is not None:
+                await messenger.edit_message(draft_msg_id, msg)
+            else:
+                await messenger.send_message(room_id, msg, reply_to_id=reply_to_id)
             return full_text
         raise
     except Exception:
         if status_msg_id is not None:
             try:
                 await messenger.delete_message(status_msg_id)
+            except Exception:
+                pass
+        if draft_msg_id is not None:
+            try:
+                await messenger.delete_message(draft_msg_id)
             except Exception:
                 pass
         raise
@@ -671,14 +686,26 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
         await messenger.delete_message(status_msg_id)
 
     final_text = full_text.strip()
-    if final_text:
-        await messenger.send_message(room_id, final_text, reply_to_id=reply_to_id)
-        return final_text
+    if draft_msg_id is not None:
+        # A live draft was already posted — settle it to the final text or clean up
+        if final_text:
+            await messenger.edit_message(draft_msg_id, final_text)
+        else:
+            await messenger.delete_message(draft_msg_id)
+            fallback = "완료."
+            await messenger.send_message(room_id, fallback, reply_to_id=reply_to_id)
+            logger.warning(f"{log_prefix} LLM produced no text output — sent fallback acknowledgment")
+            return fallback
+    else:
+        if final_text:
+            await messenger.send_message(room_id, final_text, reply_to_id=reply_to_id)
+        else:
+            fallback = "완료."
+            await messenger.send_message(room_id, fallback, reply_to_id=reply_to_id)
+            logger.warning(f"{log_prefix} LLM produced no text output — sent fallback acknowledgment")
+            return fallback
 
-    fallback = "완료."
-    await messenger.send_message(room_id, fallback, reply_to_id=reply_to_id)
-    logger.warning(f"{log_prefix} LLM produced no text output — sent fallback acknowledgment")
-    return fallback
+    return final_text
 
 
 # ---------------------------------------------------------------------------

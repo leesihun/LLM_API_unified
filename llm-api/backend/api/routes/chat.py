@@ -66,6 +66,8 @@ async def _parse_request(request: Request) -> dict:
         max_tokens = form.get("max_tokens")
         session_id = form.get("session_id") or None
         workspace = form.get("workspace") or None
+        response_format = form.get("response_format")
+        guided_json = form.get("guided_json")
         files = [v for v in form.getlist("files") if isinstance(v, UploadFile) and v.filename]
         try:
             messages_data = json.loads(messages_raw)
@@ -84,7 +86,19 @@ async def _parse_request(request: Request) -> dict:
         max_tokens = body.get("max_tokens")
         session_id = body.get("session_id") or None
         workspace = body.get("workspace") or None
+        response_format = body.get("response_format")
+        guided_json = body.get("guided_json")
         files = []
+
+    # response_format / guided_json may arrive as a JSON-encoded string (form
+    # posts) or an object (JSON body). Normalize to a dict or None.
+    def _coerce_obj(v):
+        if isinstance(v, str):
+            try:
+                return json.loads(v) if v.strip() else None
+            except json.JSONDecodeError:
+                return None
+        return v or None
 
     return dict(
         messages_data=messages_data,
@@ -95,6 +109,8 @@ async def _parse_request(request: Request) -> dict:
         session_id=session_id,
         workspace=workspace,
         files=files,
+        response_format=_coerce_obj(response_format),
+        guided_json=_coerce_obj(guided_json),
     )
 
 
@@ -223,6 +239,8 @@ async def chat_completions(
         temp = parsed["temperature"] if parsed["temperature"] is not None else config.DEFAULT_TEMPERATURE
         session_id = parsed["session_id"]
         workspace = parsed["workspace"]
+        response_format = parsed["response_format"]
+        guided_json = parsed["guided_json"]
         files: List[UploadFile] = parsed["files"]
         username = current_user["username"] if current_user else "guest"
 
@@ -277,6 +295,8 @@ async def chat_completions(
             session_id=session_id,
             username=username,
             workspace_dir=effective_workspace,
+            response_format=response_format,
+            guided_json=guided_json,
         )
 
         request_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"

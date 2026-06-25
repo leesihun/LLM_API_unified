@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Messenger — Server</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: #0f1115;
+      color: #e6e6e6;
+    }
+    .card {
+      width: 420px;
+      max-width: 90vw;
+      background: #181b21;
+      border: 1px solid #262b33;
+      border-radius: 12px;
+      padding: 28px 28px 24px;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+    }
+    h1 { font-size: 18px; margin: 0 0 4px; }
+    p.sub { margin: 0 0 18px; font-size: 13px; color: #9aa3af; }
+    label { display: block; font-size: 12px; color: #9aa3af; margin-bottom: 6px; }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      font-size: 14px;
+      border-radius: 8px;
+      border: 1px solid #2c333d;
+      background: #0f1115;
+      color: #e6e6e6;
+      outline: none;
+    }
+    input:focus { border-color: #3b82f6; }
+    button {
+      margin-top: 16px;
+      width: 100%;
+      padding: 11px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      background: #3b82f6;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover { background: #2f6fe0; }
+    .err {
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      font-size: 13px;
+      border-radius: 8px;
+      background: #2a1416;
+      border: 1px solid #5b2326;
+      color: #f1a8ad;
+    }
+    .hint { margin-top: 14px; font-size: 12px; color: #6b7280; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Connect to Messenger</h1>
+    <p class="sub">Enter the address of your Messenger server.</p>
+    <div id="error" class="err" style="display:none"></div>
+    <label for="url">Server URL</label>
+    <input id="url" type="text" placeholder="http://192.168.0.10:10006" autofocus />
+    <button id="save">Connect</button>
+    <div class="hint">Press Ctrl+, anytime to change this.</div>
+  </div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const input = document.getElementById('url');
+    const errBox = document.getElementById('error');
+
+    const current = params.get('current') || params.get('url') || '';
+    if (current) input.value = current;
+
+    if (params.get('error') === 'unreachable') {
+      errBox.style.display = 'block';
+      errBox.textContent = 'Could not reach ' + (params.get('url') || 'the server') + '. Check the address and that the server is running.';
+    }
+
+    // Prefill from saved config if nothing in the query.
+    if (!input.value && window.electronAPI?.getServerUrl) {
+      window.electronAPI.getServerUrl().then((u) => { if (u) input.value = u; });
+    }
+
+    async function save() {
+      const url = input.value.trim();
+      if (!url) { input.focus(); return; }
+      await window.electronAPI.setServerUrl(url);
+    }
+
+    document.getElementById('save').addEventListener('click', save);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
+  </script>
+</body>
+</html>

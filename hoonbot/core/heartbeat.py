@@ -36,13 +36,17 @@ _TASK_EXECUTION_TEMPLATE = config.read_prompt("heartbeat/task_execution.txt")
 _STALE_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 
 _OVERFLOW_KEYWORDS = (
+    # vLLM: "This model's maximum context length is N tokens. However, you
+    # requested M ... Please reduce the length of the messages."
     "context",
     "exceed",
     "too large",
     "too long",
-    "n_ctx",
-    "slot unavailable",
-    "input is too large",
+    "maximum context length",
+    "maximum model length",
+    "please reduce the length",
+    "longer than the maximum",
+    "reduce the length of the messages",
 )
 
 

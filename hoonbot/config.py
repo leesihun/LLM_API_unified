@@ -72,7 +72,7 @@ def _read_credential_file(name: str) -> str:
 # ---------------------------------------------------------------------------
 HOONBOT_PORT = int(getattr(_CLUSTER, "HOONBOT_PORT", 10001))
 HOONBOT_HOST = getattr(_CLUSTER, "HOONBOT_BIND_HOST", "0.0.0.0")
-MESSENGER_PORT = int(getattr(_CLUSTER, "MESSENGER_PORT", 10003))
+MESSENGER_PORT = int(getattr(_CLUSTER, "MESSENGER_PORT", 10006))
 LLM_API_PORT = int(getattr(_CLUSTER, "LLM_API_PORT", 10002))
 
 

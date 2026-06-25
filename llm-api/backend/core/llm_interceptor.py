@@ -169,8 +169,9 @@ class LLMInterceptor:
         top_k: int = None,
         min_p: float = None,
         max_tokens: int = None,
-        repeat_penalty: float = None,
-        id_slot: int = None,
+        repetition_penalty: float = None,
+        guided_json: dict = None,
+        response_format: dict = None,
     ):
         from backend.core.llm_backend import (
             LLMResponse, TextEvent, ToolCallDeltaEvent, ToolCall,
@@ -184,8 +185,8 @@ class LLMInterceptor:
             messages, model, temperature,
             tools=tools, session_id=session_id, agent_type=agent_type,
             top_p=top_p, top_k=top_k, min_p=min_p,
-            max_tokens=max_tokens, repeat_penalty=repeat_penalty,
-            id_slot=id_slot,
+            max_tokens=max_tokens, repetition_penalty=repetition_penalty,
+            guided_json=guided_json, response_format=response_format,
         ):
             if isinstance(event, TextEvent):
                 content_parts.append(event.content)
@@ -216,8 +217,9 @@ class LLMInterceptor:
         top_k: int = None,
         min_p: float = None,
         max_tokens: int = None,
-        repeat_penalty: float = None,
-        id_slot: int = None,
+        repetition_penalty: float = None,
+        guided_json: dict = None,
+        response_format: dict = None,
     ) -> AsyncIterator:
         """Yields StreamEvent objects from backend.chat_stream()."""
         start_time = time.time()
@@ -255,8 +257,8 @@ class LLMInterceptor:
             async for event in self.backend.chat_stream(
                 messages, model, temperature, tools=tools,
                 top_p=top_p, top_k=top_k, min_p=min_p,
-                max_tokens=max_tokens, repeat_penalty=repeat_penalty,
-                id_slot=id_slot,
+                max_tokens=max_tokens, repetition_penalty=repetition_penalty,
+                guided_json=guided_json, response_format=response_format,
             ):
                 if isinstance(event, TextEvent):
                     collected_text += event.content

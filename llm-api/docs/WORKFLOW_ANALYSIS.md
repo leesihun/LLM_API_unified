@@ -601,7 +601,7 @@ data/
 ### 8.1 Architecture
 
 ```
-Messenger (port 10003) ◄──► Hoonbot (port 10001) ◄──► LLM API (port 10002)
+Messenger (port 10006) ◄──► Hoonbot (port 10001) ◄──► LLM API (port 10002)
 ```
 
 Hoonbot is a standalone FastAPI app that:

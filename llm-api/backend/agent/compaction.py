@@ -232,9 +232,14 @@ class CompactionMixin:
         if not isinstance(exc, httpx.HTTPStatusError):
             return False
         msg = str(exc).lower()
+        # vLLM phrases overflow as: "This model's maximum context length is N
+        # tokens. However, you requested M ... Please reduce the length of the
+        # messages." Keep generic needles too so detection stays backend-agnostic.
         needles = (
             "context", "exceed", "too large", "too long",
-            "n_ctx", "slot unavailable", "input is too large",
+            "maximum context length", "maximum model length",
+            "please reduce the length", "longer than the maximum",
+            "reduce the length of the messages",
         )
         return any(n in msg for n in needles)
 

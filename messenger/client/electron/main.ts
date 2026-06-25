@@ -1,11 +1,7 @@
-import { app, BrowserWindow, Notification, ipcMain } from 'electron';
+import { app, BrowserWindow, Notification, ipcMain, globalShortcut } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { createRequire } from 'module';
-import http from 'http';
-
-const _require = createRequire(import.meta.url);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,7 +11,12 @@ if (process.platform === 'win32') {
   app.commandLine.appendSwitch('high-dpi-support', '1');
 }
 
-const SERVER_PORT = 10003;
+// ---------------------------------------------------------------------------
+// Thin client — the desktop app is just a window pointed at the master node's
+// Messenger server. The web client (services/api.ts) targets window.location
+// .origin, so loading the master URL makes axios + Socket.IO + terminals all
+// talk to the master with no bundled server.
+// ---------------------------------------------------------------------------
 
 function getIconPath(): string {
   if (app.isPackaged) {
@@ -24,63 +25,80 @@ function getIconPath(): string {
   return path.join(__dirname, '..', 'src', 'assets', 'icon.png');
 }
 
-// ---------------------------------------------------------------------------
-// Embedded server — only when running as a packaged app
-// ---------------------------------------------------------------------------
-function getAppDataDir(): string {
-  return path.join(app.getPath('userData'), 'messenger-data');
+// Per-user config: %APPDATA%/Messenger/config.json holds the chosen server URL.
+function getUserConfigPath(): string {
+  return path.join(app.getPath('userData'), 'config.json');
 }
 
-function startEmbeddedServer(): Promise<void> {
-  const appData = getAppDataDir();
-
-  // Ensure writable directories exist
-  for (const sub of ['data', 'uploads', 'chunks', 'storage']) {
-    fs.mkdirSync(path.join(appData, sub), { recursive: true });
+function readUserServerUrl(): string {
+  try {
+    const raw = fs.readFileSync(getUserConfigPath(), 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.serverUrl === 'string' && parsed.serverUrl.trim()) {
+      return parsed.serverUrl.trim().replace(/\/$/, '');
+    }
+  } catch {
+    /* not configured yet */
   }
-
-  // Set env vars so the server uses our writable directories
-  process.env.MESSENGER_EMBEDDED = '1';
-  process.env.PORT = String(SERVER_PORT);
-  process.env.MESSENGER_DATA_DIR = path.join(appData, 'data');
-  process.env.MESSENGER_UPLOADS_DIR = path.join(appData, 'uploads');
-  process.env.MESSENGER_CHUNKS_DIR = path.join(appData, 'chunks');
-  process.env.MESSENGER_STORAGE_DIR = path.join(appData, 'storage');
-
-  // Static resources shipped with the app
-  const resPath = process.resourcesPath;
-  process.env.MESSENGER_PUBLIC_DIR = path.join(resPath, 'server-public');
-  process.env.MESSENGER_WEB_DIR = path.join(resPath, 'web');
-
-  // Load and start the bundled server
-  const serverPath = path.join(resPath, 'server', 'server.cjs');
-  const serverModule = _require(serverPath);
-  return serverModule.main();
+  return '';
 }
 
-function waitForServer(port: number, timeoutMs = 15000): Promise<void> {
-  const start = Date.now();
-  return new Promise((resolve, reject) => {
-    function check() {
-      const req = http.get(`http://localhost:${port}/health`, (res) => {
-        if (res.statusCode === 200) return resolve();
-        retry();
-      });
-      req.on('error', retry);
-      req.setTimeout(1000, () => { req.destroy(); retry(); });
+// Build-time default baked into resources/app-config.json (from cluster_config).
+function readBakedServerUrl(): string {
+  try {
+    const candidate = app.isPackaged
+      ? path.join(process.resourcesPath, 'app-config.json')
+      : path.join(__dirname, '..', 'app-config.json');
+    const raw = fs.readFileSync(candidate, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.serverUrl === 'string' && parsed.serverUrl.trim()) {
+      return parsed.serverUrl.trim().replace(/\/$/, '');
     }
-    function retry() {
-      if (Date.now() - start > timeoutMs) return reject(new Error('Server start timeout'));
-      setTimeout(check, 200);
-    }
-    check();
-  });
+  } catch {
+    /* no baked default */
+  }
+  return '';
+}
+
+function resolveServerUrl(): string {
+  return readUserServerUrl() || readBakedServerUrl();
+}
+
+function saveUserServerUrl(url: string): void {
+  const clean = url.trim().replace(/\/$/, '');
+  fs.mkdirSync(path.dirname(getUserConfigPath()), { recursive: true });
+  fs.writeFileSync(getUserConfigPath(), JSON.stringify({ serverUrl: clean }, null, 2));
+}
+
+function getSetupHtmlPath(): string {
+  // setup.html is shipped next to the built main.js (dist-electron/).
+  return path.join(__dirname, 'setup.html');
 }
 
 // ---------------------------------------------------------------------------
 // Window
 // ---------------------------------------------------------------------------
 let mainWindow: BrowserWindow | null = null;
+
+function loadServer(win: BrowserWindow) {
+  if (process.env.VITE_DEV_SERVER_URL) {
+    win.loadURL(process.env.VITE_DEV_SERVER_URL);
+    return;
+  }
+  const serverUrl = resolveServerUrl();
+  if (!serverUrl) {
+    win.loadFile(getSetupHtmlPath());
+    return;
+  }
+  win.loadURL(serverUrl).catch(() => {
+    win.loadFile(getSetupHtmlPath(), { query: { error: 'unreachable', url: serverUrl } });
+  });
+}
+
+function openSetup() {
+  if (!mainWindow) return;
+  mainWindow.loadFile(getSetupHtmlPath(), { query: { current: resolveServerUrl() } });
+}
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -102,14 +120,15 @@ function createWindow() {
     mainWindow?.show();
   });
 
-  if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-  } else if (app.isPackaged) {
-    // In packaged mode, load from the embedded server
-    mainWindow.loadURL(`http://localhost:${SERVER_PORT}`);
-  } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
-  }
+  // If the master URL is set but the page fails to load, drop back to setup.
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, _desc, validatedURL) => {
+    // -3 == ERR_ABORTED (e.g. in-app navigation); ignore those and the setup page itself.
+    if (errorCode === -3) return;
+    if (validatedURL.startsWith('file://')) return;
+    mainWindow?.loadFile(getSetupHtmlPath(), { query: { error: 'unreachable', url: validatedURL } });
+  });
+
+  loadServer(mainWindow);
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -119,16 +138,14 @@ function createWindow() {
 // ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
-app.whenReady().then(async () => {
-  if (app.isPackaged) {
-    try {
-      await startEmbeddedServer();
-      await waitForServer(SERVER_PORT);
-    } catch (err) {
-      console.error('Failed to start embedded server:', err);
-    }
-  }
+app.whenReady().then(() => {
   createWindow();
+  // Ctrl+, (Cmd+, on macOS) reopens the server-URL settings page.
+  globalShortcut.register('CommandOrControl+,', openSetup);
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
 });
 
 app.on('window-all-closed', () => {
@@ -139,6 +156,18 @@ app.on('activate', () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
+});
+
+// ---------------------------------------------------------------------------
+// IPC
+// ---------------------------------------------------------------------------
+ipcMain.handle('get-server-url', () => resolveServerUrl());
+
+ipcMain.handle('set-server-url', (_event, url: string) => {
+  if (typeof url !== 'string' || !url.trim()) return false;
+  saveUserServerUrl(url);
+  if (mainWindow) loadServer(mainWindow);
+  return true;
 });
 
 // IPC: Show desktop notification

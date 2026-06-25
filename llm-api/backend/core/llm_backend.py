@@ -144,8 +144,9 @@ class VllmBackend:
         top_k: Optional[int] = None,
         min_p: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        repeat_penalty: Optional[float] = None,
-        id_slot: Optional[int] = None,
+        repetition_penalty: Optional[float] = None,
+        guided_json: Optional[dict] = None,
+        response_format: Optional[dict] = None,
     ) -> dict[str, Any]:
         """Assemble the request payload with all vLLM parameters.
 
@@ -160,13 +161,9 @@ class VllmBackend:
         if tools:
             payload["tools"] = tools
             payload["parallel_tool_calls"] = True
-        # KV cache reuse — skip re-evaluating shared prompt prefix
-        if getattr(config, 'VLLM_CACHE_PROMPT', True):
-            payload["cache_prompt"] = True
-        # Pin to a specific KV cache slot for consistent cache hits
-        if id_slot is not None:
-            payload["id_slot"] = id_slot
-        # Sampling parameters
+        # Sampling parameters. vLLM's OpenAI-compatible endpoint accepts top_k,
+        # min_p and repetition_penalty as top-level fields (cache_prompt/id_slot
+        # were llama.cpp-only and are gone — vLLM does prefix caching server-side).
         if top_p is not None:
             payload["top_p"] = top_p
         if top_k is not None:
@@ -175,8 +172,14 @@ class VllmBackend:
             payload["min_p"] = min_p
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
-        if repeat_penalty is not None:
-            payload["repeat_penalty"] = repeat_penalty
+        if repetition_penalty is not None:
+            payload["repetition_penalty"] = repetition_penalty
+        # Structured / guided decoding (vLLM): constrain output to a JSON schema
+        # (guided_json) or an OpenAI-style response_format. Opt-in per request.
+        if guided_json is not None:
+            payload["guided_json"] = guided_json
+        if response_format is not None:
+            payload["response_format"] = response_format
         return payload
 
     # ------------------------------------------------------------------
@@ -193,15 +196,16 @@ class VllmBackend:
         top_k: Optional[int] = None,
         min_p: Optional[float] = None,
         max_tokens: Optional[int] = None,
-        repeat_penalty: Optional[float] = None,
-        id_slot: Optional[int] = None,
+        repetition_penalty: Optional[float] = None,
+        guided_json: Optional[dict] = None,
+        response_format: Optional[dict] = None,
     ) -> AsyncIterator[StreamEvent]:
         await self._select_available_host(prefer_active=True)
         payload = self._build_payload(
             messages, model, temperature,
             tools=tools, top_p=top_p, top_k=top_k, min_p=min_p,
-            max_tokens=max_tokens, repeat_penalty=repeat_penalty,
-            id_slot=id_slot,
+            max_tokens=max_tokens, repetition_penalty=repetition_penalty,
+            guided_json=guided_json, response_format=response_format,
         )
 
         # State for accumulating tool call deltas across SSE chunks
@@ -296,6 +300,33 @@ class VllmBackend:
 
                         if idx > max_seen_idx:
                             max_seen_idx = idx
+
+                        # JSON-complete early dispatch: once the accumulated
+                        # argument string forms a complete JSON object, yield
+                        # immediately rather than waiting for the next index
+                        # or [DONE]. This closes the gap for the last (or only)
+                        # tool call in a turn — previously it always waited for
+                        # stream end regardless of when arguments finished.
+                        if (
+                            entry["name"]
+                            and idx not in yielded_indices
+                            and entry["arguments_str"].rstrip().endswith("}")
+                        ):
+                            try:
+                                args = json.loads(entry["arguments_str"])
+                                yield ToolCallDeltaEvent(
+                                    tool_calls=[ToolCall(
+                                        id=entry["id"],
+                                        function=ToolCallFunction(
+                                            name=entry["name"], arguments=args
+                                        ),
+                                    )],
+                                    finish_reason="tool",
+                                    is_partial=True,
+                                )
+                                yielded_indices.add(idx)
+                            except json.JSONDecodeError:
+                                pass  # still accumulating
 
         # After the stream finishes, yield any tool calls not yet dispatched
         remaining: list[ToolCall] = []
