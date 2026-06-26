@@ -40,24 +40,24 @@ ROOT_DIR = Path(__file__).resolve().parent
 #       "slave" runs llm-api + hoonbot only and takes delegated tasks.
 #       The Start-Master / Start-Slave launchers set this for you; this is the
 #       default used when you start a single service by hand.
-ROLE = "master"
+ROLE = "master" # slave
 
 # NAME: unique handle for this machine — used for routing, logs, and the
 #       Messenger @mention. "" picks a default ("master" or "slave-01").
-NAME = "137"
+NAME = "137"   # 136 135
 
 # THIS_NODE_IP:   LAN IP other nodes use to reach THIS machine.
 # MASTER_NODE_IP: LAN IP of the MASTER machine. On the master, leave it equal
 #                 to THIS_NODE_IP. On a slave, set it to the master's IP.
 # Single-machine / local testing: leave both as 127.0.0.1.
-THIS_NODE_IP   = "127.0.0.1"
-MASTER_NODE_IP = "127.0.0.1"
+THIS_NODE_IP   = "10.228.69.135" # 137ip -> 135 136ip -> 134 135ip -> 133
+MASTER_NODE_IP = "10.228.69.135"
 
 # ─── LLM backend (vLLM) — where llm-api loads the model server from ──────────
 # Each node talks to its own local vLLM server. Change the host/port if your
 # vLLM server listens elsewhere. (vLLM is NOT part of this repo — start it
 # separately.)
-VLLM_SERVER_URL = "http://127.0.0.1:10000"
+VLLM_SERVER_URL = "http://10.228.69.135:10000"
 # VLLM_MODEL: the model name sent in every request. This MUST match the name
 # vLLM serves it under (vLLM's --served-model-name, or the model path if that
 # flag is omitted). A wrong value — including the placeholder "default" — makes

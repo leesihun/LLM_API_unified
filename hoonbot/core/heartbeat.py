@@ -80,6 +80,28 @@ def _read_file(path: str) -> str:
         return ""
 
 
+# Everything above the "# Heartbeat Checklist" heading is behavioral guidance
+# for the agent (role, priority order, reporting rules, sample outputs) — not
+# work items. Feeding that prose to the planner makes it manufacture "tasks"
+# out of the instructions and sample outputs, which then get echoed straight
+# into the posted report. Strip it; keep only the actionable checklist.
+_CHECKLIST_MARKER = re.compile(r"^#+\s*Heartbeat Checklist\s*$", re.MULTILINE | re.IGNORECASE)
+
+
+def _extract_checklist(text: str) -> str:
+    """Return only the actionable checklist portion of a HEARTBEAT.md file.
+
+    Content under the `# Heartbeat Checklist` heading is the to-do list; the
+    prose above it is instruction/reporting guidance the planner must not turn
+    into tasks. If no marker is present (e.g. the slave profile), fall back to
+    the whole file.
+    """
+    m = _CHECKLIST_MARKER.search(text)
+    if not m:
+        return text
+    return text[m.end():].strip()
+
+
 def _extract_json(text: str, expected_type: type) -> Any:
     """Extract JSON from LLM text, handling optional ```json``` fences."""
     m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
@@ -303,7 +325,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         logger.info(f"[Heartbeat] LLM cooldown active ({remaining}s remaining) — skipping tick")
         return
 
-    checklist = _read_file(_HEARTBEAT_FILE)
+    checklist = _extract_checklist(_read_file(_HEARTBEAT_FILE))
     if not checklist.strip():
         logger.info("[Heartbeat] HEARTBEAT.md is empty or missing — skipping tick")
         return
