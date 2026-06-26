@@ -234,7 +234,13 @@ async def chat_completions(
     try:
         parsed = await _parse_request(request)
         messages_data = parsed["messages_data"]
-        model_name = parsed["model"] or config.VLLM_MODEL
+        # This backend wraps exactly one local vLLM serving one model, so the
+        # node's configured VLLM_MODEL is authoritative. Clients (OpenAI SDK,
+        # Messenger, hoonbot) routinely send a placeholder like "default" or
+        # "gpt-4" in the required `model` field; honoring those would make vLLM
+        # 404 with "model '<placeholder>' does not exist". Always use the served
+        # model so any client placeholder works.
+        model_name = config.VLLM_MODEL
         is_streaming = parsed["stream"]
         temp = parsed["temperature"] if parsed["temperature"] is not None else config.DEFAULT_TEMPERATURE
         session_id = parsed["session_id"]
