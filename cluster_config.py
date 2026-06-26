@@ -44,7 +44,7 @@ ROLE = "master"
 
 # NAME: unique handle for this machine — used for routing, logs, and the
 #       Messenger @mention. "" picks a default ("master" or "slave-01").
-NAME = ""
+NAME = "137"
 
 # THIS_NODE_IP:   LAN IP other nodes use to reach THIS machine.
 # MASTER_NODE_IP: LAN IP of the MASTER machine. On the master, leave it equal
@@ -63,7 +63,7 @@ VLLM_SERVER_URL = "http://127.0.0.1:10000"
 # flag is omitted). A wrong value — including the placeholder "default" — makes
 # vLLM reply 404 "model does not exist". Discover the exact name with:
 #     curl http://127.0.0.1:10000/v1/models
-VLLM_MODEL = "default"
+VLLM_MODEL = "GLM-5.2"
 
 # ─── Service ports ──────────────────────────────────────────────────────────
 MESSENGER_PORT = 10006
@@ -80,8 +80,8 @@ LLM_API_ADMIN_PASSWORD = "administrator"
 TAVILY_API_KEY         = "your-secret-key-change-in-production"  # web_search tool
 # RAG embedding + reranker model locations and device. These paths are
 # deployment-specific — point them at where your models are staged.
-RAG_EMBEDDING_MODEL  = "/scratch0/LLM_models/offline_models/bge-m3"
-RAG_RERANKER_MODEL   = "/scratch0/LLM_models/offline_models/mmarco-mMiniLMv2-L12-H384-v1"
+RAG_EMBEDDING_MODEL  = "/scratch/LLM_models/offline_models/bge-m3"
+RAG_RERANKER_MODEL   = "/scratch/LLM_models/offline_models/mmarco-mMiniLMv2-L12-H384-v1"
 RAG_EMBEDDING_DEVICE = "cuda"   # "cuda" or "cpu"
 
 # ─── Hoonbot service (hoonbot/) ─────────────────────────────────────────────
