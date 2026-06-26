@@ -13,14 +13,13 @@ import json
 import logging
 import os
 import re
-import shutil
 from datetime import datetime, time
 from typing import Any, Callable, Awaitable
 
 import httpx
 
 import config
-from core.context import MEMORY_FILE, build_llm_context, build_per_turn_context
+from core.context import build_llm_context, build_per_turn_context
 from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
@@ -82,24 +81,36 @@ def _read_file(path: str) -> str:
 
 # Everything above the "# Heartbeat Checklist" heading is behavioral guidance
 # for the agent (role, priority order, reporting rules, sample outputs) — not
-# work items. Feeding that prose to the planner makes it manufacture "tasks"
-# out of the instructions and sample outputs, which then get echoed straight
-# into the posted report. Strip it; keep only the actionable checklist.
+# work items. The intro paragraphs directly *under* that heading ("This file is
+# read every heartbeat interval", "Your job is to find things to do…") are also
+# prose, not tasks. Feeding any of it to the planner makes it manufacture
+# "tasks" out of the instructions, which then get echoed straight into the
+# posted report (e.g. "Task 1: This file is read every heartbeat interval").
+# Keep only the actionable, itemized `##` sections.
 _CHECKLIST_MARKER = re.compile(r"^#+\s*Heartbeat Checklist\s*$", re.MULTILINE | re.IGNORECASE)
+_CHECKLIST_SECTION = re.compile(r"^##\s+\S", re.MULTILINE)
 
 
 def _extract_checklist(text: str) -> str:
     """Return only the actionable checklist portion of a HEARTBEAT.md file.
 
-    Content under the `# Heartbeat Checklist` heading is the to-do list; the
-    prose above it is instruction/reporting guidance the planner must not turn
-    into tasks. If no marker is present (e.g. the slave profile), fall back to
-    the whole file.
+    Strategy:
+      1. Drop everything above the `# Heartbeat Checklist` heading (role,
+         reporting rules, sample outputs).
+      2. Drop the intro prose under that heading by starting at the first
+         `##` section — the real, itemized checklist.
+    If the marker is absent (e.g. the slave profile, which is a single priority
+    list), fall back to the whole file. If the marker is present but there are
+    no `##` sections, fall back to everything under it.
     """
     m = _CHECKLIST_MARKER.search(text)
     if not m:
         return text
-    return text[m.end():].strip()
+    body = text[m.end():]
+    sec = _CHECKLIST_SECTION.search(body)
+    if sec:
+        return body[sec.start():].strip()
+    return body.strip()
 
 
 def _extract_json(text: str, expected_type: type) -> Any:
@@ -120,52 +131,20 @@ def _is_heartbeat_ok(text: str) -> bool:
     return text.strip() == "HEARTBEAT_OK"
 
 
-def _file_status(path: str) -> str:
-    try:
-        size = os.path.getsize(path)
-        return f"`{os.path.abspath(path)}` readable ({size} bytes)"
-    except FileNotFoundError:
-        return f"`{os.path.abspath(path)}` missing"
-    except OSError as exc:
-        return f"`{os.path.abspath(path)}` unreadable ({type(exc).__name__}: {exc})"
+def _compile_report(results: list[str]) -> str:
+    """Return the heartbeat report: only the LLM-produced findings.
 
-
-def _disk_status(path: str) -> str:
-    try:
-        usage = shutil.disk_usage(path)
-        free_gib = usage.free / (1024 ** 3)
-        total_gib = usage.total / (1024 ** 3)
-        return f"{free_gib:.1f} GiB free of {total_gib:.1f} GiB at `{os.path.abspath(path)}`"
-    except OSError as exc:
-        return f"unavailable for `{os.path.abspath(path)}` ({type(exc).__name__}: {exc})"
-
-
-def _build_system_review(tasks: list[dict], results: list[str]) -> str:
-    findings = sum(1 for result in results if not _is_heartbeat_ok(result))
-    return "\n".join([
-        f"- Home room: id `{config.MESSENGER_HOME_ROOM_ID}` (configured name `{config.MESSENGER_HOME_ROOM_NAME or 'none'}`)",
-        f"- LLM: `{config.LLM_API_URL}` model `{config.LLM_MODEL or 'unset'}`",
-        f"- Heartbeat prompt: {_file_status(_HEARTBEAT_FILE)}",
-        f"- Memory file: {_file_status(MEMORY_FILE)}",
-        f"- Data disk: {_disk_status(config.DATA_DIR)}",
-        f"- Tasks checked: `{len(tasks)}`; task findings: `{findings}`",
-    ])
-
-
-def _compile_report(tasks: list[dict], results: list[str]) -> str:
-    lines = ["**System Review**", _build_system_review(tasks, results)]
-    visible_results = [
-        (task, result)
-        for task, result in zip(tasks, results)
-        if not _is_heartbeat_ok(result)
+    No "Task N:" headers and no code-generated System Review scaffolding — just
+    the LLM's own summarized results, joined as-is. Results that are exactly
+    HEARTBEAT_OK (nothing to report) are dropped, so a fully healthy tick posts
+    nothing.
+    """
+    findings = [
+        result.strip()
+        for result in results
+        if result.strip() and not _is_heartbeat_ok(result)
     ]
-    lines.append("**Task Results**")
-    if visible_results:
-        for task, result in visible_results:
-            lines.append(f"**Task {task.get('id', '?')}: {task['task']}**\n{result}")
-    else:
-        lines.append("No task findings reported.")
-    return "\n\n".join(lines)
+    return "\n\n".join(findings)
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +340,7 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
                     results[i] = await _execute_task(task, context, tick_id, headers)
 
         # Phase 4 — Compile report
-        full_text = _compile_report(tasks, results)
+        full_text = _compile_report(results)
 
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         _llm_cooldown_until = asyncio.get_event_loop().time() + config.HEARTBEAT_LLM_COOLDOWN_SECONDS

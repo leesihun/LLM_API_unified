@@ -6,6 +6,7 @@
     "buildResources": "build",
     "output": "dist-portable"
   },
+  "npmRebuild": false,
   "win": {
     "target": "portable",
     "icon": "src/assets/icon.png",

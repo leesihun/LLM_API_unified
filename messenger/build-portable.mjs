@@ -14,6 +14,9 @@
  *
  * Default server URL comes from cluster_config.MESSENGER_URL; override with:
  *   node build-portable.mjs --master-url http://192.168.0.10:10006
+ *
+ * Pass --no-bake to ship an empty server URL so the end user sets the master
+ * URL on first launch (setup.html) instead of baking it into the .exe.
  */
 
 import fs from 'fs';
@@ -32,6 +35,10 @@ function run(cmd, opts = {}) {
 }
 
 function resolveMasterUrl() {
+  // 0. --no-bake: ship empty URL; end user sets master on first launch.
+  if (process.argv.includes('--no-bake')) {
+    return '';
+  }
   // 1. Explicit CLI override.
   const idx = process.argv.indexOf('--master-url');
   if (idx !== -1 && process.argv[idx + 1]) {

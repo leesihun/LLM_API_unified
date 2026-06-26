@@ -55,7 +55,11 @@ body {
   overflow-x: auto;
   font-size: 0.8rem;
   line-height: 1.5;
-  white-space: pre;
+  /* Wrap long code instead of forcing a horizontal scroll. overflow-wrap
+     breaks even unbroken tokens (long URLs, minified lines) at the bubble edge. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .msg-content .msg-codeblock code {

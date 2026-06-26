@@ -153,7 +153,7 @@ export default function MessageBubble({
   if (message.isDeleted) {
     return (
       <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-1`}>
-        <div className="max-w-[70%]">
+        <div className="max-w-[42%]">
           {!isOwn && (
             <span className="text-xs text-gray-400 ml-1">{message.senderName}</span>
           )}
@@ -170,7 +170,7 @@ export default function MessageBubble({
       className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-1 group`}
       onMouseLeave={() => setShowMenu(false)}
     >
-      <div className={`max-w-[70%] ${isOwn ? 'items-end' : 'items-start'}`}>
+      <div className={`max-w-[42%] ${isOwn ? 'items-end' : 'items-start'}`}>
         {/* Sender name (for others) */}
         {!isOwn && (
           <span className="text-xs text-gray-400 ml-1 block mb-0.5">{message.senderName}</span>
