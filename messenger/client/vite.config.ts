@@ -35,6 +35,19 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron',
+            rollupOptions: {
+              external: ['electron'],
+              // Emit an ESM preload (.mjs). Electron only loads an ESM preload
+              // when the renderer is NOT sandboxed (see sandbox:false in
+              // main.ts) and the file has a .mjs extension. A plain .js ESM
+              // preload silently fails to load and window.electronAPI is never
+              // exposed — which makes the setup screen's Connect button do
+              // nothing.
+              output: {
+                format: 'es',
+                entryFileNames: 'preload.mjs',
+              },
+            },
           },
         },
       },

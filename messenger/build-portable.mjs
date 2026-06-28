@@ -95,5 +95,12 @@ run('npx electron-builder --win portable --config electron-builder-portable.json
   cwd: CLIENT,
 });
 
+// ---- 5. Copy the final exe to the repo root for easy access ----
+const exeSrc = path.join(CLIENT, 'dist-portable', 'Messenger.exe');
+const exeDest = path.join(REPO_ROOT, 'Messenger.exe');
+fs.copyFileSync(exeSrc, exeDest);
+console.log(`[BUILD] Copied Messenger.exe → ${exeDest}`);
+
 console.log('\n=== Build complete! ===');
 console.log('Output: client/dist-portable/Messenger.exe');
+console.log(`       ${exeDest}`);

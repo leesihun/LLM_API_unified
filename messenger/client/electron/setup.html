@@ -93,10 +93,23 @@
       window.electronAPI.getServerUrl().then((u) => { if (u) input.value = u; });
     }
 
+    function showError(msg) {
+      errBox.style.display = 'block';
+      errBox.textContent = msg;
+    }
+
     async function save() {
       const url = input.value.trim();
       if (!url) { input.focus(); return; }
-      await window.electronAPI.setServerUrl(url);
+      if (!window.electronAPI || !window.electronAPI.setServerUrl) {
+        showError('Internal error: preload bridge not loaded. Please reinstall the app.');
+        return;
+      }
+      try {
+        await window.electronAPI.setServerUrl(url);
+      } catch (e) {
+        showError('Failed to connect: ' + (e && e.message ? e.message : String(e)));
+      }
     }
 
     document.getElementById('save').addEventListener('click', save);

@@ -25,6 +25,15 @@ function getIconPath(): string {
   return path.join(__dirname, '..', 'src', 'assets', 'icon.png');
 }
 
+// Normalize a user/baked URL: trim, drop trailing slash, and prepend http://
+// when no scheme is present. Browsers auto-prepend a scheme but Electron's
+// loadURL does not — without this, "10.0.0.5:10006" fails to load.
+function normalizeServerUrl(url: string): string {
+  let u = (url || '').trim().replace(/\/+$/, '');
+  if (u && !/^https?:\/\//i.test(u)) u = 'http://' + u;
+  return u;
+}
+
 // Per-user config: %APPDATA%/Messenger/config.json holds the chosen server URL.
 function getUserConfigPath(): string {
   return path.join(app.getPath('userData'), 'config.json');
@@ -35,7 +44,7 @@ function readUserServerUrl(): string {
     const raw = fs.readFileSync(getUserConfigPath(), 'utf-8');
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed.serverUrl === 'string' && parsed.serverUrl.trim()) {
-      return parsed.serverUrl.trim().replace(/\/$/, '');
+      return normalizeServerUrl(parsed.serverUrl);
     }
   } catch {
     /* not configured yet */
@@ -52,7 +61,7 @@ function readBakedServerUrl(): string {
     const raw = fs.readFileSync(candidate, 'utf-8');
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed.serverUrl === 'string' && parsed.serverUrl.trim()) {
-      return parsed.serverUrl.trim().replace(/\/$/, '');
+      return normalizeServerUrl(parsed.serverUrl);
     }
   } catch {
     /* no baked default */
@@ -65,7 +74,7 @@ function resolveServerUrl(): string {
 }
 
 function saveUserServerUrl(url: string): void {
-  const clean = url.trim().replace(/\/$/, '');
+  const clean = normalizeServerUrl(url);
   fs.mkdirSync(path.dirname(getUserConfigPath()), { recursive: true });
   fs.writeFileSync(getUserConfigPath(), JSON.stringify({ serverUrl: clean }, null, 2));
 }
@@ -107,9 +116,11 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, 'preload.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // ESM preload (.mjs) only loads when the renderer is not sandboxed.
+      sandbox: false,
     },
     icon: getIconPath(),
     title: 'Messenger',
@@ -121,10 +132,15 @@ function createWindow() {
   });
 
   // If the master URL is set but the page fails to load, drop back to setup.
-  mainWindow.webContents.on('did-fail-load', (_e, errorCode, _desc, validatedURL) => {
-    // -3 == ERR_ABORTED (e.g. in-app navigation); ignore those and the setup page itself.
+  mainWindow.webContents.on('did-fail-load', (_e, errorCode, desc, validatedURL, isMainFrame) => {
+    // Only react to top-level navigation failures. did-fail-load also fires for
+    // subframes/aborted subresource loads — a page Chrome renders fine can emit
+    // those, and bouncing on them traps the user on the setup screen.
+    if (!isMainFrame) return;
+    // -3 == ERR_ABORTED (redirects, in-app navigation); not a real failure.
     if (errorCode === -3) return;
     if (validatedURL.startsWith('file://')) return;
+    console.error(`[main] main-frame load failed: ${errorCode} ${desc} ${validatedURL}`);
     mainWindow?.loadFile(getSetupHtmlPath(), { query: { error: 'unreachable', url: validatedURL } });
   });
 
