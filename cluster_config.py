@@ -88,7 +88,7 @@ RAG_EMBEDDING_DEVICE = "cuda"   # "cuda" or "cpu"
 BOT_NAME                   = "Bot"
 BOT_HOME_ROOM_NAME         = "Heartbeat"   # room for heartbeat output
 HEARTBEAT_ENABLED          = True
-HEARTBEAT_INTERVAL_SECONDS = 1200
+HEARTBEAT_INTERVAL_SECONDS = 3600
 HEARTBEAT_ACTIVE_START     = "00:00"       # 24h HH:MM — only run in this window
 HEARTBEAT_ACTIVE_END       = "23:59"
 
