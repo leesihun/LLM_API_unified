@@ -275,6 +275,13 @@ async def chat_completions(
                     db.create_session(session_id, username)
                     db.update_session_title(session_id, f"Heartbeat {session_id[3:]}")
                     history = []
+                elif session_id.startswith("cluster_"):
+                    # Cluster task sessions are auto-created on first use — the
+                    # slave worker names them cluster_<task_id> before any
+                    # session exists (see hoonbot/core/cluster_worker.py).
+                    db.create_session(session_id, username)
+                    db.update_session_title(session_id, f"Cluster task {session_id[8:]}")
+                    history = []
                 else:
                     raise HTTPException(status_code=404, detail="Session not found")
             else:
