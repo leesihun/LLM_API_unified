@@ -75,6 +75,20 @@ class ToolStatusEvent(StreamEvent):
     user_name: str = ""     # display name for the tool, e.g. "File Reader"
 
 
+@dataclass
+class UsageEvent(StreamEvent):
+    """Real token usage reported by vLLM at end-of-stream.
+
+    Emitted once per call when the request sets stream_options.include_usage.
+    The agent loop uses prompt_tokens to drive *proactive* compaction (compact
+    before the next call would overflow) instead of waiting for a 400 error.
+    Internal-only: consumers that don't care simply ignore it.
+    """
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
 # ============================================================================
 # vLLM Backend
 # ============================================================================
@@ -157,6 +171,10 @@ class VllmBackend:
             "messages": messages,
             "temperature": temperature,
             "stream": True,
+            # Ask vLLM to emit a final usage chunk so we get REAL token counts
+            # (prompt/completion) instead of char-count estimates. Drives
+            # proactive context compaction in the agent loop.
+            "stream_options": {"include_usage": True},
         }
         if tools:
             payload["tools"] = tools
@@ -213,6 +231,7 @@ class VllmBackend:
         yielded_indices: set[int] = set()          # indices already dispatched mid-stream
         max_seen_idx: int = -1
         finish_reason = "stop"
+        usage: Optional[dict] = None                # final token usage, if reported
 
         async with self._client.stream(
             "POST",
@@ -240,6 +259,11 @@ class VllmBackend:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
                     continue
+
+                # Usage arrives in its own trailing chunk (choices is empty).
+                # Capture it before the empty-choices skip below.
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
 
                 choices = chunk.get("choices", [])
                 if not choices:
@@ -345,6 +369,14 @@ class VllmBackend:
         if remaining:
             yield ToolCallDeltaEvent(
                 tool_calls=remaining, finish_reason=finish_reason, is_partial=False
+            )
+
+        # Emit real token usage last so the agent loop can size the next call.
+        if usage:
+            yield UsageEvent(
+                prompt_tokens=int(usage.get("prompt_tokens", 0) or 0),
+                completion_tokens=int(usage.get("completion_tokens", 0) or 0),
+                total_tokens=int(usage.get("total_tokens", 0) or 0),
             )
 
 

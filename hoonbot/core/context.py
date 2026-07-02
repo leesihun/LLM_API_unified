@@ -151,6 +151,15 @@ def build_per_turn_context(profile: str = "flutter") -> str:
     skills = _list_skills()
     if skills:
         lines.append(f"Skills available: {skills}")
+    # Filesystem-awareness digest (maintained by the heartbeat snapshot). The
+    # full map path is exposed in Session Variables for on-demand reading.
+    try:
+        from core.fs_snapshot import get_digest
+        fs_digest = get_digest()
+        if fs_digest:
+            lines.append(fs_digest)
+    except Exception:
+        pass
 
     # Profile-specific stubs - v1 leaves these to follow-up work since they
     # need live cluster state (master) or in-memory worker state (slave).
@@ -187,4 +196,6 @@ def _build_session_variables() -> str:
         f"- `data_dir`: `{os.path.abspath(config.DATA_DIR)}`\n"
         f"- `memory_file`: `{os.path.abspath(MEMORY_FILE)}`\n"
         f"- `skills_dir`: `{os.path.abspath(SKILLS_DIR)}`\n"
+        f"- `filesystem_map`: `{os.path.abspath(os.path.join(config.DATA_DIR, 'filesystem_map.md'))}`"
+        f" (auto-updated hierarchy snapshot; read for repo/skills/config layout)\n"
     )

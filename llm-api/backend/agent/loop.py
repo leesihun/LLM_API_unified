@@ -63,6 +63,13 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         self._tool_cache: Dict[str, Any] = {}
         self._filtered_tool_schemas: Optional[List[Dict[str, Any]]] = None
         self._compressed_up_to: int = 0  # tracks how far old-iteration compression has processed
+        # Real prompt-token count from the last LLM call (vLLM usage), used to
+        # drive proactive compaction. 0 until the first call reports usage.
+        self._last_prompt_tokens: int = 0
+        # Per-run memoization of read-only/concurrency-safe tool results, keyed by
+        # (tool_name, arg_hash). Serves duplicate reads instantly; cleared by any
+        # mutating tool. See DispatchMixin.execute_tool.
+        self._read_result_cache: Dict[str, Any] = {}
         # Cache log verbosity once (avoids getattr + .lower() on every log call)
         self._log_level: str = str(getattr(config, "AGENT_LOG_VERBOSITY", "summary")).lower()
         # Session-scoped todo list (injected into dynamic context each iteration)

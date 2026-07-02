@@ -249,9 +249,10 @@ class LLMInterceptor:
 
         collected_text = ""
         collected_tool_calls = None
+        real_usage = None
 
         # Import event types once per call, not inside the loop
-        from backend.core.llm_backend import TextEvent, ToolCallDeltaEvent
+        from backend.core.llm_backend import TextEvent, ToolCallDeltaEvent, UsageEvent
 
         try:
             async for event in self.backend.chat_stream(
@@ -264,16 +265,28 @@ class LLMInterceptor:
                     collected_text += event.content
                 elif isinstance(event, ToolCallDeltaEvent):
                     collected_tool_calls = event.tool_calls
+                elif isinstance(event, UsageEvent):
+                    real_usage = event
                 yield event
 
             duration = time.time() - start_time
-            output_tokens = int(len(collected_text.split()) * 1.3)
+            # Prefer vLLM's real token counts; fall back to estimates only when
+            # the backend didn't report usage.
+            if real_usage is not None:
+                token_stats = {
+                    "input": real_usage.prompt_tokens,
+                    "output": real_usage.completion_tokens,
+                    "total": real_usage.total_tokens or (real_usage.prompt_tokens + real_usage.completion_tokens),
+                }
+            else:
+                output_tokens = int(len(collected_text.split()) * 1.3)
+                token_stats = {
+                    "input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens,
+                }
             response_log["response"] = collected_text
             response_log["duration_seconds"] = duration
             response_log["success"] = True
-            response_log["estimated_tokens"] = {
-                "input": input_tokens, "output": output_tokens, "total": input_tokens + output_tokens,
-            }
+            response_log["estimated_tokens"] = token_stats
 
             if collected_tool_calls:
                 tc_summary = [

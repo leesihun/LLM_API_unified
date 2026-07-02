@@ -7,6 +7,7 @@ import config
 from backend.core.llm_backend import ToolCall
 from pathlib import Path
 
+from tools.schemas import TOOL_METADATA
 from tools.file_ops._postcheck import (
     check_python, is_python_path,
     check_typescript, is_typescript_path,
@@ -34,6 +35,22 @@ class DispatchMixin:
             return hard_cap
         return timeout
 
+    def _read_cache_key(self, name: str, arguments: Dict[str, Any]) -> Optional[str]:
+        """Per-run cache key for a read-only, concurrency-safe tool call.
+
+        Returns None for tools that must always re-run (anything that can mutate
+        state). The signature reuses AgentLoop._tool_signature so it matches the
+        anti-spiral repeat detector.
+        """
+        meta = TOOL_METADATA.get(name, {})
+        if not (meta.get("is_read_only") and meta.get("is_concurrency_safe")):
+            return None
+        sig = getattr(self, "_tool_signature", None)
+        if sig is None:
+            return None
+        tool_name, arg_hash = sig(name, arguments)
+        return f"{tool_name}:{arg_hash}"
+
     async def execute_tool(self, name: str, arguments: Dict[str, Any],
                            tool_call_id: str = None) -> Dict[str, Any]:
         start = time.time()
@@ -43,6 +60,31 @@ class DispatchMixin:
         for k, v in arguments.items():
             sv = str(v)
             print(f"  {k}: {sv[:150]}{'...' if len(sv) > 150 else ''}")
+
+        # ---- Duplicate-call hard-stop: serve an identical earlier read from the
+        # per-run cache instead of re-running it. Turns the anti-spiral *reminder*
+        # into enforcement and reclaims wasted iterations. The cache is cleared
+        # whenever a mutating tool runs (see below), so reads can't go stale.
+        cache: Optional[Dict[str, Any]] = getattr(self, "_read_result_cache", None)
+        cache_key = self._read_cache_key(name, arguments) if cache is not None else None
+        if cache_key is not None and cache_key in cache:
+            duration = time.time() - start
+            cached = dict(cache[cache_key])
+            cached["cached"] = True
+            cached["cache_note"] = (
+                "Identical call already ran this turn — reusing the prior result "
+                "instead of repeating it. If you need different information, change "
+                "the arguments or use a different tool/approach."
+            )
+            print(f"[TOOL] {name} served from per-run cache (duplicate call)")
+            self.tool_calls_log.append({
+                "name": name, "input": arguments, "tool_call_id": tool_call_id,
+                "success": cached.get("success", True), "duration": duration, "cached": True,
+            })
+            if len(self.tool_calls_log) > 200:
+                self.tool_calls_log = self.tool_calls_log[-200:]
+            self._log_tool_result(name, tool_call_id, cached, duration)
+            return cached
 
         try:
             result = await self._dispatch_tool(name, arguments, tool_call_id=tool_call_id)
@@ -59,6 +101,13 @@ class DispatchMixin:
             self._track_temp_files(name, result)
             await self._run_postchecks(name, result)
             self._inject_subtree_agents_md(name, arguments, result)
+            # Invalidate cached reads after anything that can mutate state, then
+            # memoize the fully-formed result of a successful read.
+            if cache is not None:
+                if not TOOL_METADATA.get(name, {}).get("is_read_only"):
+                    cache.clear()
+                elif cache_key is not None and result.get("success", True):
+                    cache[cache_key] = result
             return result
         except Exception as e:
             duration = time.time() - start

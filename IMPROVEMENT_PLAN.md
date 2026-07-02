@@ -1,279 +1,273 @@
-# LLM_API_fast — Improvement Plan
+# LLM_API_fast — Implementation Plan
 
-A grounded, prioritized roadmap across three axes the user asked for:
+> **Status: IMPLEMENTED (2026-06-28).** All four workstreams below are coded and
+> syntax/import-validated. One operator action is required to fully enable
+> proactive compaction: set **`MODEL_CONTEXT_WINDOW`** (env or `cluster_config.py`)
+> to your served model's max context length (vLLM `--max-model-len`). Left at the
+> default `0`, proactive compaction stays off and only the existing reactive
+> autocompact runs — nothing regresses. Vision defaults to ON
+> (`MODEL_SUPPORTS_VISION=true`); set it false for a text-only model.
+> See "Implementation status" at the end for the file-by-file summary.
 
-1. **More functionality**
-2. **Better algorithm / streamlined agentic flow**
-3. **Master–Slave node connectivity**
+Scope after review. Four workstreams, in priority order:
 
-Every proposal cites the real code it touches. Items are tagged with effort
-(**S**mall ≈ <½ day, **M**edium ≈ 1–3 days, **L**arge ≈ >3 days) and impact
-(★–★★★). Read the "Top wins" section first if you only have five minutes.
+1. **Relay delegated cluster results back to Messenger** — fixes a currently-broken feature.
+2. **Streamlined agentic flow** — token-aware budgeting, duplicate hard-stop, structured planning. *(The research-depth focus.)*
+3. **Hoonbot filesystem awareness** — a persistent, code-level hierarchy snapshot for self-reference.
+4. **Vision passthrough** — let VL models actually see attached images.
 
----
+**Explicitly out of scope** (decided, not to be re-proposed):
+`web_fetch` — server is airgapped, no outbound URLs. Semantic long-term memory — already covered by
+Hoonbot's `memory.md`. Cron tool — already doable via OS scheduler + shell script, or the heartbeat
+loop. Dedicated git tool. Broader cluster scaling (SQLite queue, long-poll, load-aware routing,
+remote sub-agents, fast lease recovery, slave streaming) — not required for current deployment.
 
-## 0. What the codebase does well today (so we don't regress it)
-
-- **Segmented-parallel tool execution** in `llm-api/backend/agent/loop.py:631-677` — consecutive
-  concurrency-safe calls run via `asyncio.gather`, mutators are serial barriers. This is the
-  right model; keep it.
-- **Mid-stream early start** of read-only tools (`loop.py:550-569`, `llm_backend.py:262-329`) —
-  tool dispatch begins before the model finishes streaming. Genuinely good latency work.
-- **KV-cache discipline** — the static system prompt is byte-stable (`_cache.py`,
-  `prompt_assembly.py:161-163`) and microcompaction never mutates `msgs`, only a copy
-  (`compaction.py:33-56`). Don't break this; several proposals below are explicitly designed
-  to preserve it.
-- **Anti-spiral reflection** (`loop.py:189-270`) — repeat-call / consecutive-failure / goal-reminder
-  overlays. Solid foundation to build hard-stops on (see §2.3).
+Effort: **S** <½ day · **M** 1–3 days · **L** >3 days.
 
 ---
 
-## Top wins (do these first)
+## 1. Relay delegated cluster results back to Messenger · M · critical
 
-| # | Change | Axis | Effort | Impact |
-|---|--------|------|--------|--------|
-| 1 | **Relay delegated cluster task results back to Messenger** (master completion watcher) | 3 | M | ★★★ |
-| 2 | **Token-aware context budgeting** (read vLLM `usage`, compact *proactively*) | 2 | M | ★★★ |
-| 3 | **Long-poll the lease endpoint** + drop the file-glob queue for an indexed/SQLite store | 3 | M | ★★★ |
-| 4 | **Remote sub-agents**: let the `agent` tool fan out to idle slave GPUs via the task queue | 1+3 | L | ★★★ |
-| 5 | **Hard-stop exact-duplicate tool calls** (return cached result instead of re-running) | 2 | S | ★★ |
-| 6 | **`web_fetch` tool** (read a specific URL — today the agent can only Tavily-*search*) | 1 | S | ★★ |
+### Problem (grounded)
+The `@node` delegation path is half-wired. `try_submit_from_message`
+([hoonbot/core/cluster_client.py](hoonbot/core/cluster_client.py)) posts *"Queued cluster task X"*
+to the room and returns. The slave runs it and writes `result` into the master's `cluster_store`
+([cluster_worker.py:84-90](hoonbot/core/cluster_worker.py#L84-L90) → `/tasks/{id}/complete`), but
+**no master-side loop ever reads it back**: the master lifespan starts only `_catch_up` and
+`run_heartbeat_loop` ([hoonbot/hoonbot.py:291-292](hoonbot/hoonbot.py#L291-L292)). The answer lands
+in the store, already addressed — `room_id` is saved in `task.metadata`
+([cluster_client.py:75,87](hoonbot/core/cluster_client.py#L75)) — and is never delivered. Today the
+whole delegation feature produces no user-visible output.
 
----
+### Design
+Add a master-only background watcher started from the master branch of the lifespan
+([hoonbot.py:291](hoonbot/hoonbot.py#L291), alongside catch-up/heartbeat):
 
-## 1. More functionality
+- Poll `GET /api/cluster/tasks?include_completed=true` (or read the per-task event log via
+  `cluster_store.load_events`) on a short interval.
+- Track a set of already-relayed `task_id`s (persist to `hoonbot/data/relayed_tasks.json` so a master
+  restart doesn't double-post or drop in-flight results).
+- On a newly `completed`/`failed` task that carries `metadata.room_id` and `source == "messenger"`,
+  post to that room via `messenger.send_message`: the `result` on success, or a short `error` line on
+  failure. Reference the originating directive (`metadata.directive`) so the user knows which `@node`
+  call it answers.
+- Handle `@all-slaves` fan-out: the broadcast creates N tasks
+  ([cluster_client.py:61-81](hoonbot/core/cluster_client.py#L61-L81)); relay each as it finishes,
+  prefixed with the node name.
 
-### 1.1 `web_fetch` tool — read a named URL  ·  S · ★★
-**Gap.** The only web tool is `web_search` (Tavily search) — `tool_dispatch.py:214-222`. The agent
-can find a URL but cannot read one it already has. The Messenger side already polls URLs
-(`server/src/services/web-poller.ts`), so the capability exists in the repo but not for the agent.
+### Files
+- `hoonbot/core/cluster_relay.py` *(new)* — the watcher loop.
+- `hoonbot/hoonbot.py` — start it on the master branch of `lifespan`.
+- `hoonbot/core/cluster_client.py` — ensure `room_id`/`directive` always land in `metadata` (already
+  do; confirm for the tag/role/broadcast branches).
 
-**Proposal.** Add `tools/web_fetch/` returning cleaned main-text + metadata (title, status, final
-URL after redirects), with an HTML→markdown extractor. Mark it `is_read_only / is_concurrency_safe`
-in `schemas.py:TOOL_METADATA` so it joins the parallel read group for free. Cap body size and spill
-oversize results to `data/tool_results/` like every other tool.
-
-### 1.2 Semantic long-term memory  ·  M · ★★★
-**Gap.** `memo` is flat key-value (`tools/memo/`); `recall` only retrieves *this session's* spilled
-tool results. There is no cross-session semantic memory even though the full RAG embedding stack
-(bge-m3 + reranker, `cluster_config.py:83-85`) is already loaded.
-
-**Proposal.** A `remember` / `recall_semantic` pair backed by a per-user RAG collection. On write,
-embed and store; on recall, vector-search. Auto-capture durable facts at end of a session (a
-distilled "what did we learn" pass). This is the single biggest agent-quality lever you have that
-reuses infrastructure you already pay for.
-
-### 1.3 User-schedulable jobs (cron tool)  ·  M · ★★
-**Gap.** `hoonbot` has a fixed heartbeat (`core/heartbeat.py`) but a user cannot say "every weekday
-at 9am, summarize room X" or "remind me in 2h." There is no per-user scheduler.
-
-**Proposal.** A `schedule` tool + a small persistent job table (reuse `backend/core/job_store.py`
-patterns). The heartbeat loop already wakes on an interval — add a due-job sweep to it. Output posts
-to the requesting room.
-
-### 1.4 First-class git tool  ·  S · ★★
-**Gap.** Git happens through `shell_exec`, so the model parses porcelain by hand and there's no
-guard rail. `prompt_assembly.py:27-64` already shells out for a git context block.
-
-**Proposal.** `git` tool with structured ops (`status`, `diff`, `log`, `branch`, `commit`,
-`create_pr` via `gh`). Returns parsed JSON. Reduces token spend and tool-spam on the most common
-workflow, and lets you enforce "branch before commit on default branch" centrally.
-
-### 1.5 Vision passthrough for attached images  ·  M · ★★
-**Gap.** `prompt_assembly.py:413-438` injects image *metadata* only; image bytes never reach the
-model. GLM-4.x-V / Qwen-VL can consume images directly.
-
-**Proposal.** When `VLLM_MODEL` is a VL model, pass attached images as OpenAI `image_url` content
-parts in the user turn (`llm_backend._build_payload`). Gate behind a `MODEL_SUPPORTS_VISION` config
-flag so text-only deployments are unaffected.
-
-### 1.6 Cluster task board in Messenger  ·  M · ★★
-**Gap.** `/api/cluster/status` and `/tasks` exist (`routes/cluster.py`) but nothing visualizes them.
-Operators can't see node health, queue depth, or in-flight tasks.
-
-**Proposal.** A read-only React panel in `messenger/client` polling `/api/cluster/status` — node
-health, GPU/queue metrics (once §3.4 lands), live task list with per-task event stream
-(`cluster_store.load_events`). Pairs naturally with win #1.
+### Verification
+Start a master + one slave locally, send `@<slave> say hello` in a room, confirm the slave's reply
+posts back to the same room. Kill the slave mid-task and confirm a failure line is relayed after lease
+expiry. `cd hoonbot ; python scripts\test_llm.py` for connectivity.
 
 ---
 
-## 2. Better algorithm / streamlined agentic flow
+## 2. Streamlined agentic flow
 
-### 2.1 Token-aware budgeting (replace char heuristics)  ·  M · ★★★
-**Problem.** Every compaction decision is a character-count guess
-(`AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS`, `per_msg_cap`, etc. in `compaction.py`) and autocompact
-is **reactive**: it waits for vLLM to 400 with "maximum context length…"
-(`compaction.py:228-244, 346-394`), then summarizes and *re-sends the whole request*. That's a
-wasted round-trip on the critical path, and char≈token is wrong for code/CJK.
+The loop is already strong: segmented-parallel tools, mid-stream early start, KV-stable prefix,
+anti-spiral reminders. The gains below are about **measuring instead of guessing** and **acting on
+reflection instead of only describing it.** None of them may mutate the source `msgs` list — the
+KV-cache prefix must stay byte-stable (see `compaction.py:33-56`).
 
-**Proposal.**
-- Read the `usage` block from the vLLM stream — **`chat_stream` currently discards it entirely**
-  (`llm_backend.py:232-348` never looks at `chunk["usage"]`; vLLM emits it with
-  `stream_options={"include_usage": true}`). Plumb real `prompt_tokens` back to the loop.
-- Drive compaction off a **token budget** (e.g. compact when projected prompt tokens cross 75% of
-  the model's context window) *before* sending, eliminating the 400-retry path for the common case.
-- Keep the reactive path as a safety net only.
+### 2.1 Token-aware context budgeting · M · highest-value
+**Problem.** Every budget decision is a character-count guess — `AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS`,
+`per_msg_cap`, the `TOOL_RESULT_BUDGET` table — and autocompact is **reactive**: it waits for vLLM to
+400 with "maximum context length…" ([compaction.py:228-244](llm-api/backend/agent/compaction.py#L228-L244)),
+then summarizes and **re-sends the entire request** ([compaction.py:346-394](llm-api/backend/agent/compaction.py#L346-L394)).
+That's a wasted full round-trip on the hot path, and char≈token is wrong for code and CJK. The cause:
+`chat_stream` never sets `stream_options` and never reads the `usage` block, so real token counts are
+thrown away ([llm_backend.py:137-183, 232-348](llm-api/backend/core/llm_backend.py#L137-L183)).
 
-This is the highest-leverage algorithm change: it removes a latency cliff and makes every other
-budget knob honest.
+**Design.**
+- Set `payload["stream_options"] = {"include_usage": True}` in `_build_payload`; capture the final
+  `usage` chunk (`prompt_tokens`, `completion_tokens`) and surface it from `chat_stream` (e.g. a final
+  `UsageEvent`, or stash on the backend for the loop to read).
+- Maintain a running `last_prompt_tokens` on the loop. **Before** sending, if projected prompt tokens
+  exceed a fraction of the model's context window (new `MODEL_CONTEXT_WINDOW` /
+  `AGENT_COMPACT_AT_TOKEN_FRACTION ≈ 0.75` config), run `_summarize_and_compact_msgs` *proactively*.
+  The existing reactive catch stays only as a safety net.
+- Log real tokens next to the char counts so the `TOOL_RESULT_BUDGET` table can finally be tuned
+  against ground truth.
 
-### 2.2 Memoize idempotent reads within a run  ·  S · ★★
-**Problem.** `_tool_cache` (`tool_dispatch.py:212`) caches tool *instances*, not *results*. Nothing
-stops the model re-`file_reader`-ing or re-`grep`-ing the same args three times — the anti-spiral
-logic only *nudges* after the fact (`loop.py:189-218`).
+**Why first among the flow items.** It removes a latency cliff and makes every other budget knob
+honest. Everything else here is cheaper once tokens are observable.
 
-**Proposal.** A per-run result cache keyed by `_tool_signature(name, args)` (the helper already
-exists, `loop.py:169-180`) for read-only/concurrency-safe tools. On a hit, return the cached result
-instantly with a `(cached)` marker. Cheap, and it directly attacks the spiral instead of describing it.
+### 2.2 Duplicate hard-stop + read memoization · S
+**Problem.** `_tool_cache` ([tool_dispatch.py:212](llm-api/backend/agent/tool_dispatch.py#L212)) caches
+tool *instances*, not *results*. Nothing stops the model from re-`file_reader`/`grep`-ing identical
+args; anti-spiral only *nudges* after the third try and obeys a cooldown
+([loop.py:189-218](llm-api/backend/agent/loop.py#L189-L218)).
 
-### 2.3 Hard-stop exact-duplicate calls  ·  S · ★★
-**Problem.** `_detect_repeat_call` only emits a reminder *after* the third identical call and obeys a
-cooldown (`loop.py:189-218`) — the model can keep burning iterations.
+**Design.** Add a per-run result cache keyed by `_tool_signature(name, args)` (helper already exists,
+[loop.py:169-180](llm-api/backend/agent/loop.py#L169-L180)) for read-only/concurrency-safe tools
+(`TOOL_METADATA` flags). On a byte-identical repeat, **short-circuit**: return the prior result plus a
+firm `<system-reminder>` ("you already ran this — here is the result; do something different"). Turns
+reflection into enforcement and reclaims wasted iterations. Invalidate read caches after any mutating
+barrier (`shell_exec`/`file_edit`/`apply_patch`/`file_writer`) so stale reads can't survive a write.
 
-**Proposal.** When a call is byte-identical to one already made this run, short-circuit: return the
-prior result plus a firm `<system-reminder>` ("you already ran this; here is the result; do something
-different"). Combine with 2.2 — same key space.
+### 2.3 Structured plan artifact + plan-aware reminders · M
+**Problem.** The iteration-0 nudge asks for a plan but captures nothing
+([loop.py:256-270](llm-api/backend/agent/loop.py#L256-L270)); the milestone reminder just re-echoes the
+raw user request ([loop.py:234-254](llm-api/backend/agent/loop.py#L234-L254)). `todo_write` exists but
+is optional and disconnected.
 
-### 2.4 Structured autocompact state (guided_json)  ·  M · ★★
-**Problem.** Autocompact produces a free-text summary and then *regex-greps* an `Active goal:` line
-back out of it (`compaction.py:316-322`). Fragile and lossy.
+**Design.** On the first iteration of a multi-step request, capture the model's stated plan into
+`_session_todos` (already injected via `_format_todos`,
+[prompt_assembly.py:339-348](llm-api/backend/agent/prompt_assembly.py#L339-L348)). Then the milestone /
+tail-goal overlays check progress *against the plan* ("steps 2,3 still open") instead of re-pasting the
+prompt. Gives the long-horizon reminders something concrete to anchor on and makes drift visible.
 
-**Proposal.** The backend already supports `guided_json` end-to-end
-(`llm_backend.py:179-182`, `loop.py:426-429`). Use it to make the summarizer emit
-`{active_goal, files_touched, decisions, open_questions, key_results[]}`. Re-inject fields
-deterministically instead of regexing prose. More reliable carry-forward across long runs.
+### 2.4 Structured autocompact via guided_json · M
+**Problem.** Autocompact emits free-text and then **regex-greps** an `Active goal:` line back out of it
+([compaction.py:316-322](llm-api/backend/agent/compaction.py#L316-L322)) — fragile and lossy.
 
-### 2.5 Promote a real plan artifact  ·  M · ★★
-**Problem.** The plan-first nudge (`loop.py:256-270`) only *asks* for a plan; nothing captures it.
-`todo_write` exists but is optional and unrelated.
+**Design.** `guided_json` is already plumbed end-to-end
+([llm_backend.py:179-182](llm-api/backend/core/llm_backend.py#L179-L182),
+[loop.py:426-429](llm-api/backend/agent/loop.py#L426-L429)). Have the summarizer emit
+`{active_goal, files_touched, decisions, open_questions, key_results[]}` and re-inject fields
+deterministically. Reliable carry-forward across long runs; pairs with 2.3 (the plan is part of the
+structured state).
 
-**Proposal.** On iteration 0 of a multi-step request, capture the model's plan into `_session_todos`
-automatically and pin it (already injected via `_format_todos`, `prompt_assembly.py:339-348`). Gives
-the milestone/goal reminders something concrete to check against instead of re-echoing the raw
-request.
+### 2.5 Startup tool-call self-check · S
+**Problem.** `loop.py:571-588` retries "without tools" when a chat template emits an end-of-turn token
+right after a tool result — a silent workaround for a vLLM parser/flag mismatch
+(`--enable-auto-tool-choice --tool-call-parser <family>`).
 
-### 2.6 Fix the empty-response band-aid  ·  S · ★
-**Problem.** `loop.py:571-588` retries "without tools" when a chat template emits an end-of-turn
-token right after a tool result. It's a workaround for a parser/template mismatch.
+**Design.** On startup, ping `/v1/chat/completions` with one trivial tool and assert a structured
+`tool_calls` delta arrives. Fail fast with a clear message ("vLLM not launched with a tool-call parser
+matching <model>") instead of degrading every session at runtime.
 
-**Proposal.** Document the required vLLM launch flags per model family (already noted in CLAUDE.md:
-`--enable-auto-tool-choice --tool-call-parser`) and add a startup self-check that pings
-`/v1/chat/completions` with a trivial tool and asserts a structured `tool_calls` delta arrives —
-fail fast with a clear message instead of silently degrading every session.
-
----
-
-## 3. Master–Slave connectivity
-
-This is the weakest area and has the highest ceiling.
-
-### 3.1 Relay delegated results back to Messenger  ·  M · ★★★  **(critical)**
-**Bug-level gap.** `try_submit_from_message` (`hoonbot/core/cluster_client.py`) posts *"Queued
-cluster task X"* to the room and stops. The slave executes it (`cluster_worker._execute_task`) and
-writes the result into the master's `cluster_store`, but **no master-side loop ever reads it back**:
-the master lifespan starts only `_catch_up` and `run_heartbeat_loop` (`hoonbot.py:291-292`) — there
-is no completion watcher. The `room_id` is already stored in `task.metadata`
-(`cluster_client.py:75, 87`), so the answer is sitting in the store, addressed, and never delivered.
-
-**Proposal.** Add a master background task that watches for `completed`/`failed` tasks (via the event
-log `cluster_store.load_events` or a status poll) and posts `task.result` to `metadata.room_id`.
-Until this lands, the entire `@node` delegation feature produces no user-visible output.
-
-### 3.2 Replace the file-glob task queue  ·  M · ★★★
-**Problem.** `cluster_store.lease_task` (`cluster_store.py:136-170`) **globs every `*.json`, sorts by
-mtime, and takes a `FileLock` per file on every poll, from every slave, every 3s**
-(`CLUSTER_SLAVE_POLL_INTERVAL_SECONDS=3`). `nodes.json` is fully rewritten on every heartbeat
-(`_write_nodes_unlocked`, `cluster_store.py:245-246`). This is O(tasks × slaves / interval) disk +
-lock contention — fine for 2 nodes, a problem at 10.
-
-**Proposal.** Move the registry/queue to **SQLite** (the repo already uses sql.js in Messenger and
-`filelock`; a single `cluster.db` with `WAL` is a natural fit) or at minimum a single append-only
-queue index file. Atomic `UPDATE … WHERE status='queued' … LIMIT 1` replaces the glob+lock scan.
-
-### 3.3 Long-poll the lease (push, not 3s poll)  ·  M · ★★
-**Problem.** Slaves busy-poll `/tasks/lease` every 3s (`cluster_worker.py:155-167`), adding up to 3s
-latency per task and constant load even when idle.
-
-**Proposal.** Make `/tasks/lease` a **long-poll**: hold the request open until a task matches or a
-~25s timeout elapses, then return. One-line change on the slave (loop already retries), and the
-master can wake waiters when `create_task` runs. Cuts dispatch latency to ~0 and idle load to near
-zero.
-
-### 3.4 Load-aware routing of *normal* traffic  ·  L · ★★★
-**Problem.** Slave GPUs sit idle unless a user explicitly `@mentions` them. Heartbeats only carry
-`disk_free_gb` (`cluster_worker.py:29-43`). The master handles all normal chat itself; the cluster
-is a manual-dispatch curiosity, not an inference pool.
-
-**Proposal.**
-- Extend the heartbeat payload with **GPU mem free, vLLM running/waiting queue depth, in-flight
-  request count** (vLLM exposes `/metrics`).
-- Add a master-side router that can forward a normal `/v1/chat/completions` to the least-loaded
-  healthy node (respecting KV-cache affinity — prefer the node that served the session before).
-- This turns three boxes into one load-balanced endpoint and is the payoff that justifies 3.2/3.3.
-
-### 3.5 Remote sub-agents (unifies §1 + §3)  ·  L · ★★★
-**Opportunity.** `SubAgentTool.execute` (`tools/agent/tool.py`) spawns an **in-process** `AgentLoop`
-on the master only. Meanwhile idle slaves can run full agent loops. The task queue already moves a
-prompt to a slave and returns a text result — exactly a sub-agent's contract.
-
-**Proposal.** Add `subagent_type="remote"` (or an auto policy) that submits the sub-agent prompt to
-the cluster queue, leases it to a slave, streams its events into the task event log, and returns the
-result. The master agent can then fan out N independent research/build tasks across the cluster in
-parallel — real distributed agentic work, not just chat offload. Depends on 3.1 (result plumbing)
-and benefits from 3.3 (low-latency lease).
-
-### 3.6 Faster failure recovery  ·  S · ★★
-**Problem.** A crashed slave's leased task is only re-queued after the 900s lease expires
-(`CLUSTER_TASK_LEASE_SECONDS`, recovered lazily in `_recover_expired_lease`,
-`cluster_store.py:299-309`). A 15-minute stall on a node reboot.
-
-**Proposal.** Tie lease liveness to the heartbeat: if a node goes stale
-(`CLUSTER_NODE_STALE_SECONDS=90`), immediately re-queue its in-flight leases. Add an explicit
-`nack`/release endpoint the slave calls on its own task failure so it doesn't wait for expiry.
-
-### 3.7 Stream slave progress  ·  M · ★
-**Problem.** A slave runs the task as a single **non-streaming** chat (`stream:"false"`,
-`cluster_worker.py:115-131`) — the master sees nothing until it's done, and the slave runs with no
-tools/workspace context beyond `build_llm_context()`.
-
-**Proposal.** Run the slave task through the streaming agent loop and forward `tool_status` / text
-deltas into `cluster_store.append_event`. The task board (§1.6) and the relay (§3.1) then show live
-progress. Optionally pass a `workspace_dir` so remote sub-agents can do real file work.
+### Flow sequencing
+2.1 (token visibility) → 2.2 (dup hard-stop, immediate quality win) → 2.3 + 2.4 (planning/state, which
+benefit from token accounting) → 2.5 (operational hardening).
 
 ---
 
-## Cross-cutting: security & ops (note, not the focus)
+## 3. Hoonbot filesystem awareness · M
 
-- **Default secrets ship in `cluster_config.py`**: `CLUSTER_SECRET="change-me-cluster-token"`,
-  admin `administrator`, terminal token `leesihun`. Add a master-start assertion that refuses to bind
-  a non-loopback IP while any secret is still default.
-- **Cluster auth is a single static shared token** in a plaintext header (`routes/cluster.py:23-29`).
-  For LAN this is acceptable (documented), but HMAC-signing request bodies with the shared secret
-  would close replay/spoofing on the segment cheaply.
-- **Master is a SPOF** for the task store. Out of scope now; worth a line in the architecture doc.
+### Idea (yours)
+Give Hoonbot durable "spatial awareness" of its own deployment — what files/skills/configs exist, where
+data lives, what changed — for future reference, maintained from the heartbeat rather than rediscovered
+every turn.
+
+### Design — persistent, code-level snapshot (no LLM cost)
+- New `hoonbot/core/fs_snapshot.py`: a pure-Python walk of key roots (repo root depth-limited,
+  `data/`, `skills/`, `prompts/`), excluding the usual noise (`.git`, `__pycache__`, `node_modules`,
+  `.venv`, `data` blobs) — mirror the exclude set already used in
+  [prompt_assembly.py:73](llm-api/backend/agent/prompt_assembly.py#L73). It writes a compact tree +
+  recently-changed files to `hoonbot/data/filesystem_map.md`, and diffs against the previous snapshot
+  to record **drift** (added / removed / modified — especially under `skills/`, `prompts/`, and the
+  config files).
+- Drive it from `run_heartbeat_loop` ([heartbeat.py:373-405](hoonbot/core/heartbeat.py#L373-L405)) every
+  *K* ticks (or a slower sibling cadence), so it costs a directory walk, not an LLM call.
+- Surface a one-line digest in ambient context — extend `build_per_turn_context`
+  ([context.py:123-168](hoonbot/core/context.py#L123-L168)), which already reports data dir / memory
+  size / skills — e.g. *"Filesystem: 412 files / 37 dirs; changed since last scan: skills/foo.md (new),
+  config.py (modified)."* Add the map's absolute path to `_build_session_variables`
+  ([context.py:171-190](hoonbot/core/context.py#L171-L190)) so the agent can `file_reader` the full map
+  on demand.
+- **Keep it out of `memory.md`.** `memory.md` is injected wholesale into every session
+  ([context.py:84-86](hoonbot/core/context.py#L84-L86)); a full tree there would bloat the prefix every
+  turn. Separate map file + short digest is the right split. Optionally let the heartbeat note *notable
+  drift only* (e.g. a skill was added/removed) into `memory.md` as a one-liner.
+
+### Why it's a good fit
+It extends the ambient-awareness pattern Hoonbot already has, and gives the autonomous loop a way to
+notice when it (or a deploy) changed its own skills/config — useful precisely because the bot can edit
+its own `skills/` and `memory.md`.
+
+### Files
+`hoonbot/core/fs_snapshot.py` *(new)*, `hoonbot/core/heartbeat.py` (invoke every K ticks),
+`hoonbot/core/context.py` (digest + path). `data/filesystem_map.md` and `relayed_tasks.json` are
+runtime artifacts — never committed (`data/` is already gitignored).
 
 ---
 
-## Suggested sequencing
+## 4. Vision passthrough for attached images · M
 
-**Phase 1 — make the cluster actually deliver (1–2 weeks)**
-3.1 result relay → 2.1 token budgeting → 3.3 long-poll → 2.3/2.2 dup hard-stop+memoize → 1.1 web_fetch.
-*Outcome:* delegation produces visible answers, context never silently cliffs, agent stops spinning.
+### Problem
+`_format_attached_files` injects image *metadata* only
+([prompt_assembly.py:413-438](llm-api/backend/agent/prompt_assembly.py#L413-L438)); image bytes never
+reach the model, so a VL model (GLM-4.x-V / Qwen-VL) is blind to attachments.
 
-**Phase 2 — scale & capability (2–4 weeks)**
-3.2 SQLite queue → 3.4 load-aware routing → 1.2 semantic memory → 1.6 task board → 3.6 fast recovery.
-*Outcome:* the three boxes become one load-balanced, observable inference+agent pool.
+### Design
+When the served model is vision-capable, pass attached images as OpenAI `image_url` content parts on
+the user turn in `_build_payload` ([llm_backend.py:137-183](llm-api/backend/core/llm_backend.py#L137-L183))
+instead of (or alongside) the text metadata block. Gate on a new `MODEL_SUPPORTS_VISION` flag in
+`cluster_config.py` so text-only deployments are unaffected. Respect a size/count cap and downscale
+large images before encoding.
 
-**Phase 3 — distributed agency (3+ weeks)**
-3.5 remote sub-agents → 3.7 slave streaming → 1.3 scheduler → 2.4/2.5 structured plan/summary → 1.5 vision.
-*Outcome:* the master orchestrates parallel agent work across the cluster, with live progress.
+### Verification
+With a VL `VLLM_MODEL`, attach a screenshot in Messenger and ask the bot to describe it; confirm the
+description reflects actual image content. Confirm text-only models are unchanged when the flag is off.
 
 ---
 
-## Quick verification commands referenced in CLAUDE.md
+## Overall sequencing
+
+1. **Workstream 1** (relay) — unblocks a broken feature; smallest blast radius.
+2. **2.1 → 2.2** (token budgeting, then duplicate hard-stop) — biggest quality-per-effort in the loop.
+3. **Workstream 3** (filesystem awareness) and **2.3/2.4** (planning/state) in parallel — independent.
+4. **Workstream 4** (vision) and **2.5** (self-check) — contained, do when convenient.
+
+## Verification commands (from CLAUDE.md)
 ```
 python -m py_compile <file.py>                 # syntax-check Python edits
 cd messenger ; npm.cmd run typecheck           # TS check
 cd hoonbot   ; python scripts\test_llm.py      # LLM API connectivity
 curl http://127.0.0.1:10000/v1/models          # confirm VLLM_MODEL name
 ```
+
+---
+
+## Implementation status (2026-06-28)
+
+What actually shipped, and where. Note 2.3/2.4/2.5 were left as documented
+follow-ups; the implemented set is 1, 2.1, 2.2, 3, and 4.
+
+**1 — Cluster result relay**
+- `hoonbot/core/cluster_relay.py` *(new)* — master watcher: polls terminal tasks, fetches the
+  full (un-truncated) result, posts it to `metadata.room_id`, persists relayed IDs in
+  `data/relayed_tasks.json`, seeds existing-terminal on first run to avoid backlog spam.
+- `hoonbot/hoonbot.py` — starts/stops `run_cluster_relay_loop(messenger.send_message)` on the master.
+
+**2.1 — Token-aware budgeting**
+- `llm_backend.py` — new `UsageEvent`; `stream_options.include_usage` in the payload; captures the
+  trailing usage chunk and emits `UsageEvent`.
+- `llm_interceptor.py` — passes `UsageEvent` through and logs REAL tokens when present.
+- `compaction.py` — captures usage into `_last_prompt_tokens`; `_should_proactively_compact()`;
+  proactive summarize-before-send in `_stream_with_autocompact` (reactive path retained as safety net).
+- `loop.py` — initializes `_last_prompt_tokens`. `config.py` — `MODEL_CONTEXT_WINDOW` (default 0 =
+  off), `AGENT_COMPACT_AT_TOKEN_FRACTION` (0.75).
+
+**2.2 — Duplicate-call hard-stop + read memoization**
+- `tool_dispatch.py` — per-run cache for read-only + concurrency-safe tools (`_read_cache_key`);
+  identical repeats short-circuit with a `cached`/`cache_note` marker; cache cleared by any
+  non-read-only (mutating) tool so reads can't go stale.
+- `loop.py` — initializes `_read_result_cache`.
+
+**3 — Hoonbot filesystem awareness**
+- `hoonbot/core/fs_snapshot.py` *(new)* — pure-Python bounded walk (depth/excludes/file-cap); writes
+  `data/filesystem_map.md` + `data/filesystem_snapshot.json`; computes added/removed/modified drift;
+  returns a one-line digest. Smoke-tested: produced a real digest.
+- `heartbeat.py` — runs `run_snapshot()` every `HEARTBEAT_FS_SNAPSHOT_EVERY_TICKS` (default 1) ticks,
+  off the event loop via `asyncio.to_thread`, regardless of active hours.
+- `context.py` — digest line in `build_per_turn_context`; map path added to Session Variables.
+
+**4 — Vision gate**
+- `config.py` — `MODEL_SUPPORTS_VISION` (default true). `chat.py` — embeds `image_url` parts only when
+  enabled; otherwise surfaces images as metadata so a text-only model isn't sent parts it can't decode.
+  (Core vision embedding already existed; this only adds the gate.)
+
+**Validation run:** all 12 changed/new files `py_compile` clean; both services import-load; new
+`AgentLoop` exposes the new state and `_read_cache_key`/`_should_proactively_compact` behave correctly.
+
+**Not yet wired (operator):** set `MODEL_CONTEXT_WINDOW` to enable proactive compaction. Live
+end-to-end checks still worth running: a real `@slave` round-trip (relay), and a vision attachment on a
+VL model.

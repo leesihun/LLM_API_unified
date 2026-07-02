@@ -198,7 +198,7 @@ def _prepare_messages_with_files(
             except Exception as e:
                 file_metadata.append({"name": path.name, "path": file_path, "error": str(e)})
 
-    if image_paths:
+    if image_paths and getattr(config, "MODEL_SUPPORTS_VISION", True):
         last_user_idx = None
         for i in range(len(message_dicts) - 1, -1, -1):
             if message_dicts[i]["role"] == "user":
@@ -215,9 +215,22 @@ def _prepare_messages_with_files(
                 encoded = encode_image_base64(img_path)
                 if encoded:
                     content_parts.append({"type": "image_url", "image_url": encoded})
-                    from pathlib import Path as _Path
-                    print(f"[VISION] Embedded image: {_Path(img_path).name}")
+                    print(f"[VISION] Embedded image: {Path(img_path).name}")
             msg["content"] = content_parts
+    elif image_paths:
+        # Vision disabled for this model — surface images as metadata instead of
+        # embedding image_url parts a text-only model can't decode.
+        for img_path in image_paths:
+            p = Path(img_path)
+            try:
+                file_metadata.append({
+                    "name": p.name, "path": img_path,
+                    "size": p.stat().st_size, "type": p.suffix.lstrip('.'),
+                    "category": "image",
+                    "note": "image attached but vision is disabled on this model",
+                })
+            except Exception as e:
+                file_metadata.append({"name": p.name, "path": img_path, "error": str(e)})
 
     return message_dicts, file_metadata
 

@@ -5,7 +5,7 @@ import re
 from typing import List, Dict, Any, AsyncIterator, Optional
 
 import config
-from backend.core.llm_backend import StreamEvent, TextEvent, ToolStatusEvent
+from backend.core.llm_backend import StreamEvent, TextEvent, ToolStatusEvent, UsageEvent
 
 
 # Substrings (case-insensitive) that mark a tool result worth keeping in full
@@ -29,6 +29,24 @@ def _looks_like_failure(content: str) -> bool:
 
 class CompactionMixin:
     """Compresses old tool results and auto-compacts on vLLM context overflow."""
+
+    # Real prompt-token count from the previous LLM call (vLLM usage). 0 = unknown.
+    # Set by _stream_with_autocompact; AgentLoop.__init__ also initializes it.
+    _last_prompt_tokens: int = 0
+
+    def _should_proactively_compact(self) -> bool:
+        """True when the last measured prompt-token count crossed the budget.
+
+        Budget = MODEL_CONTEXT_WINDOW * AGENT_COMPACT_AT_TOKEN_FRACTION. Disabled
+        (returns False) when the context window is unknown (<= 0) or no real
+        token count has been observed yet.
+        """
+        window = int(getattr(config, "MODEL_CONTEXT_WINDOW", 0) or 0)
+        last = int(getattr(self, "_last_prompt_tokens", 0) or 0)
+        if window <= 0 or last <= 0:
+            return False
+        frac = float(getattr(config, "AGENT_COMPACT_AT_TOKEN_FRACTION", 0.75))
+        return last >= window * frac
 
     def _compress_old_iterations(self, msgs: List[Dict[str, Any]], current_iteration: int) -> List[Dict[str, Any]]:
         """
@@ -362,12 +380,38 @@ class CompactionMixin:
         """
         enabled = getattr(config, "AGENT_AUTOCOMPACT_ENABLED", True)
         max_retries = max(0, getattr(config, "AGENT_AUTOCOMPACT_MAX_RETRIES", 2))
+
+        # PROACTIVE compaction: if the previous call's REAL prompt-token count
+        # (from vLLM usage) crossed the budget, summarize now — before sending —
+        # so we avoid the wasted 400-then-resend round-trip on the hot path.
+        if enabled and use_compressed_view and self._should_proactively_compact():
+            self._log(
+                f"  [AUTOCOMPACT] Proactive: last prompt was {self._last_prompt_tokens} tokens "
+                f"(>= budget); compacting before send"
+            )
+            compacted = await self._summarize_and_compact_msgs(msgs)
+            if compacted:
+                # Force a fresh measurement next call; don't re-trigger on stale count.
+                self._last_prompt_tokens = 0
+                yield ToolStatusEvent(
+                    tool_name="autocompact",
+                    tool_call_id="autocompact",
+                    status="started",
+                    activity="Compacting context (proactive)",
+                    user_name="System",
+                )
+
         attempt = 0
         while True:
             events_yielded = False
             view = self._compress_old_iterations(msgs, iteration) if use_compressed_view else msgs
             try:
                 async for event in self.llm.chat_stream(view, model, temperature, **chat_kwargs):
+                    # Capture real token usage to steer the NEXT call's budget,
+                    # then swallow it — downstream consumers don't handle it.
+                    if isinstance(event, UsageEvent):
+                        self._last_prompt_tokens = event.prompt_tokens
+                        continue
                     events_yielded = True
                     yield event
                 return

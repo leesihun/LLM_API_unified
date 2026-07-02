@@ -73,7 +73,7 @@
     <label for="url">Server URL</label>
     <input id="url" type="text" placeholder="http://192.168.0.10:10006" autofocus />
     <button id="save">Connect</button>
-    <div class="hint">Press Ctrl+, anytime to change this.</div>
+    <div class="hint">Change anytime via File &gt; Server Settings (Ctrl+,).</div>
   </div>
   <script>
     const params = new URLSearchParams(window.location.search);
@@ -86,6 +86,9 @@
     if (params.get('error') === 'unreachable') {
       errBox.style.display = 'block';
       errBox.textContent = 'Could not reach ' + (params.get('url') || 'the server') + '. Check the address and that the server is running.';
+    } else if (params.get('error') === 'crashed') {
+      errBox.style.display = 'block';
+      errBox.textContent = 'The page crashed (' + (params.get('reason') || 'unknown') + '). See main.log in the app data folder, then try Connect again.';
     }
 
     // Prefill from saved config if nothing in the query.

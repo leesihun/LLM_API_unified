@@ -387,8 +387,23 @@ async def run_heartbeat_loop(send_fn: Callable[[int, str], Awaitable[None]]) -> 
         f"active hours={config.HEARTBEAT_ACTIVE_START}–{config.HEARTBEAT_ACTIVE_END}"
     )
 
+    snapshot_every = max(1, int(getattr(config, "HEARTBEAT_FS_SNAPSHOT_EVERY_TICKS", 1)))
+    tick = 0
+
     while True:
         await asyncio.sleep(config.HEARTBEAT_INTERVAL_SECONDS)
+        tick += 1
+
+        # Refresh the filesystem-awareness snapshot (cheap, no LLM). Runs even
+        # outside active hours so the map/digest stays current for the next tick.
+        if tick % snapshot_every == 0:
+            try:
+                from core import fs_snapshot
+                digest = await asyncio.to_thread(fs_snapshot.run_snapshot)
+                if digest:
+                    logger.info(f"[Heartbeat] {digest}")
+            except Exception as exc:
+                logger.warning(f"[Heartbeat] Filesystem snapshot failed: {exc}")
 
         if not _within_active_hours():
             logger.debug("[Heartbeat] Outside active hours — skipping tick")

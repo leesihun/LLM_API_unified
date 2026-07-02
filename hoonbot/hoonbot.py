@@ -291,6 +291,11 @@ async def lifespan(app: FastAPI):
     catchup_task = asyncio.create_task(_catch_up())
     heartbeat_task = asyncio.create_task(run_heartbeat_loop(messenger.send_message_once))
 
+    # Relay finished cluster task results back to the rooms that requested them.
+    # No-op unless this node is a master with delegation enabled.
+    from core.cluster_relay import run_cluster_relay_loop
+    relay_task = asyncio.create_task(run_cluster_relay_loop(messenger.send_message))
+
     def _on_task_done(task: asyncio.Task, name: str = "") -> None:
         if task.cancelled():
             logger.warning(f"[Hoonbot] Background task '{name}' was cancelled")
@@ -299,12 +304,14 @@ async def lifespan(app: FastAPI):
 
     catchup_task.add_done_callback(lambda t: _on_task_done(t, "catch_up"))
     heartbeat_task.add_done_callback(lambda t: _on_task_done(t, "heartbeat"))
+    relay_task.add_done_callback(lambda t: _on_task_done(t, "cluster_relay"))
 
     yield
 
     catchup_task.cancel()
     heartbeat_task.cancel()
-    await asyncio.gather(catchup_task, heartbeat_task, return_exceptions=True)
+    relay_task.cancel()
+    await asyncio.gather(catchup_task, heartbeat_task, relay_task, return_exceptions=True)
     await close_llm_client()
     await messenger.close_client()
     logger.info("[Hoonbot] Shutdown complete")

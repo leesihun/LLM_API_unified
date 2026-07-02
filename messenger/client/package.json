@@ -4,7 +4,6 @@
   "private": true,
   "description": "사내 실시간 채팅 메신저",
   "author": "Huni",
-  "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",

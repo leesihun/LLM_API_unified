@@ -148,9 +148,18 @@ AGENT_FILE_PREVIEW_MAX_CHARS = 120
 AGENT_OLD_TOOL_RESULT_SUMMARY_MAX_CHARS = 4000  # MiniMax M2 / Qwen3 handle long context fine; aggressive compaction was erasing useful detail
 AGENT_COMPACTION_WARM_WINDOW = 10  # multi-file edit flows need more headroom than 5
 
-# Auto-compact: triggered when vLLM returns a context-overflow error.
-# We summarize the older half of the conversation via a single LLM call and
-# replace it with a compact system message, then retry. Only fires reactively.
+# Proactive compaction: when vLLM reports REAL prompt-token usage (via
+# stream_options.include_usage) and the last call's prompt crossed
+# MODEL_CONTEXT_WINDOW * AGENT_COMPACT_AT_TOKEN_FRACTION, the agent summarizes
+# the older half BEFORE the next send — avoiding the reactive 400-then-resend.
+# MODEL_CONTEXT_WINDOW = 0 disables proactive compaction (reactive still works).
+# Set this to your served model's max context length (see vLLM --max-model-len).
+MODEL_CONTEXT_WINDOW = int(os.environ.get("MODEL_CONTEXT_WINDOW", getattr(_CLUSTER, "MODEL_CONTEXT_WINDOW", 0)))
+AGENT_COMPACT_AT_TOKEN_FRACTION = 0.75
+
+# Auto-compact: also triggered reactively when vLLM returns a context-overflow
+# error. We summarize the older half of the conversation via a single LLM call
+# and replace it with a compact system message, then retry.
 AGENT_AUTOCOMPACT_ENABLED = True
 AGENT_AUTOCOMPACT_MAX_RETRIES = 2          # number of summarize-and-retry attempts per LLM call
 AGENT_AUTOCOMPACT_SUMMARY_MAX_TOKENS = 1500 # cap on the summary the LLM is allowed to emit
@@ -222,6 +231,14 @@ MAX_FILE_SIZE_MB = 100
 IMAGE_SUPPORTED_FORMATS = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]
 IMAGE_MAX_SIZE_MB = 20
 IMAGE_MAX_DIMENSION = 4096  # resize if either side exceeds this (saves context tokens)
+# Whether the served vLLM model can consume images. When True (default),
+# attached images are embedded as OpenAI image_url content parts on the user
+# turn. Set False for a text-only model so it isn't sent image parts it can't
+# decode (vLLM 400s on image_url for text-only models); images then appear as
+# metadata only. Override via env MODEL_SUPPORTS_VISION or cluster_config.
+MODEL_SUPPORTS_VISION = str(
+    os.environ.get("MODEL_SUPPORTS_VISION", getattr(_CLUSTER, "MODEL_SUPPORTS_VISION", "true"))
+).strip().lower() in ("1", "true", "yes", "on")
 
 # ============================================================================
 # Stop Signal Settings
