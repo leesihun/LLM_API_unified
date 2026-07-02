@@ -508,7 +508,7 @@ async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_se
 
 # ---------------------------------------------------------------------------
 # Streaming processing — streams text into one live-edited draft bubble,
-# surfaces tool activity via a transient status message + typing indicator.
+# surfaces tool activity only through the ephemeral typing indicator.
 # ---------------------------------------------------------------------------
 
 # Status shown in the typing indicator when the LLM is thinking/generating
@@ -519,6 +519,13 @@ _STATUS_GENERATING = "응답 생성 중"
 # long tool calls. Must stay below the Messenger server-side auto-clear (15s)
 # and the client-side safety timeout (20s).
 _TYPING_REFRESH_INTERVAL_SECONDS = 10
+
+# Divider inserted before the post-tool text when a turn used tools, so the
+# final answer stands out from the work narration above it. Styling only —
+# a misplaced boundary shifts the marker but never drops content. The client
+# renderer only supports bold/italic/code, so a plain rule + bold header is
+# the strongest emphasis available inside one bubble.
+_ANSWER_DIVIDER = "──────────\n✅ **답변**"
 
 def _format_tool_status(running_tools: dict[str, str]) -> str:
     """Return the typing-indicator text for the current set of running tools.
@@ -538,12 +545,15 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
     UX model:
       - Streamed text is posted as one draft message and edited in place as
         tokens arrive; at the end of the turn it settles into the final reply.
-        One bubble per turn — work narration and answer stay together in the
-        order the model produced them.
-      - Tool activity is surfaced through a transient "🔧 ... 사용 중" status
-        message (deleted when the turn completes) and the typing indicator at
-        the bottom of the chat: "{bot}님이 websearch 사용 중..." etc. Multiple
-        parallel tools are joined with " + ".
+        One bubble per turn. When the turn used tools, the text after the
+        last tool event is set off with `_ANSWER_DIVIDER` so the answer
+        stands out from the work narration above it.
+      - Tool activity is surfaced only through the typing indicator at the
+        bottom of the chat: "{bot}님이 websearch 사용 중..." etc. Multiple
+        parallel tools are joined with " + ". No helper bubbles are posted
+        and later deleted — the client renders deleted messages as a
+        permanent "삭제된 메시지입니다." placeholder, so mid-turn deletions
+        must be avoided.
       - While no tool is running, the indicator shows "{bot}님이 응답 생성 중...".
       - A background task re-fires the typing event every
         `_TYPING_REFRESH_INTERVAL_SECONDS` so the indicator survives long
@@ -553,9 +563,11 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
     files_payload = [("files", (name, data, "application/octet-stream")) for name, data in (downloaded_files or [])]
 
     full_text = ""
+    # Character offset in full_text at the last tool event. Text streamed after
+    # it gets the answer divider at settle time (styling only, never a split).
+    final_split_pos: int = 0
     running_tools: dict[str, str] = {}  # tool_call_id -> tool_name, insertion-ordered
     session_id_from_header: str | None = None
-    status_msg_id: int | None = None  # ID of the live tool-status message in chat
     draft_msg_id: int | None = None   # ID of the live text-draft message in chat
     last_draft_edit: float = 0.0
     _DRAFT_EDIT_INTERVAL = 0.8
@@ -608,24 +620,17 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                     raise RuntimeError(f"LLM API stream error ({err_type}): {err_message}")
 
                 if "tool_status" in event:
+                    # Text streamed before a tool event is work narration, not
+                    # the final answer — remember the boundary for the divider.
+                    final_split_pos = len(full_text)
                     ts = event["tool_status"]
                     tool_name = ts.get("tool_name", "")
                     tool_key = ts.get("tool_call_id") or tool_name
                     status = ts.get("status", "")
                     if status == "started":
                         running_tools[tool_key] = tool_name
-                        status_text = _format_tool_status(running_tools)
-                        if status_msg_id is None:
-                            status_msg_id = await messenger.send_message_returning_id(
-                                room_id, f"🔧 {status_text}..."
-                            )
-                        else:
-                            await messenger.edit_message(status_msg_id, f"🔧 {status_text}...")
                     elif status in {"completed", "failed"}:
                         running_tools.pop(tool_key, None)
-                        if running_tools and status_msg_id is not None:
-                            status_text = _format_tool_status(running_tools)
-                            await messenger.edit_message(status_msg_id, f"🔧 {status_text}...")
                     await messenger.send_typing(room_id, status_text=_format_tool_status(running_tools))
                     continue
 
@@ -650,8 +655,6 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
 
     except httpx.ReadTimeout:
         logger.warning(f"{log_prefix} Stream read timeout after collecting {len(full_text)} chars")
-        if status_msg_id is not None:
-            await messenger.delete_message(status_msg_id)
         if full_text.strip():
             msg = full_text.strip() + "\n\n⚠️ (응답이 시간 초과로 잘렸어요)"
             if draft_msg_id is not None:
@@ -661,14 +664,18 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
             return full_text
         raise
     except Exception:
-        if status_msg_id is not None:
-            try:
-                await messenger.delete_message(status_msg_id)
-            except Exception:
-                pass
+        # Keep whatever already streamed — settle the draft with a warning
+        # instead of deleting it (deletions leave a permanent "삭제된
+        # 메시지입니다." placeholder in the client).
         if draft_msg_id is not None:
             try:
-                await messenger.delete_message(draft_msg_id)
+                if full_text.strip():
+                    await messenger.edit_message(
+                        draft_msg_id,
+                        full_text.strip() + "\n\n⚠️ 오류가 발생해 응답이 중단되었어요.",
+                    )
+                else:
+                    await messenger.delete_message(draft_msg_id)
             except Exception:
                 pass
         raise
@@ -683,20 +690,22 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
         result_like = {"x_session_id": session_id_from_header}
         await _save_session_from_response(room_id, result_like, existing_session_id, log_prefix)
 
-    # Delete tool status message before sending the final reply
-    if status_msg_id is not None:
-        await messenger.delete_message(status_msg_id)
-
     final_text = full_text.strip()
+
+    # When the turn used tools, set the post-tool text off with the answer
+    # divider so it stands out from the work narration above it.
+    worklog_text = full_text[:final_split_pos].strip()
+    answer_text = full_text[final_split_pos:].strip()
+    if worklog_text and answer_text:
+        final_text = f"{worklog_text}\n\n{_ANSWER_DIVIDER}\n\n{answer_text}"
 
     if draft_msg_id is not None:
         # A live draft was already posted — settle it to the final text or clean up
         if final_text:
             await messenger.edit_message(draft_msg_id, final_text)
         else:
-            await messenger.delete_message(draft_msg_id)
             fallback = "완료."
-            await messenger.send_message(room_id, fallback, reply_to_id=reply_to_id)
+            await messenger.edit_message(draft_msg_id, fallback)
             logger.warning(f"{log_prefix} LLM produced no text output — sent fallback acknowledgment")
             return fallback
     else:
