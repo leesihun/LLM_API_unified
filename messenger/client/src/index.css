@@ -53,7 +53,8 @@ body {
   padding: 10px 12px;
   margin: 6px 0;
   overflow-x: auto;
-  font-size: 0.8rem;
+  /* rem, not em — must track the bubble's text-xl (20px) manually */
+  font-size: 1.2rem;
   line-height: 1.5;
   /* Wrap long code instead of forcing a horizontal scroll. overflow-wrap
      breaks even unbroken tokens (long URLs, minified lines) at the bubble edge. */

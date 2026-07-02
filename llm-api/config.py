@@ -317,8 +317,11 @@ WEBSEARCH_MAX_RESULTS = 5
 # ============================================================================
 # code_exec subprocess caps
 # ============================================================================
+PYTHON_EXECUTOR_MODE = "native"     # "native" = ephemeral subprocess; "opencode" = remote opencode server
 PYTHON_EXECUTOR_TIMEOUT = 300       # code_exec default; tool timeout=0 disables wall-clock kill
 PYTHON_EXECUTOR_MAX_OUTPUT_SIZE = 1024 * 1024 * 10
+OPENCODE_SERVER_HOST = "127.0.0.1"
+OPENCODE_SERVER_PORT = 37254
 
 # ============================================================================
 # RAG Tool Settings

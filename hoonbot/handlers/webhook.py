@@ -507,8 +507,8 @@ async def _process_sync(room_id: int, llm_data: dict, headers: dict, existing_se
 
 
 # ---------------------------------------------------------------------------
-# Streaming processing — accumulates text silently, surfaces tool activity
-# only through the ephemeral typing indicator at the bottom of the chat.
+# Streaming processing — streams text into one live-edited draft bubble,
+# surfaces tool activity via a transient status message + typing indicator.
 # ---------------------------------------------------------------------------
 
 # Status shown in the typing indicator when the LLM is thinking/generating
@@ -519,16 +519,6 @@ _STATUS_GENERATING = "응답 생성 중"
 # long tool calls. Must stay below the Messenger server-side auto-clear (15s)
 # and the client-side safety timeout (20s).
 _TYPING_REFRESH_INTERVAL_SECONDS = 10
-
-# Headers for the two-bubble split. When an agentic turn ran tools and then
-# produced a final answer, the work-log (all text up to the last tool) stays in
-# its own bubble and the answer is posted separately so a long trace doesn't
-# bury it. Simple turns (no tools) keep the original single bubble. The work-log
-# bubble streams live throughout the turn; only the final reorganization happens
-# at completion. See _process_streaming.
-_WORKLOG_HEADER = "🔧 **작업 내역**"
-_FINAL_ANSWER_HEADER = "✅ **답변**"
-
 
 def _format_tool_status(running_tools: dict[str, str]) -> str:
     """Return the typing-indicator text for the current set of running tools.
@@ -543,13 +533,16 @@ def _format_tool_status(running_tools: dict[str, str]) -> str:
 
 
 async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existing_session_id: str | None, log_prefix: str, reply_to_id: int | None, downloaded_files: list[tuple[str, bytes]] | None = None) -> str | None:
-    """Stream SSE from LLM API, accumulating text silently.
+    """Stream SSE from LLM API into a single live-edited Messenger bubble.
 
     UX model:
-      - The final LLM reply is sent as a single Messenger message at the end
-        of the turn — no progressive editing, no intermediate bubbles.
-      - Tool activity is surfaced only through the typing indicator at the
-        bottom of the chat: "{bot}님이 websearch 사용 중..." etc. Multiple
+      - Streamed text is posted as one draft message and edited in place as
+        tokens arrive; at the end of the turn it settles into the final reply.
+        One bubble per turn — work narration and answer stay together in the
+        order the model produced them.
+      - Tool activity is surfaced through a transient "🔧 ... 사용 중" status
+        message (deleted when the turn completes) and the typing indicator at
+        the bottom of the chat: "{bot}님이 websearch 사용 중..." etc. Multiple
         parallel tools are joined with " + ".
       - While no tool is running, the indicator shows "{bot}님이 응답 생성 중...".
       - A background task re-fires the typing event every
@@ -560,9 +553,6 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
     files_payload = [("files", (name, data, "application/octet-stream")) for name, data in (downloaded_files or [])]
 
     full_text = ""
-    # Character offset in full_text marking the end of the last tool round.
-    # Text streamed after it is the final answer; everything before is work-log.
-    final_split_pos: int = 0
     running_tools: dict[str, str] = {}  # tool_call_id -> tool_name, insertion-ordered
     session_id_from_header: str | None = None
     status_msg_id: int | None = None  # ID of the live tool-status message in chat
@@ -618,10 +608,6 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                     raise RuntimeError(f"LLM API stream error ({err_type}): {err_message}")
 
                 if "tool_status" in event:
-                    # A tool round is happening, so any text streamed so far is
-                    # work-log, not the final answer. Push the split boundary to
-                    # the end of the current text; the last tool wins.
-                    final_split_pos = len(full_text)
                     ts = event["tool_status"]
                     tool_name = ts.get("tool_name", "")
                     tool_key = ts.get("tool_call_id") or tool_name
@@ -703,30 +689,6 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
 
     final_text = full_text.strip()
 
-    # Split: work-log (text up to the last tool round) vs. final answer (text
-    # after it). Only split when the turn used tools AND produced both parts;
-    # otherwise keep the original single bubble.
-    worklog_text = full_text[:final_split_pos].strip()
-    answer_text = full_text[final_split_pos:].strip()
-
-    if worklog_text and answer_text:
-        worklog_body = f"{_WORKLOG_HEADER}\n\n{worklog_text}"
-        # The streamed draft becomes the (long) work-log bubble; the answer is
-        # posted as its own bubble below it, replying to the user's message.
-        if draft_msg_id is not None:
-            await messenger.edit_message(draft_msg_id, worklog_body)
-        else:
-            await messenger.send_message(room_id, worklog_body)
-        await messenger.send_message(
-            room_id, f"{_FINAL_ANSWER_HEADER}\n\n{answer_text}", reply_to_id=reply_to_id
-        )
-        logger.info(
-            f"{log_prefix} Split reply: work-log={len(worklog_text)} chars, "
-            f"answer={len(answer_text)} chars"
-        )
-        return answer_text
-
-    # No split — single bubble (simple turn, or no separable final answer).
     if draft_msg_id is not None:
         # A live draft was already posted — settle it to the final text or clean up
         if final_text:

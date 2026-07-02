@@ -153,11 +153,11 @@ export default function MessageBubble({
   if (message.isDeleted) {
     return (
       <div className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-1`}>
-        <div className="max-w-[42%]">
+        <div className="max-w-[63%]">
           {!isOwn && (
             <span className="text-xs text-gray-400 ml-1">{message.senderName}</span>
           )}
-          <div className="px-4 py-2 rounded-2xl bg-gray-100 text-gray-400 italic text-sm">
+          <div className="px-6 py-3 rounded-3xl bg-gray-100 text-gray-400 italic text-xl">
             삭제된 메시지입니다.
           </div>
         </div>
@@ -170,7 +170,7 @@ export default function MessageBubble({
       className={`flex ${isOwn ? 'justify-end' : 'justify-start'} mb-1 group`}
       onMouseLeave={() => setShowMenu(false)}
     >
-      <div className={`max-w-[42%] ${isOwn ? 'items-end' : 'items-start'}`}>
+      <div className={`max-w-[63%] ${isOwn ? 'items-end' : 'items-start'}`}>
         {/* Sender name (for others) */}
         {!isOwn && (
           <span className="text-xs text-gray-400 ml-1 block mb-0.5">{message.senderName}</span>
@@ -234,15 +234,15 @@ export default function MessageBubble({
 
           {/* Message bubble */}
           <div
-            className={`${isAttachmentOnlyImage ? 'p-1.5' : 'px-4 py-2'} rounded-2xl text-sm ${
+            className={`${isAttachmentOnlyImage ? 'p-2' : 'px-6 py-3'} rounded-3xl text-xl ${
               isOwn
-                ? 'bg-blue-600 text-white rounded-br-md'
-                : 'bg-white text-gray-800 border border-gray-200 rounded-bl-md'
+                ? 'bg-blue-600 text-white rounded-br-lg'
+                : 'bg-white text-gray-800 border border-gray-200 rounded-bl-lg'
             }`}
           >
             {/* Reply preview */}
             {message.replyTo && !message.isDeleted && (
-              <div className={`text-xs mb-1.5 px-2 py-1 rounded border-l-2 ${
+              <div className={`text-sm mb-1.5 px-2 py-1 rounded border-l-2 ${
                 isOwn
                   ? 'border-blue-300 bg-blue-500/20 text-blue-100'
                   : 'border-gray-400 bg-gray-100 text-gray-500'
@@ -252,7 +252,7 @@ export default function MessageBubble({
               </div>
             )}
             {isPinned && !message.isDeleted && (
-              <div className={`text-xs mb-1 flex items-center gap-1 ${isOwn ? 'text-blue-200' : 'text-yellow-600'}`}>
+              <div className={`text-sm mb-1 flex items-center gap-1 ${isOwn ? 'text-blue-200' : 'text-yellow-600'}`}>
                 <span>📌</span>
                 <span>고정됨</span>
               </div>
@@ -262,7 +262,7 @@ export default function MessageBubble({
                 <textarea
                   value={editContent}
                   onChange={(e) => onEditContentChange(e.target.value)}
-                  className="w-full p-2 text-sm border rounded text-gray-800 resize-none"
+                  className="w-full p-2 text-xl border rounded text-gray-800 resize-none"
                   rows={2}
                   autoFocus
                   onKeyDown={(e) => {
@@ -387,7 +387,7 @@ export default function MessageBubble({
                   <p className="text-gray-400 italic">파일이 만료되었습니다.</p>
                 )}
                 {message.isEdited && (
-                  <span className={`text-xs ${isOwn ? 'text-blue-200' : 'text-gray-400'}`}> (수정됨)</span>
+                  <span className={`text-sm ${isOwn ? 'text-blue-200' : 'text-gray-400'}`}> (수정됨)</span>
                 )}
               </>
             )}
