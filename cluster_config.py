@@ -234,6 +234,8 @@ CLUSTER_TOKEN = _env("CLUSTER_TOKEN", CLUSTER_SECRET)
 CLUSTER_NODE_STALE_SECONDS = int(_env("CLUSTER_NODE_STALE_SECONDS", "90"))
 CLUSTER_TASK_LEASE_SECONDS = int(_env("CLUSTER_TASK_LEASE_SECONDS", "900"))
 CLUSTER_SLAVE_POLL_INTERVAL_SECONDS = float(_env("CLUSTER_SLAVE_POLL_INTERVAL_SECONDS", "3"))
+# Max cluster tasks a slave executes concurrently (vLLM batches the requests).
+CLUSTER_SLAVE_MAX_CONCURRENT_TASKS = int(_env("CLUSTER_SLAVE_MAX_CONCURRENT_TASKS", "4"))
 
 if NODE_ROLE == "master":
     _default_caps = ["orchestrator", "messenger", "llm-api"]

@@ -152,16 +152,37 @@ async def run_slave_worker_loop() -> None:
                 logger.warning("[Cluster] Register failed: %s", exc)
                 await asyncio.sleep(config.CLUSTER_SLAVE_POLL_INTERVAL_SECONDS)
 
-        while True:
-            try:
-                await _heartbeat(client)
-                task = await _lease(client)
-                if task:
-                    await _execute_task(client, task)
-                else:
+        running: set[asyncio.Task[None]] = set()
+
+        def _on_task_done(done: asyncio.Task[None]) -> None:
+            running.discard(done)
+            if not done.cancelled() and done.exception() is not None:
+                logger.error("[Cluster] Task runner crashed: %s", done.exception(), exc_info=done.exception())
+
+        try:
+            while True:
+                try:
+                    await _heartbeat(client)
+                    # Fill free execution slots, then sleep; running tasks
+                    # proceed in the background so the loop keeps polling.
+                    while len(running) < config.CLUSTER_SLAVE_MAX_CONCURRENT_TASKS:
+                        task = await _lease(client)
+                        if not task:
+                            break
+                        runner = asyncio.create_task(
+                            _execute_task(client, task),
+                            name=f"cluster-task-{task['task_id']}",
+                        )
+                        running.add(runner)
+                        runner.add_done_callback(_on_task_done)
                     await asyncio.sleep(config.CLUSTER_SLAVE_POLL_INTERVAL_SECONDS)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning("[Cluster] Worker loop error: %s", exc)
-                await asyncio.sleep(config.CLUSTER_SLAVE_POLL_INTERVAL_SECONDS)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    logger.warning("[Cluster] Worker loop error: %s", exc)
+                    await asyncio.sleep(config.CLUSTER_SLAVE_POLL_INTERVAL_SECONDS)
+        finally:
+            for runner in running:
+                runner.cancel()
+            if running:
+                await asyncio.gather(*running, return_exceptions=True)
