@@ -7,6 +7,7 @@ import json
 import logging
 import shutil
 import time
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -17,6 +18,11 @@ from core.context import build_llm_context
 logger = logging.getLogger(__name__)
 
 _TASK_EXECUTION_TEMPLATE = config.read_prompt("cluster/task_execution.txt")
+
+# Keep in sync with MAX_ARTIFACTS_PER_TASK / MAX_ARTIFACT_BYTES in
+# llm-api/backend/core/cluster_store.py — the master rejects excess uploads.
+_ARTIFACT_LIMIT = 10
+_ARTIFACT_MAX_BYTES = 50 * 1024 * 1024
 
 
 def _headers() -> dict[str, str]:
@@ -90,6 +96,43 @@ async def _complete(client: httpx.AsyncClient, task_id: str, result: str | None 
     })
 
 
+def _outbox_dir(task_id: str) -> Path:
+    return Path(config.DATA_DIR) / "cluster_outbox" / task_id
+
+
+async def _upload_artifacts(client: httpx.AsyncClient, task_id: str) -> int:
+    """Upload every file the agent left in the task outbox to the master."""
+    outbox = _outbox_dir(task_id)
+    files = sorted(p for p in outbox.rglob("*") if p.is_file()) if outbox.is_dir() else []
+    if len(files) > _ARTIFACT_LIMIT:
+        await _task_event(client, task_id, f"Outbox has {len(files)} files; uploading first {_ARTIFACT_LIMIT}")
+        files = files[:_ARTIFACT_LIMIT]
+
+    headers = {"x-cluster-token": config.CLUSTER_TOKEN} if config.CLUSTER_TOKEN else {}
+    uploaded = 0
+    for path in files:
+        try:
+            if path.stat().st_size > _ARTIFACT_MAX_BYTES:
+                await _task_event(client, task_id, f"Skipped oversize artifact {path.name}")
+                continue
+            with open(path, "rb") as f:
+                resp = await client.post(
+                    f"{config.CLUSTER_MASTER_API_URL}/api/cluster/tasks/{task_id}/artifacts",
+                    headers=headers,
+                    data={"node_name": config.NODE_NAME},
+                    files={"file": (path.name, f)},
+                )
+            resp.raise_for_status()
+            uploaded += 1
+        except Exception as exc:
+            logger.warning("[Cluster] Artifact upload failed for %s: %s", path, exc)
+            try:
+                await _task_event(client, task_id, f"Artifact upload failed: {path.name} ({exc})")
+            except Exception:
+                pass
+    return uploaded
+
+
 async def _execute_task(client: httpx.AsyncClient, task: dict[str, Any]) -> None:
     task_id = task["task_id"]
     prompt = task.get("prompt") or ""
@@ -102,11 +145,15 @@ async def _execute_task(client: httpx.AsyncClient, task: dict[str, Any]) -> None
         await _complete(client, task_id, error="LLM_MODEL is not configured on slave")
         return
 
+    outbox = _outbox_dir(task_id)
+    outbox.mkdir(parents=True, exist_ok=True)
+
     context = build_llm_context()
     task_prompt = _TASK_EXECUTION_TEMPLATE.format(
         task_id=task_id,
         node_name=config.NODE_NAME,
         prompt=prompt,
+        outbox_dir=str(outbox.resolve()),
     )
     messages = [{
         "role": "user",
@@ -128,11 +175,15 @@ async def _execute_task(client: httpx.AsyncClient, task: dict[str, Any]) -> None
         resp.raise_for_status()
         data = resp.json()
         result = data["choices"][0]["message"]["content"]
+        # Ship outbox files before completing so the relay sees them on delivery.
+        uploaded = await _upload_artifacts(client, task_id)
         await _complete(client, task_id, result=result)
-        logger.info("[Cluster] Completed task %s (%s chars)", task_id, len(result))
+        logger.info("[Cluster] Completed task %s (%s chars, %s artifact(s))", task_id, len(result), uploaded)
     except Exception as exc:
         logger.error("[Cluster] Task %s failed: %s", task_id, exc, exc_info=True)
         await _complete(client, task_id, error=f"{type(exc).__name__}: {exc}")
+    finally:
+        shutil.rmtree(outbox, ignore_errors=True)
 
 
 async def run_slave_worker_loop() -> None:

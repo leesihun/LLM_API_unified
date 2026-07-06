@@ -294,7 +294,7 @@ async def lifespan(app: FastAPI):
     # Relay finished cluster task results back to the rooms that requested them.
     # No-op unless this node is a master with delegation enabled.
     from core.cluster_relay import run_cluster_relay_loop
-    relay_task = asyncio.create_task(run_cluster_relay_loop(messenger.send_message))
+    relay_task = asyncio.create_task(run_cluster_relay_loop(messenger.send_message, messenger.send_file))
 
     def _on_task_done(task: asyncio.Task, name: str = "") -> None:
         if task.cancelled():

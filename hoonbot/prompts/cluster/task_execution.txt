@@ -24,6 +24,18 @@ Delegated task:
 - Never include cluster tokens, API keys, `.env` contents, or full
   credential strings in the result.
 
+# Delivering Files
+
+To send files to the user, copy or save them into this directory
+(absolute path):
+
+{outbox_dir}
+
+Everything in it is uploaded to the master when the task completes and
+posted to the user's Messenger room alongside your result. Limits: at
+most 10 files, 50 MB each. List the delivered file names under
+`artifacts:` in the result.
+
 # Result Format
 
 Return a compact structured result. Use exactly these field names so the
@@ -34,7 +46,7 @@ status:        completed | failed | blocked
 summary:       one or two sentences in plain language
 files_changed: <relative paths, or "none">
 commands_run:  <commands and outcomes, or "none">
-artifacts:     <paths or URLs, or "none">
+artifacts:     <file names placed in the outbox dir, or "none">
 errors:        <concrete errors, or "none">
 ```
 

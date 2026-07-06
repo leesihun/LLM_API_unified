@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 import config
 from backend.core.cluster_store import cluster_store
@@ -117,6 +117,24 @@ async def append_task_event(task_id: str, request: Request):
     payload = await request.json()
     event = cluster_store.append_event(task_id, payload)
     return {"ok": True, "event": event}
+
+
+@router.post("/tasks/{task_id}/artifacts")
+async def upload_task_artifact(
+    task_id: str,
+    request: Request,
+    file: UploadFile = File(...),
+    node_name: str = Form(""),
+):
+    _auth(request)
+    content = await file.read()
+    try:
+        artifact = cluster_store.save_artifact(task_id, node_name, file.filename or "", content)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Task not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"ok": True, "artifact": artifact}
 
 
 @router.post("/tasks/{task_id}/complete")

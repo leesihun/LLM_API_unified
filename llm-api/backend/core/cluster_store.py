@@ -18,6 +18,11 @@ from filelock import FileLock
 import config
 
 
+# Mirrored by the slave-side upload limits in hoonbot/core/cluster_worker.py.
+MAX_ARTIFACTS_PER_TASK = 10
+MAX_ARTIFACT_BYTES = 50 * 1024 * 1024
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -39,10 +44,12 @@ class ClusterStore:
     def __init__(self, base_dir: Path | None = None):
         self.base_dir = base_dir or config.CLUSTER_DIR
         self.tasks_dir = self.base_dir / "tasks"
+        self.artifacts_dir = self.base_dir / "artifacts"
         self.nodes_file = self.base_dir / "nodes.json"
         self.lock_file = self.base_dir / "cluster.lock"
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        self.artifacts_dir.mkdir(parents=True, exist_ok=True)
 
     # ------------------------------------------------------------------
     # Node registry
@@ -217,6 +224,46 @@ class ClusterStore:
             "message": payload.get("error") or "Task completed",
         })
         return task
+
+    def save_artifact(self, task_id: str, node_name: str, filename: str, content: bytes) -> dict[str, Any]:
+        """Store a file delivered by a slave for *task_id* and record it on the task."""
+        if len(content) > MAX_ARTIFACT_BYTES:
+            raise ValueError(f"artifact exceeds {MAX_ARTIFACT_BYTES} bytes")
+        # Basename only — no path traversal from uploaded names.
+        safe = Path(str(filename).replace("\\", "/")).name.strip() or f"artifact-{uuid.uuid4().hex[:8]}"
+
+        with FileLock(self._task_lock(task_id), timeout=10):
+            task = self._read_task_unlocked(task_id)
+            if not task:
+                raise FileNotFoundError(task_id)
+            artifacts = list(task.get("artifacts") or [])
+            if len(artifacts) >= MAX_ARTIFACTS_PER_TASK:
+                raise ValueError(f"artifact limit reached ({MAX_ARTIFACTS_PER_TASK} per task)")
+
+            task_dir = self.artifacts_dir / task_id
+            task_dir.mkdir(parents=True, exist_ok=True)
+            dest = task_dir / safe
+            counter = 1
+            while dest.exists():
+                dest = task_dir / f"{counter}-{safe}"
+                counter += 1
+            dest.write_bytes(content)
+
+            artifact = {
+                "name": dest.name,
+                "path": str(dest.resolve()),
+                "size": len(content),
+                "uploaded_by": node_name or None,
+                "uploaded_at": _iso(),
+            }
+            task["artifacts"] = artifacts + [artifact]
+            self._write_task_unlocked(task)
+        self.append_event(task_id, {
+            "type": "artifact",
+            "node_name": node_name,
+            "message": f"Received artifact {dest.name} ({len(content)} bytes)",
+        })
+        return artifact
 
     def load_events(self, task_id: str) -> list[dict[str, Any]]:
         path = self._task_events_file(task_id)

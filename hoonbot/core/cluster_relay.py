@@ -99,11 +99,26 @@ def _format_message(task: dict[str, Any]) -> str | None:
     return None
 
 
-async def run_cluster_relay_loop(send_fn) -> None:
+async def _send_artifacts(task: dict[str, Any], room_id: int, send_file_fn) -> None:
+    """Post the task's stored artifacts to the room. Failures are logged, not retried."""
+    for artifact in task.get("artifacts") or []:
+        path = str(artifact.get("path") or "")
+        if not path or not Path(path).is_file():
+            logger.warning("[Relay] Artifact missing on disk for task %s: %s", task.get("task_id"), path)
+            continue
+        try:
+            await send_file_fn(room_id, path)
+        except Exception as exc:
+            logger.warning("[Relay] Failed to send artifact %s for task %s: %s", path, task.get("task_id"), exc)
+
+
+async def run_cluster_relay_loop(send_fn, send_file_fn=None) -> None:
     """Poll for terminal Messenger-sourced tasks and relay their results.
 
     *send_fn* is an async ``(room_id: int, content: str) -> None`` — typically
-    ``messenger.send_message``.
+    ``messenger.send_message``. *send_file_fn* is an optional async
+    ``(room_id: int, file_path: str) -> Any`` (``messenger.send_file``) used to
+    deliver artifacts slaves uploaded to the master's cluster store.
     """
     if not getattr(config, "CLUSTER_ENABLED", False):
         logger.info("[Relay] Cluster disabled — relay loop not started")
@@ -163,6 +178,8 @@ async def run_cluster_relay_loop(send_fn) -> None:
                     if message:
                         await send_fn(int(room_id), message)
                         logger.info("[Relay] Delivered task %s to room %s", task_id, room_id)
+                    if send_file_fn:
+                        await _send_artifacts(full, int(room_id), send_file_fn)
                     relayed.add(task_id)
                     new_relays = True
                 except asyncio.CancelledError:
