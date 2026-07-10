@@ -336,7 +336,7 @@ class DispatchMixin:
                 path=arguments["path"],
                 content=arguments["content"],
                 mode=arguments.get("mode", "write"),
-                persist=bool(arguments.get("persist", False)),
+                persist=bool(arguments.get("persist", True)),
             )
 
         elif name == "apply_patch":
@@ -349,7 +349,7 @@ class DispatchMixin:
             return await asyncio.to_thread(
                 cache["apply_patch"].apply,
                 patch=arguments["patch"],
-                persist=bool(arguments.get("persist", False)),
+                persist=bool(arguments.get("persist", True)),
             )
 
         elif name == "shell_lint":

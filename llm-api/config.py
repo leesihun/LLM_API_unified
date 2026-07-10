@@ -389,6 +389,10 @@ JOBS_CLEANUP_DAYS = 30
 # Session Settings
 # ============================================================================
 MAX_CONVERSATION_HISTORY = 200
+# Hard cap on the recent conversation fed to the LLM, in estimated tokens.
+# Applied alongside MAX_CONVERSATION_HISTORY (whichever is more restrictive) so
+# the hot context never exceeds this budget regardless of message count.
+MAX_CONVERSATION_TOKENS = 200_000
 SESSIONS_DIR = DATA_DIR / "sessions"
 SESSION_CLEANUP_DAYS = 7
 

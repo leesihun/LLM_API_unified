@@ -384,12 +384,12 @@ class ApplyPatchTool:
     # Public entry point                                                    #
     # ------------------------------------------------------------------ #
 
-    def apply(self, patch: str, persist: bool = False) -> Dict[str, Any]:
+    def apply(self, patch: str, persist: bool = True) -> Dict[str, Any]:
         """Apply a V4A patch envelope. Returns success dict or error dict.
 
-        If `persist` is False (default), any files newly added by this patch
-        are flagged as temporary in the result so the agent loop can sweep
-        them at session end. Set persist=True for deliverables.
+        If `persist` is True (default), files newly added by this patch are
+        kept. Pass persist=False only for throwaway scratch, which flags the
+        added files as temporary so the agent loop sweeps them at session end.
         """
         try:
             ops = self._parse_v4a(patch)

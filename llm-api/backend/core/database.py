@@ -245,6 +245,12 @@ class ConversationStore:
     def _recent_window(self) -> int:
         return max(1, int(getattr(config, "MAX_CONVERSATION_HISTORY", 50)))
 
+    def _trim_recent(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Bound the recent-history cache by both message count and token budget."""
+        from backend.utils.tokens import trim_to_token_budget
+        max_tokens = int(getattr(config, "MAX_CONVERSATION_TOKENS", 200_000))
+        return trim_to_token_budget(messages, max_tokens, max_messages=self._recent_window())
+
     def _session_exists(self, session_id: str) -> bool:
         return (
             self._get_session_log_file(session_id).exists()
@@ -275,7 +281,7 @@ class ConversationStore:
             recent_messages.extend(messages)
             self._write_recent_unlocked(
                 session_id,
-                recent_messages[-self._recent_window():],
+                self._trim_recent(recent_messages),
             )
 
     def load_conversation(self, session_id: str) -> Optional[List[Dict[str, Any]]]:
@@ -305,7 +311,7 @@ class ConversationStore:
                 recent_messages = self._load_recent_unlocked(session_id)
                 if not recent_messages:
                     full_messages = self._read_log_unlocked(session_id)
-                    recent_messages = full_messages[-self._recent_window():]
+                    recent_messages = self._trim_recent(full_messages)
                     self._write_recent_unlocked(session_id, recent_messages)
                 if limit is not None and limit >= 0:
                     if limit == 0:

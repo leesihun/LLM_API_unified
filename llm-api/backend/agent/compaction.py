@@ -164,18 +164,20 @@ class CompactionMixin:
         return result
 
     def _enforce_history_limit(self, msgs: List[Dict[str, Any]]):
-        """Enforce MAX_CONVERSATION_HISTORY by dropping old messages.
+        """Enforce the recent-history limit by dropping old messages.
 
-        When the conversation exceeds the limit:
+        The limit is the more restrictive of MAX_CONVERSATION_HISTORY (message
+        count) and MAX_CONVERSATION_TOKENS (estimated token budget, charged
+        against the retained system prompt). When the conversation exceeds it:
         1. Keep system messages at the front (indices 0, 1, ...)
         2. Drop oldest non-system messages, replacing with a compaction notice
         3. Compress tool results in remaining old messages
 
         Operates in-place on *msgs*.
         """
+        from backend.utils.tokens import total_message_tokens, trim_to_token_budget
+
         limit = config.MAX_CONVERSATION_HISTORY
-        if len(msgs) <= limit:
-            return
 
         # Find where system messages end
         system_end = 0
@@ -186,11 +188,18 @@ class CompactionMixin:
                 break
 
         non_system = msgs[system_end:]
-        excess = len(non_system) - limit
+
+        # Token budget for non-system messages = total budget minus the system
+        # prompt we always keep. Kept newest-first within both count and tokens.
+        max_tokens = int(getattr(config, "MAX_CONVERSATION_TOKENS", 200_000))
+        system_tokens = total_message_tokens(msgs[:system_end])
+        token_budget = max(1000, max_tokens - system_tokens)
+        kept = trim_to_token_budget(non_system, token_budget, max_messages=limit)
+
+        excess = len(non_system) - len(kept)
 
         if excess > 0:
             dropped = non_system[:excess]
-            kept = non_system[excess:]
             # Build compaction notice
             dropped_roles = {}
             for m in dropped:

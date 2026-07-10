@@ -355,7 +355,9 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
         return
 
     try:
-        delegation = await try_submit_from_message(content, sender_name, room_id)
+        delegation = await try_submit_from_message(
+            content, sender_name, room_id, session_id=_get_session_id(room_id)
+        )
         if delegation:
             await messenger.send_message(room_id, delegation["message"], reply_to_id=reply_to_id)
             logger.info(f"{log_prefix} Delegated cluster task: {delegation}")

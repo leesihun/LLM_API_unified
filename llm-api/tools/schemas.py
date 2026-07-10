@@ -152,9 +152,9 @@ TOOL_SCHEMAS: dict = {
                 "persist": {
                     "type": "boolean",
                     "description": (
-                        "If true, any files newly added by this patch survive session end. "
-                        "If false/omitted (default), added files are treated as temporary "
-                        "and get cleaned up. Updates/deletes/moves are unaffected by this flag."
+                        "If true/omitted (default), files newly added by this patch are kept. "
+                        "Pass false only for throwaway scratch, which flags added files as "
+                        "temporary so they get cleaned up. Updates/deletes/moves are unaffected."
                     ),
                 },
             },
@@ -167,8 +167,8 @@ TOOL_SCHEMAS: dict = {
         "description": (
             "Write a file (overwrites). Use ONLY for new files or full rewrites — "
             "for any modification of an existing file, use file_edit or apply_patch. "
-            "New files are TEMPORARY by default and get deleted at session end; pass "
-            "persist=true when the file is a deliverable the user asked for. "
+            "New files are KEPT by default; pass persist=false only for genuine "
+            "throwaway scratch (prefer code_exec for that). "
             "Don't create docs/README files unless the user asked."
         ),
         "parameters": {
@@ -193,9 +193,9 @@ TOOL_SCHEMAS: dict = {
                 "persist": {
                     "type": "boolean",
                     "description": (
-                        "If true, a newly-created file survives session end. "
-                        "If false/omitted (default), a new file is treated as temporary "
-                        "and gets cleaned up. Editing an existing file is unaffected by this flag."
+                        "If true/omitted (default), a newly-created file is kept. "
+                        "Pass false only for throwaway scratch, which is treated as "
+                        "temporary and gets cleaned up. Editing an existing file is unaffected."
                     ),
                 },
             },

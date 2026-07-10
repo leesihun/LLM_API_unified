@@ -2,8 +2,10 @@
 File Writer Tool
 Write or append content to files.
 
-Newly-created files are tracked in the response (`new_file: True`) so the
-agent loop can sweep non-persisted temp files at the end of a session.
+Newly-created files are kept by default (`persist=True`). Pass
+`persist=False` to mark a new file as throwaway scratch; the response
+still reports `new_file: True` so the agent loop can sweep those at
+session end.
 """
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -41,7 +43,7 @@ class FileWriterTool:
         path: str,
         content: str,
         mode: str = "write",
-        persist: bool = False,
+        persist: bool = True,
     ) -> Dict[str, Any]:
         """Write or append content to a file.
 
@@ -50,9 +52,9 @@ class FileWriterTool:
                   session workspace (workspace_dir if set, else server CWD).
             content: Text content to write.
             mode: 'write' (overwrite) or 'append'.
-            persist: If False (default), a newly-created file is treated as
-                     temporary and will be deleted at session end. Set True
-                     when the file is a deliverable the user asked for.
+            persist: If True (default), a newly-created file is kept. Set
+                     False only for genuine throwaway scratch that should be
+                     swept at session end (prefer code_exec for that instead).
         """
         if mode not in {"write", "append"}:
             raise ValueError(f"Unsupported mode: {mode}. Use 'write' or 'append'.")

@@ -161,9 +161,9 @@ URIs.
 
 # File Creation Policy
 
-- `file_writer` and `apply_patch` create files that are TEMPORARY by default
-  and get deleted at session end. Pass `persist=true` only when the user
-  explicitly asked for a file to remain (a new module, config, document, etc.).
+- `file_writer` and `apply_patch` KEEP the files they create by default. Any
+  file you write is a real deliverable that survives session end. Pass
+  `persist=false` only for genuine throwaway scratch you want swept.
 - For ad-hoc verification or scratch work, prefer `code_exec` (runs in an
   ephemeral temp dir — no files left behind) over `file_writer`.
 - Editing existing files via `file_edit` or `apply_patch` updates is never
