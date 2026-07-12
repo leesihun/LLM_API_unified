@@ -79,7 +79,7 @@ async def upload_with_progress(
                     document_path=tmp_path,
                     document_content=None,
                     document_name=file.filename,
-                    use_optimized=True  # Enable optimized uploader
+                    progress_callback=progress_callback,
                 )
         else:
             # Text file upload
@@ -88,7 +88,8 @@ async def upload_with_progress(
                     collection_name=collection_name,
                     document_path=file.filename,
                     document_content=content_str,
-                    use_optimized=False
+                    document_name=file.filename,
+                    progress_callback=progress_callback,
                 )
         
         # Run upload and periodically check progress
