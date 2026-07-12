@@ -97,10 +97,10 @@ Linux scripts refuse online npm fallback. If the offline bundle is missing,
 they fail immediately instead of reaching `registry.npmjs.org`.
 
 ```bash
-./install-master.sh
-./start-master.sh
+./start-master.sh --build   # first run: stage offline deps, then launch
+./start-master.sh           # later runs
 
-./install-slave.sh
+./start-slave.sh --build
 ./start-slave.sh
 ```
 

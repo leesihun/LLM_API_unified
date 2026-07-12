@@ -96,7 +96,7 @@ fi
 log "Installing messenger deps via 'npm ci' (this rebuilds native modules for Linux)"
 (
   cd messenger
-  # Reset offline-only env that install-master.sh sets — we need real registry access here.
+  # Reset offline-only env that scripts/install-node.sh sets — we need real registry access here.
   unset npm_config_offline npm_config_registry npm_config_audit npm_config_fund npm_config_update_notifier
   npm ci --no-audit --no-fund
 )

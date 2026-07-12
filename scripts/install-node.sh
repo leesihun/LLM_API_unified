@@ -1,17 +1,31 @@
 #!/usr/bin/env bash
+# Shared node install step (Linux, airgapped). Invoked by
+# scripts/start-node.sh on --build — not user-facing.
+#   Usage: install-node.sh <master|slave>
+#
+# Python package installation is intentionally skipped on Linux: the target
+# server's Python environment is assumed to be provisioned already. The master
+# additionally stages the Messenger runtime from OFFLINE_DEPS_DIR and refuses
+# any online npm fallback.
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROLE="${1:?Usage: install-node.sh <master|slave>}"
+[[ "$ROLE" == "master" || "$ROLE" == "slave" ]] || { echo "[ERROR] Role must be master or slave, got: $ROLE"; exit 1; }
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-export CLUSTER_ROLE=master
+export CLUSTER_ROLE="$ROLE"
 # NODE_NAME comes from cluster_config.py (NAME) unless already set in the env.
 [[ -n "${NODE_NAME:-}" ]] && export NODE_NAME || true
 PYTHON_BIN="${PYTHON:-python3}"
-NPM_BIN="${NPM:-npm}"
 MESSENGER_DIR="$ROOT_DIR/messenger"
 
-"$PYTHON_BIN" -c "import cluster_config; cluster_config.require_valid_advertised_urls(); print('cluster config ok:', cluster_config.NODE_ROLE, cluster_config.NODE_NAME)"
+if [[ "$ROLE" == "master" ]]; then
+  "$PYTHON_BIN" -c "import cluster_config; cluster_config.require_valid_advertised_urls(); print('cluster config ok:', cluster_config.NODE_ROLE, cluster_config.NODE_NAME)"
+else
+  "$PYTHON_BIN" -c "import cluster_config; print('cluster config:', cluster_config.NODE_ROLE, cluster_config.NODE_NAME, 'master=', cluster_config.CLUSTER_MASTER_API_URL)"
+fi
 NODE_NAME="$("$PYTHON_BIN" -c "import cluster_config; print(cluster_config.NODE_NAME)")"
 
 die() {
@@ -73,8 +87,6 @@ ensure_offline_dir() {
   [[ -n "${OFFLINE_DEPS_DIR:-}" ]] || return 1
   [[ -d "$OFFLINE_DEPS_DIR" ]] || die "OFFLINE_DEPS_DIR does not exist: $OFFLINE_DEPS_DIR"
 }
-
-configure_npm_offline
 
 find_first_dir() {
   local candidate
@@ -164,7 +176,10 @@ install_python_requirements "llm-api/deps/requirements.txt"
 echo "[install] Hoonbot dependencies"
 install_python_requirements "hoonbot/deps/requirements.txt"
 
-echo "[install] Messenger runtime"
-install_messenger_runtime
+if [[ "$ROLE" == "master" ]]; then
+  configure_npm_offline
+  echo "[install] Messenger runtime"
+  install_messenger_runtime
+fi
 
-echo "[ok] Master node '$NODE_NAME' installed."
+echo "[ok] ${ROLE^} node '$NODE_NAME' installed."
