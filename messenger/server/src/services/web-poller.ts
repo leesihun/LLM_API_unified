@@ -1,13 +1,8 @@
 import crypto from 'crypto';
 import { queryAll, queryOne, run } from '../db/index.js';
-import { buildMessageData } from '../db/messages.js';
+import { createMessage } from './messages.js';
 
-let ioRef: any = null;
 const timers = new Map<number, ReturnType<typeof setInterval>>();
-
-export function setPollerIo(io: any) {
-  ioRef = io;
-}
 
 async function poll(watcherId: number) {
   const watcher = queryOne(
@@ -40,23 +35,11 @@ async function poll(watcherId: number) {
         : content;
     const messageContent = `[Web Watcher] Content updated at ${watcher.url}\n\n${truncated}`;
 
-    const result = run(
-      "INSERT INTO messages (room_id, sender_id, content, type, mentions) VALUES (?, ?, ?, 'text', '[]')",
-      [watcher.room_id, watcher.sender_id, messageContent],
-    );
-
-    if (ioRef) {
-      const msg = queryOne(
-        `SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
-         FROM messages m JOIN users u ON u.id = m.sender_id
-         WHERE m.id = ?`,
-        [result.lastInsertRowid],
-      );
-      if (msg) {
-        msg._readBy = [];
-        ioRef.to(`room:${watcher.room_id}`).emit('new_message', buildMessageData(msg));
-      }
-    }
+    createMessage({
+      roomId: watcher.room_id,
+      senderId: watcher.sender_id,
+      content: messageContent,
+    });
   } catch (err: any) {
     console.error(`[WebPoller] Error fetching ${watcher.url}: ${err.message}`);
   }

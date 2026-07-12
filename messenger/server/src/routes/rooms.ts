@@ -5,12 +5,6 @@ import { emitToUser } from '../socket/handler.js';
 
 const router = Router();
 
-let ioInstance: any = null;
-
-export function setRoomsIo(io: any) {
-  ioInstance = io;
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

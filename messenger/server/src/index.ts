@@ -8,11 +8,12 @@ import { initDatabase } from './db/init.js';
 import { setupSocketHandlers } from './socket/handler.js';
 import { startCleanupCron } from './cron/cleanup.js';
 import authRoutes from './routes/auth.js';
-import roomRoutes, { setRoomsIo } from './routes/rooms.js';
+import roomRoutes from './routes/rooms.js';
 import uploadRoutes from './routes/upload.js';
-import apiRoutes, { setIoInstance } from './routes/api.js';
+import apiRoutes from './routes/api/index.js';
 import filesRoutes from './routes/files.js';
-import { setPollerIo, startAllWatchers } from './services/web-poller.js';
+import { startAllWatchers } from './services/web-poller.js';
+import { setIo } from './services/io.js';
 import { setupTerminalWebSocket, CLAUDE_HTML, OPENCODE_HTML } from './terminal.js';
 import { getMessengerEnv, resolveMessengerPath } from './env.js';
 import type { ClientToServerEvents, ServerToClientEvents } from '../../shared/types.js';
@@ -92,10 +93,8 @@ export async function main() {
   }
 
   // Socket.IO
+  setIo(io);
   setupSocketHandlers(io);
-  setIoInstance(io);
-  setRoomsIo(io);
-  setPollerIo(io);
 
   // Start web watchers and cleanup cron
   startAllWatchers();

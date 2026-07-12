@@ -1,7 +1,10 @@
 import { Server, Socket } from 'socket.io';
 import { queryAll, queryOne, run } from '../db/index.js';
-import { getReactionsForMessage, buildMessageData } from '../db/messages.js';
-import { dispatchWebhooks } from '../services/webhook.js';
+import { buildMessageData } from '../db/messages.js';
+import {
+  createMessage, editMessage, deleteMessage, toggleReaction,
+  sanitizeAttachments, attachmentMessageType,
+} from '../services/messages.js';
 import type { ClientToServerEvents, MessageAttachment, ServerToClientEvents } from '../../../shared/types.js';
 
 type TypedSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
@@ -36,29 +39,6 @@ export function emitToUser(userId: number, event: string, data: any) {
       ioRef.to(socketId).emit(event as any, data);
     }
   }
-}
-
-function sanitizeAttachments(raw: unknown): MessageAttachment[] {
-  if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null;
-      const value = item as Record<string, unknown>;
-      const fileUrl = typeof value.fileUrl === 'string' ? value.fileUrl.trim() : '';
-      if (!fileUrl) return null;
-      const fileName = typeof value.fileName === 'string' && value.fileName.trim()
-        ? value.fileName.trim()
-        : fileUrl.split('/').filter(Boolean).pop() || 'attachment';
-      const fileSize = Number.isFinite(Number(value.fileSize)) ? Number(value.fileSize) : 0;
-      const attachmentType = value.type === 'image' ? 'image' : 'file';
-      const mimeType = typeof value.mimeType === 'string' ? value.mimeType : null;
-      return { fileUrl, fileName, fileSize, mimeType, type: attachmentType } as MessageAttachment;
-    })
-    .filter((item): item is MessageAttachment => item !== null);
-}
-
-function attachmentMessageType(attachments: MessageAttachment[]): 'image' | 'file' {
-  return attachments.every((attachment) => attachment.type === 'image') ? 'image' : 'file';
 }
 
 function validateOutgoingMessage(type: unknown, fileUrl: unknown, attachments: MessageAttachment[]): string | null {
@@ -127,7 +107,6 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
           type: type === 'image' ? 'image' : 'file',
         });
       }
-      const firstAttachment = attachments[0] || null;
       const messageType = attachments.length > 0 ? attachmentMessageType(attachments) : type;
 
       const validationError = validateOutgoingMessage(messageType, fileUrl, attachments);
@@ -140,42 +119,16 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       const membership = queryOne('SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?', [roomId, userId]);
       if (!membership) return;
 
-      const mentionsJson = JSON.stringify(mentions || []);
-
-      const result = run(`
-        INSERT INTO messages (room_id, sender_id, content, type, file_url, file_name, file_size, attachments, mentions, reply_to)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
+      const messageData = createMessage({
         roomId,
-        userId,
+        senderId: userId,
         content,
-        messageType,
-        firstAttachment?.fileUrl || null,
-        firstAttachment?.fileName || null,
-        firstAttachment?.fileSize || null,
-        JSON.stringify(attachments),
-        mentionsJson,
-        replyToId || null,
-      ]);
-
-      const messageId = result.lastInsertRowid;
-      const message = queryOne(`
-        SELECT m.*, u.name as sender_name, u.ip as sender_ip, u.is_bot as sender_is_bot
-        FROM messages m
-        JOIN users u ON u.id = m.sender_id
-        WHERE m.id = ?
-      `, [messageId]);
-
-      if (!message) {
-        console.error(`Failed to retrieve inserted message with id ${messageId}`);
-        return;
-      }
-
-      message._readBy = [];
-      const messageData = buildMessageData(message);
-
-      io.to(`room:${roomId}`).emit('new_message', messageData);
-      dispatchWebhooks('new_message', roomId, messageData);
+        type: messageType,
+        attachments,
+        mentions: mentions || [],
+        replyToId: replyToId || null,
+      });
+      if (!messageData) return;
 
       // Send mention notifications
       if (mentions && mentions.length > 0) {
@@ -194,33 +147,14 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
       }
     });
 
-    // Edit message
+    // Edit message (service enforces sender ownership)
     socket.on('edit_message', (data: EditMessagePayload) => {
-      const { messageId, content } = data;
-
-      const message = queryOne('SELECT sender_id, room_id FROM messages WHERE id = ?', [messageId]);
-      if (!message || message.sender_id !== userId) return;
-
-      run("UPDATE messages SET content = ?, is_edited = 1, updated_at = datetime('now') WHERE id = ?", [content, messageId]);
-
-      const updated = queryOne('SELECT updated_at FROM messages WHERE id = ?', [messageId]);
-      const editPayload = { messageId, content, updatedAt: updated.updated_at };
-      io.to(`room:${message.room_id}`).emit('message_edited', editPayload);
-      dispatchWebhooks('message_edited', message.room_id, editPayload);
+      editMessage(data.messageId, userId, data.content);
     });
 
-    // Delete message
+    // Delete message (service enforces sender ownership)
     socket.on('delete_message', (data: DeleteMessagePayload) => {
-      const { messageId } = data;
-
-      // Verify ownership
-      const message = queryOne('SELECT sender_id, room_id FROM messages WHERE id = ?', [messageId]);
-      if (!message || message.sender_id !== userId) return;
-
-      run("UPDATE messages SET is_deleted = 1, content = '', updated_at = datetime('now') WHERE id = ?", [messageId]);
-
-      io.to(`room:${message.room_id}`).emit('message_deleted', { messageId });
-      dispatchWebhooks('message_deleted', message.room_id, { messageId });
+      deleteMessage(data.messageId, userId);
     });
 
     // Read receipt
@@ -273,18 +207,7 @@ export function setupSocketHandlers(io: Server<ClientToServerEvents, ServerToCli
 
     // Toggle reaction (add if not exists, remove if exists)
     socket.on('toggle_reaction', (data: ToggleReactionPayload) => {
-      const { messageId, roomId, emoji } = data;
-      const existing = queryOne(
-        'SELECT id FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?',
-        [messageId, userId, emoji],
-      );
-      if (existing) {
-        run('DELETE FROM message_reactions WHERE id = ?', [existing.id]);
-      } else {
-        run('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)', [messageId, userId, emoji]);
-      }
-      const reactions = getReactionsForMessage(messageId);
-      io.to(`room:${roomId}`).emit('reaction_updated', { messageId, roomId, reactions });
+      toggleReaction(data.messageId, userId, data.emoji);
     });
 
     // Pin message
