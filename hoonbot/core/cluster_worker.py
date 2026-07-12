@@ -13,6 +13,8 @@ from typing import Any
 import httpx
 
 import config
+from core import llm_api
+from core.cluster_http import master_url, post_json
 from core.context import build_llm_context
 
 logger = logging.getLogger(__name__)
@@ -23,13 +25,6 @@ _TASK_EXECUTION_TEMPLATE = config.read_prompt("cluster/task_execution.txt")
 # llm-api/backend/core/cluster_store.py — the master rejects excess uploads.
 _ARTIFACT_LIMIT = 10
 _ARTIFACT_MAX_BYTES = 50 * 1024 * 1024
-
-
-def _headers() -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    if config.CLUSTER_TOKEN:
-        headers["x-cluster-token"] = config.CLUSTER_TOKEN
-    return headers
 
 
 def _node_payload() -> dict[str, Any]:
@@ -49,29 +44,19 @@ def _node_payload() -> dict[str, Any]:
     }
 
 
-async def _post(client: httpx.AsyncClient, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    resp = await client.post(
-        f"{config.CLUSTER_MASTER_API_URL}{path}",
-        headers=_headers(),
-        json=payload,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-
 async def _register(client: httpx.AsyncClient) -> None:
-    await _post(client, "/api/cluster/register", _node_payload())
+    await post_json(client, "/api/cluster/register", _node_payload())
     logger.info("[Cluster] Registered node '%s' with master %s", config.NODE_NAME, config.CLUSTER_MASTER_API_URL)
 
 
 async def _heartbeat(client: httpx.AsyncClient) -> None:
     payload = _node_payload()
     payload["heartbeat_at_monotonic"] = time.monotonic()
-    await _post(client, "/api/cluster/heartbeat", payload)
+    await post_json(client, "/api/cluster/heartbeat", payload)
 
 
 async def _lease(client: httpx.AsyncClient) -> dict[str, Any] | None:
-    result = await _post(client, "/api/cluster/tasks/lease", {
+    result = await post_json(client, "/api/cluster/tasks/lease", {
         "node_name": config.NODE_NAME,
         "capabilities": config.NODE_CAPABILITIES,
         "tags": config.NODE_TAGS,
@@ -80,7 +65,7 @@ async def _lease(client: httpx.AsyncClient) -> dict[str, Any] | None:
 
 
 async def _task_event(client: httpx.AsyncClient, task_id: str, message: str, event_type: str = "event") -> None:
-    await _post(client, f"/api/cluster/tasks/{task_id}/events", {
+    await post_json(client, f"/api/cluster/tasks/{task_id}/events", {
         "node_name": config.NODE_NAME,
         "type": event_type,
         "message": message,
@@ -88,7 +73,7 @@ async def _task_event(client: httpx.AsyncClient, task_id: str, message: str, eve
 
 
 async def _complete(client: httpx.AsyncClient, task_id: str, result: str | None = None, error: str | None = None) -> None:
-    await _post(client, f"/api/cluster/tasks/{task_id}/complete", {
+    await post_json(client, f"/api/cluster/tasks/{task_id}/complete", {
         "node_name": config.NODE_NAME,
         "status": "failed" if error else "completed",
         "result": result,
@@ -117,7 +102,7 @@ async def _upload_artifacts(client: httpx.AsyncClient, task_id: str) -> int:
                 continue
             with open(path, "rb") as f:
                 resp = await client.post(
-                    f"{config.CLUSTER_MASTER_API_URL}/api/cluster/tasks/{task_id}/artifacts",
+                    master_url(f"/api/cluster/tasks/{task_id}/artifacts"),
                     headers=headers,
                     data={"node_name": config.NODE_NAME},
                     files={"file": (path.name, f)},
@@ -162,19 +147,14 @@ async def _execute_task(client: httpx.AsyncClient, task: dict[str, Any]) -> None
     payload = {
         "model": config.LLM_MODEL,
         "messages": json.dumps(messages),
-        "stream": "false",
         "session_id": f"cluster_{task_id}",
     }
     try:
-        resp = await client.post(
-            f"{config.LLM_API_URL}/v1/chat/completions",
-            data=payload,
+        result = await llm_api.chat(
+            payload,
             headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
             timeout=config.LLM_TIMEOUT_SECONDS,
         )
-        resp.raise_for_status()
-        data = resp.json()
-        result = data["choices"][0]["message"]["content"]
         # Ship outbox files before completing so the relay sees them on delivery.
         uploaded = await _upload_artifacts(client, task_id)
         await _complete(client, task_id, result=result)

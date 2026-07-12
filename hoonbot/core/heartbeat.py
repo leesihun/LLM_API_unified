@@ -19,8 +19,8 @@ from typing import Any, Callable, Awaitable
 import httpx
 
 import config
+from core import llm_api
 from core.context import build_llm_context, build_per_turn_context
-from core.llm_api import get_client
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,6 @@ _llm_cooldown_until: float = 0.0
 _PLANNER_SYSTEM = config.read_prompt("heartbeat/planner_system.txt")
 _VALIDATOR_SYSTEM = config.read_prompt("heartbeat/validator_system.txt")
 _TASK_EXECUTION_TEMPLATE = config.read_prompt("heartbeat/task_execution.txt")
-
-_STALE_ERRORS = (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 
 _OVERFLOW_KEYWORDS = (
     # vLLM: "This model's maximum context length is N tokens. However, you
@@ -148,61 +146,11 @@ def _compile_report(results: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# LLM call primitives
+# LLM call primitives — shared implementations live in core.llm_api
 # ---------------------------------------------------------------------------
 
-async def _llm_stream(payload: dict, headers: dict) -> str:
-    """Stream an LLM call; return accumulated text. Retries once on stale connection."""
-
-    async def _once() -> str:
-        buf = ""
-        client = get_client()
-        async with client.stream(
-            "POST",
-            f"{config.LLM_API_URL}/v1/chat/completions",
-            data=payload,
-            headers=headers,
-        ) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                raw = line[6:]
-                if raw.strip() == "[DONE]":
-                    break
-                try:
-                    event = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                if "tool_status" in event:
-                    ts = event["tool_status"]
-                    logger.debug(f"[Heartbeat] Tool {ts.get('tool_name')}: {ts.get('status')}")
-                    continue
-                choices = event.get("choices", [])
-                if choices:
-                    chunk = choices[0].get("delta", {}).get("content", "")
-                    if chunk:
-                        buf += chunk
-        return buf
-
-    try:
-        return await _once()
-    except _STALE_ERRORS as exc:
-        logger.warning(f"[Heartbeat] Stale connection ({type(exc).__name__}) — retrying once")
-        return await _once()
-
-
-async def _llm_sync(payload: dict, headers: dict) -> str:
-    """Non-streaming LLM call (planner/validator — no tools); return response text."""
-    client = get_client()
-    resp = await client.post(
-        f"{config.LLM_API_URL}/v1/chat/completions",
-        data={**payload, "stream": "false"},
-        headers=headers,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return data["choices"][0]["message"]["content"]
+_llm_stream = llm_api.stream_chat   # full agent loop with tools (task execution)
+_llm_sync = llm_api.chat            # planner/validator calls, no tools
 
 
 # ---------------------------------------------------------------------------

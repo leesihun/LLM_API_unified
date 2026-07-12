@@ -21,18 +21,12 @@ from typing import Any
 import httpx
 
 import config
+from core.cluster_http import get_json
 
 logger = logging.getLogger(__name__)
 
 _TERMINAL = {"completed", "failed", "cancelled"}
 _RELAYED_FILE = Path(config.DATA_DIR) / "relayed_tasks.json"
-
-
-def _headers() -> dict[str, str]:
-    headers = {"Content-Type": "application/json"}
-    if getattr(config, "CLUSTER_TOKEN", ""):
-        headers["x-cluster-token"] = config.CLUSTER_TOKEN
-    return headers
 
 
 def _load_relayed() -> set[str]:
@@ -60,26 +54,20 @@ def _save_relayed(relayed: set[str]) -> None:
 
 
 async def _list_terminal_tasks(client: httpx.AsyncClient) -> list[dict[str, Any]]:
-    resp = await client.get(
-        f"{config.CLUSTER_MASTER_API_URL}/api/cluster/tasks",
-        params={"include_completed": "true"},
-        headers=_headers(),
-    )
-    resp.raise_for_status()
-    tasks = resp.json().get("tasks") or []
+    data = await get_json(client, "/api/cluster/tasks", params={"include_completed": "true"})
+    tasks = data.get("tasks") or []
     return [t for t in tasks if t.get("status") in _TERMINAL]
 
 
 async def _load_full_task(client: httpx.AsyncClient, task_id: str) -> dict[str, Any] | None:
     """Fetch the un-truncated task (the list endpoint strips result to 300 chars)."""
-    resp = await client.get(
-        f"{config.CLUSTER_MASTER_API_URL}/api/cluster/tasks/{task_id}",
-        headers=_headers(),
-    )
-    if resp.status_code == 404:
-        return None
-    resp.raise_for_status()
-    return resp.json().get("task")
+    try:
+        data = await get_json(client, f"/api/cluster/tasks/{task_id}")
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return None
+        raise
+    return data.get("task")
 
 
 def _format_message(task: dict[str, Any]) -> str | None:
