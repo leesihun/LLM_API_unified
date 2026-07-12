@@ -144,6 +144,30 @@ class VllmBackend:
         data = resp.json()
         return [m["id"] for m in data.get("data", [])]
 
+    async def get_context_window(self, model: str) -> int:
+        """Return the served model's max context length (vLLM's `max_model_len`
+        field on /v1/models), or 0 if unavailable/unreported.
+
+        Used at startup to auto-fill MODEL_CONTEXT_WINDOW when the operator
+        hasn't set it explicitly, so proactive compaction works out of the box.
+        """
+        try:
+            await self._select_available_host(prefer_active=True)
+            resp = await self._client.get(
+                f"{self.host}/v1/models",
+                timeout=httpx.Timeout(5.0),
+            )
+            resp.raise_for_status()
+            entries = resp.json().get("data", [])
+            for entry in entries:
+                if entry.get("id") == model:
+                    return int(entry.get("max_model_len") or 0)
+            if entries:
+                return int(entries[0].get("max_model_len") or 0)
+        except Exception:
+            pass
+        return 0
+
     # ------------------------------------------------------------------
     # Request payload
     # ------------------------------------------------------------------

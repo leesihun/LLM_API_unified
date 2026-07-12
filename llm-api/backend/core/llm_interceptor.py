@@ -144,13 +144,6 @@ class LLMInterceptor:
             # No running loop (e.g. during shutdown) — fall back to sync
             self._log_interaction_sync(log_data)
 
-    def _estimate_tokens(self, messages: List[Dict]) -> int:
-        # Use UTF-8 byte count / 3 as a token approximation.
-        # More accurate than char-count/4 for Korean/CJK text where each character
-        # is 3 UTF-8 bytes and typically 1–2 tokens (vs ASCII 1 char ≈ 0.25 tokens).
-        total = sum(len((str(m.get("content") or "")).encode("utf-8")) for m in messages)
-        return total // 3
-
     # ------------------------------------------------------------------
     # Non-streaming chat — thin accumulator over chat_stream().
     # Everything is streaming under the hood; this method just collects
@@ -226,7 +219,8 @@ class LLMInterceptor:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_id = str(uuid.uuid4())[:8]
         backend_name = "VllmBackend"
-        input_tokens = self._estimate_tokens(messages)
+        from backend.utils.tokens import total_message_tokens
+        input_tokens = total_message_tokens(messages)
 
         self._log_interaction({
             "id": log_id, "timestamp": timestamp, "streaming": True,
@@ -316,6 +310,9 @@ class LLMInterceptor:
 
     async def list_models(self) -> List[str]:
         return await self.backend.list_models()
+
+    async def get_context_window(self, model: str) -> int:
+        return await self.backend.get_context_window(model)
 
     async def is_available(self) -> bool:
         return await self.backend.is_available()

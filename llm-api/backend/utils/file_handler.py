@@ -119,18 +119,6 @@ def save_uploaded_files(
     return scratch_paths
 
 
-def cleanup_session_files(session_id: str):
-    """
-    Clean up scratch files for a session
-
-    Args:
-        session_id: Session ID to clean up
-    """
-    session_scratch_dir = config.SCRATCH_DIR / session_id
-    if session_scratch_dir.exists():
-        shutil.rmtree(session_scratch_dir)
-
-
 def extract_file_metadata(file_path: str) -> Dict[str, Any]:
     """
     Extract rich metadata from files based on type

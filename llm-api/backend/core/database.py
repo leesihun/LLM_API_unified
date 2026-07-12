@@ -152,15 +152,6 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def update_session_message_count(self, session_id: str, count: int):
-        """Update message count for session"""
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE sessions SET message_count = ? WHERE id = ?",
-                (count, session_id)
-            )
-
     def increment_session_message_count(self, session_id: str, delta: int):
         """Increment message count for a session."""
         if delta == 0:
@@ -386,17 +377,6 @@ class ConversationStore:
         }
         with open(recent_file, 'w', encoding='utf-8') as f:
             json.dump(payload, f, indent=2, ensure_ascii=False)
-
-    def delete_conversation(self, session_id: str):
-        """Delete all conversation artifacts for a session."""
-        for path in (
-            self._get_session_log_file(session_id),
-            self._get_recent_file(session_id),
-            self._get_legacy_file(session_id),
-            self._get_lock_file(session_id),
-        ):
-            if path.exists():
-                path.unlink()
 
 
 # Global instances

@@ -9,7 +9,7 @@ import json
 import shutil
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -203,6 +203,50 @@ def _cleanup_old_llm_generated():
         print(f"[Cleanup] llm_generated: removed {removed_files} file(s), {removed_dirs} empty dir(s)")
 
 
+def _cleanup_old_cluster_tasks():
+    """Delete cluster task records (+ events + artifacts) past retention.
+
+    Terminal tasks (completed/failed/cancelled) age off completed_at; tasks
+    that never reached a terminal state (e.g. no node ever matched to lease
+    them) age off created_at instead, so the queue can't grow unbounded.
+    """
+    if config.CLUSTER_TASKS_CLEANUP_DAYS <= 0:
+        return
+    tasks_dir = config.CLUSTER_DIR / "tasks"
+    if not tasks_dir.exists():
+        return
+    artifacts_dir = config.CLUSTER_DIR / "artifacts"
+    cutoff = datetime.now(timezone.utc) - timedelta(days=config.CLUSTER_TASKS_CLEANUP_DAYS)
+    removed = 0
+    for path in tasks_dir.glob("*.json"):
+        task_id = path.stem
+        try:
+            task = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        status = task.get("status")
+        ts = task.get("completed_at") if status in {"completed", "failed", "cancelled"} else task.get("created_at")
+        try:
+            when = datetime.fromisoformat(ts) if ts else None
+        except ValueError:
+            when = None
+        if when is None or when >= cutoff:
+            continue
+        for suffix in (".json", ".lock", ".events.jsonl"):
+            p = tasks_dir / f"{task_id}{suffix}"
+            if p.exists():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+        artifact_dir = artifacts_dir / task_id
+        if artifact_dir.exists():
+            shutil.rmtree(artifact_dir, ignore_errors=True)
+        removed += 1
+    if removed:
+        print(f"[Startup] Cleaned up {removed} old cluster task(s)")
+
+
 def _rotate_log_if_stale(log_path: Path, label: str):
     """Rotate a .log file if its ctime is older than LOG_ROTATION_DAYS."""
     if not log_path.exists():
@@ -239,6 +283,7 @@ async def startup_event():
     _cleanup_old_tool_results()
     _cleanup_old_scratch()
     _cleanup_old_llm_generated()
+    _cleanup_old_cluster_tasks()
     _cleanup_old_logs()
 
     try:
@@ -259,6 +304,16 @@ async def startup_event():
         print(f"[Startup] vLLM backend available at {active_host}")
     else:
         print(f"[Startup] WARNING: vLLM backend NOT available at {config.VLLM_HOST}")
+
+    if available and int(getattr(config, "MODEL_CONTEXT_WINDOW", 0) or 0) <= 0:
+        detected = await llm_backend.get_context_window(config.VLLM_MODEL)
+        if detected > 0:
+            config.MODEL_CONTEXT_WINDOW = detected
+            print(f"[Startup] Auto-detected MODEL_CONTEXT_WINDOW={detected} from vLLM "
+                  f"(set MODEL_CONTEXT_WINDOW explicitly to override)")
+        else:
+            print("[Startup] Could not auto-detect context window from vLLM — "
+                  "proactive compaction stays off. Set MODEL_CONTEXT_WINDOW to enable it.")
 
     async def _periodic_llm_cleanup():
         while True:

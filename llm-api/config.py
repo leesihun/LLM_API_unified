@@ -81,15 +81,16 @@ OPENCODE_MODEL: str = "llama.cpp/MiniMax"  # "provider/model" format (e.g., "lla
 CLUSTER_ENABLED = bool(getattr(_CLUSTER, "CLUSTER_ENABLED", True))
 CLUSTER_ROLE = getattr(_CLUSTER, "NODE_ROLE", "master")
 NODE_NAME = getattr(_CLUSTER, "NODE_NAME", "master")
-NODE_IP = getattr(_CLUSTER, "NODE_IP", "127.0.0.1")
-NODE_CAPABILITIES = list(getattr(_CLUSTER, "NODE_CAPABILITIES", []))
-NODE_TAGS = list(getattr(_CLUSTER, "NODE_TAGS", []))
 CLUSTER_TOKEN = getattr(_CLUSTER, "CLUSTER_TOKEN", "")
-CLUSTER_MASTER_API_URL = getattr(_CLUSTER, "CLUSTER_MASTER_API_URL", f"http://127.0.0.1:{SERVER_PORT}")
 ADVERTISED_LLM_API_URL = getattr(_CLUSTER, "ADVERTISED_LLM_API_URL", f"http://127.0.0.1:{SERVER_PORT}")
 CLUSTER_NODE_STALE_SECONDS = int(getattr(_CLUSTER, "CLUSTER_NODE_STALE_SECONDS", 90))
 CLUSTER_TASK_LEASE_SECONDS = int(getattr(_CLUSTER, "CLUSTER_TASK_LEASE_SECONDS", 900))
 CLUSTER_DIR = DATA_DIR / "cluster"
+# Retention for the cluster task store (data/cluster/tasks, /artifacts). Terminal
+# tasks age off their completed_at; tasks that never reached a terminal state
+# (no matching node ever leased them) age off created_at instead, so the queue
+# can't grow unbounded. 0 disables cleanup.
+CLUSTER_TASKS_CLEANUP_DAYS = int(getattr(_CLUSTER, "CLUSTER_TASKS_CLEANUP_DAYS", 14))
 
 # ============================================================================
 # Model Parameters (Default LLM Inference Settings)
@@ -188,11 +189,6 @@ AGENT_STUCK_REPEAT_WINDOW = 6
 AGENT_STUCK_COOLDOWN_ITERATIONS = 4
 AGENT_CONSECUTIVE_FAILURE_THRESHOLD = 2   # all-failed iterations in a row before reflection nudge
 AGENT_GOAL_REMINDER_ITERATIONS: tuple = (10, 25, 50)
-AGENT_PLAN_NUDGE_MIN_CHARS = 200
-AGENT_PLAN_NUDGE_KEYWORDS = (
-    "build", "refactor", "migrate", "implement", "redesign", "rewrite",
-    "add support", "set up", "scaffold",
-)
 
 # ----------------------------------------------------------------------------
 # Agent: user-input fidelity

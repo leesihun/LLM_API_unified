@@ -58,8 +58,7 @@ llm-api/
 │   └── utils/         Auth (JWT), file handler, logging helpers
 ├── tools/             10 built-in tools (websearch, RAG, code_exec, shell, ...)
 ├── prompts/           system.txt + agent/tool prompt templates
-├── scripts/           Dev helpers (clear_data.py, create_users.py, etc.)
-├── docs/              API docs, RAG guides, feature notes
+├── scripts/           Dev helpers (clear_data.py, create_user.py, etc.)
 └── data/              Runtime data (SQLite, uploads, sessions, logs) — gitignored
 ```
 
@@ -90,11 +89,11 @@ python3 scripts/clear_data.py
 # Clear RAG indices (required when switching embedding models)
 python3 scripts/clear_rag_data.py --all
 
-# Create users (server must be running)
-python3 scripts/create_users.py
+# Create a user via the API (server must be running)
+python3 scripts/create_user.py alice secret123
 
-# Create users directly in DB (no server needed)
-python3 scripts/create_user_direct.py
+# Create a user directly in the DB (no server needed)
+python3 scripts/create_user.py alice secret123 --direct
 
 # Halt inference without killing the server
 python3 scripts/stop_inference.py stop    # creates data/STOP

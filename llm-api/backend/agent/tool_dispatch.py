@@ -249,14 +249,6 @@ class DispatchMixin:
 
         attach_to_result(result, discovered)
 
-    async def _execute_tools_parallel(self, tool_calls: List[ToolCall]) -> List[Dict[str, Any]]:
-        """Execute multiple tool calls concurrently."""
-        tasks = [
-            self.execute_tool(tc.function.name, tc.function.arguments, tool_call_id=tc.id)
-            for tc in tool_calls
-        ]
-        return await asyncio.gather(*tasks)
-
     async def _dispatch_tool(self, name: str, arguments: Dict[str, Any], tool_call_id: str = None) -> Dict[str, Any]:
         cache = self._tool_cache
 

@@ -124,6 +124,30 @@ async def compact_session(
     }
 
 
+@router.post("/sessions/{session_id}/stop")
+async def stop_session(
+    session_id: str,
+    current_user: Optional[dict] = Depends(get_optional_user),
+):
+    """Halt the in-flight agent loop for this session at its next checkpoint.
+
+    Scoped to one session — other sessions keep running. Self-clearing: only
+    the current run is affected, the next turn on this session starts clean.
+    """
+    session = db.get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if current_user:
+        if session["username"] != current_user["username"] and session["username"] != "guest":
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    from backend.utils.stop_signal import request_session_stop
+    request_session_stop(session_id)
+
+    return {"success": True, "message": f"Stop requested for session {session_id}"}
+
+
 @router.get("/history/{session_id}", response_model=ChatHistoryResponse)
 def get_history(
     session_id: str,

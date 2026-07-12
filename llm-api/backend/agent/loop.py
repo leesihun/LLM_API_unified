@@ -514,7 +514,7 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         tool_schemas = self._get_tool_schemas()
 
         for iteration in range(self.max_iterations):
-            check_stop()
+            check_stop(self.session_id)
             print(f"\n[AGENT-STREAM] Iteration {iteration + 1}/{self.max_iterations}")
             self._log_iteration_start(iteration, streaming=True)
 
