@@ -40,8 +40,8 @@ offline_models/
 llamacpp/
 models/
 
-# Data directories (server runtime data only)
-/data/
+# Data directories (any service's runtime dir)
+data/
 
 # Secrets
 .apikey
