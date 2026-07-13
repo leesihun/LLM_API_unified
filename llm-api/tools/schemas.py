@@ -621,40 +621,6 @@ TOOL_SCHEMAS: dict = {
         },
     },
 
-    # ================================================================
-    # TOOL RESULT RECALL
-    # ================================================================
-
-    "tool_result_recall": {
-        "name": "tool_result_recall",
-        "description": (
-            "Retrieve the full content of a tool result that was truncated in context.\n\n"
-            "When a tool result exceeds its context budget, the in-context message ends with:\n"
-            "    ...[truncated to N/M chars — full result at data/tool_results/{session}/{call_id}.json]\n\n"
-            "Pass the call_id from that marker to this tool to read the full content. "
-            "Supports offset and limit for paging through large results.\n\n"
-            "Use this instead of re-calling the original tool — the full result is already on disk."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "tool_call_id": {
-                    "type": "string",
-                    "description": "The tool call ID from the truncation marker (the part before .json).",
-                },
-                "offset": {
-                    "type": "integer",
-                    "description": "Character offset to start reading from (default: 0).",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum characters to return (default: 8000).",
-                },
-            },
-            "required": ["tool_call_id"],
-        },
-    },
-
 }
 
 # Per-tool metadata: safety flags, UI activity descriptions, user-facing names.
@@ -665,7 +631,6 @@ TOOL_METADATA: dict = {
     "file_edit":       {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Editing file",            "user_name": "File Editor"},
     "apply_patch":     {"is_read_only": False, "is_destructive": False, "is_concurrency_safe": False, "activity": "Applying V4A patch",      "user_name": "Apply Patch"},
     "shell_lint":      {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Linting shell script",    "user_name": "Shell Lint"},
-    "tool_result_recall": {"is_read_only": True, "is_destructive": False, "is_concurrency_safe": True, "activity": "Recalling tool result",  "user_name": "Tool Recall"},
     "file_writer":     {"is_read_only": False, "is_destructive": True,  "is_concurrency_safe": False, "activity": "Writing file",            "user_name": "File Writer"},
     "file_navigator":  {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Navigating files",        "user_name": "File Navigator"},
     "grep":            {"is_read_only": True,  "is_destructive": False, "is_concurrency_safe": True,  "activity": "Searching files",         "user_name": "Grep"},

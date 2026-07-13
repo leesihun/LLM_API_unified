@@ -353,17 +353,6 @@ class DispatchMixin:
                 path=arguments["path"],
             )
 
-        elif name == "tool_result_recall":
-            if "tool_result_recall" not in cache:
-                from tools.recall.tool import ToolResultRecallTool
-                cache["tool_result_recall"] = ToolResultRecallTool(session_id=self.session_id)
-            return await asyncio.to_thread(
-                cache["tool_result_recall"].recall,
-                tool_call_id=arguments["tool_call_id"],
-                offset=arguments.get("offset", 0),
-                limit=arguments.get("limit", 8000),
-            )
-
         elif name == "file_navigator":
             if "file_navigator" not in cache:
                 from tools.file_ops import FileNavigatorTool

@@ -144,7 +144,7 @@ class CompactionMixin:
                     f"<system-reminder>{compressed_count} earlier tool result(s) were compressed "
                     f"to save context. If you need the full content of a previous result, find the "
                     f"disk path in the truncation marker (data/tool_results/{sid}/<call_id>.json) "
-                    f"and retrieve it with file_reader or tool_result_recall.</system-reminder>"
+                    f"and retrieve it with file_reader.</system-reminder>"
                 ),
             }
             # Insert just before the first uncompressed message (old_boundary index in result)
@@ -353,8 +353,8 @@ class CompactionMixin:
             notice = (
                 f"<system-reminder>Conversation auto-compacted. {len(to_compact)} older messages "
                 f"summarized below. Full tool results are at data/tool_results/{sid}/. "
-                f"Use file_reader on the disk path in a truncation marker, or tool_result_recall "
-                f"with the original call_id, to retrieve any result you need. "
+                f"Use file_reader on the disk path in a truncation marker "
+                f"to retrieve any result you need. "
                 f"Re-read AGENTS.md or critical files if the summary is missing details.</system-reminder>\n"
                 f"[Earlier conversation summary]\n{summary_text}"
             )

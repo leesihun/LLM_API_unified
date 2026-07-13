@@ -111,7 +111,7 @@ class FormattingMixin:
         disk_hint = ""
         if self.session_id:
             # Use the deterministic tool_call.id instead of a random UUID so the model
-            # can correlate the truncation marker with tool_result_recall later
+            # can correlate the truncation marker with the on-disk result file
             safe_id = (call_id or "").replace("/", "_").replace("\\", "_")[:64] or "unknown"
             self._save_tool_result_to_disk(safe_id, content)
             rel_path = f"data/tool_results/{self.session_id}/{safe_id}.json"

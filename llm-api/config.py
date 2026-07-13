@@ -261,8 +261,8 @@ AVAILABLE_TOOLS = [
     "todo_write",       # Session task checklist (3+ step tasks)
     "agent",            # Spawn explore/general subagent in fresh context
 ]
-# tool_result_recall was removed; truncated tool results include the disk path
-# in the truncation marker, and file_reader handles retrieval just fine.
+# Truncated tool results include their disk path in the truncation marker;
+# file_reader handles retrieval.
 
 TOOL_PARAMETERS = {
     "code_exec": {
@@ -296,7 +296,6 @@ TOOL_RESULT_BUDGET = {
     "memo": 1000,
     "todo_write": 300,
     "agent": 6000,
-    "tool_result_recall": 8000,  # new recall tool
 }
 TOOL_RESULT_DEFAULT_BUDGET = 3000
 TOOL_RESULTS_DIR = DATA_DIR / "tool_results"

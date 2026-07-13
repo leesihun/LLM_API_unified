@@ -187,7 +187,7 @@ add noise without insight. If you can't verify, say so — don't claim success.
 - A `<system-reminder>` will appear when earlier tool results were compressed.
   Treat those earlier `file_reader` observations as approximate after compaction;
   re-verify before acting on them. Full results are on disk — use `file_reader`
-  or `tool_result_recall` to retrieve, not guesswork.
+  on the path in the truncation marker, not guesswork.
 
 # Refusals and Safety
 
