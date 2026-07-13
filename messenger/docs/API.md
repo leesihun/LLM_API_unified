@@ -1,6 +1,6 @@
 # Huni Messenger API Reference
 
-**Base URL:** `http://<server-ip>:3000`
+**Base URL:** `http://<server-ip>:10006`
 
 ## Authentication
 
@@ -240,7 +240,7 @@ All bot routes accept optional `x-api-key` header.
 ### Send message with reply
 
 ```bash
-curl -X POST http://localhost:3000/api/send-message \
+curl -X POST http://localhost:10006/api/send-message \
   -H "Content-Type: application/json" \
   -H "x-api-key: huni_abc123..." \
   -d '{"roomId":1,"content":"Great idea!","replyToId":42}'
@@ -249,7 +249,7 @@ curl -X POST http://localhost:3000/api/send-message \
 ### Toggle reaction
 
 ```bash
-curl -X POST http://localhost:3000/api/reactions \
+curl -X POST http://localhost:10006/api/reactions \
   -H "Content-Type: application/json" \
   -H "x-api-key: huni_..." \
   -d '{"messageId":42,"emoji":"👍"}'
@@ -258,14 +258,14 @@ curl -X POST http://localhost:3000/api/reactions \
 ### Search messages
 
 ```bash
-curl "http://localhost:3000/api/search?q=hello&roomId=1&limit=20" \
+curl "http://localhost:10006/api/search?q=hello&roomId=1&limit=20" \
   -H "x-api-key: huni_..."
 ```
 
 ### Pin a message
 
 ```bash
-curl -X POST http://localhost:3000/api/pins \
+curl -X POST http://localhost:10006/api/pins \
   -H "Content-Type: application/json" \
   -H "x-api-key: huni_..." \
   -d '{"messageId":42,"roomId":1}'
@@ -274,7 +274,7 @@ curl -X POST http://localhost:3000/api/pins \
 ### Leave a room
 
 ```bash
-curl -X POST http://localhost:3000/api/leave-room \
+curl -X POST http://localhost:10006/api/leave-room \
   -H "Content-Type: application/json" \
   -H "x-api-key: huni_..." \
   -d '{"roomId":1}'
@@ -283,7 +283,7 @@ curl -X POST http://localhost:3000/api/leave-room \
 ### Register bot
 
 ```bash
-curl -X POST http://localhost:3000/api/bots \
+curl -X POST http://localhost:10006/api/bots \
   -H "Content-Type: application/json" \
   -d '{"name":"MyBot"}'
 ```
