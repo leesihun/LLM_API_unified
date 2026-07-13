@@ -119,6 +119,19 @@ export default function ChatPage() {
       socket.emit('join_room', room.id);
     };
 
+    const handleRoomUpdated = (room: RoomWithDetails) => {
+      // Membership/title changed (e.g. members added). If we're no longer a
+      // member, drop it; otherwise merge the fresh snapshot, keeping our
+      // locally tracked unread count.
+      if (!room.members.some((m) => m.id === user.id)) {
+        setRooms((prev) => prev.filter((r) => r.id !== room.id));
+        return;
+      }
+      setRooms((prev) =>
+        prev.map((r) => (r.id === room.id ? { ...room, unreadCount: r.unreadCount } : r))
+      );
+    };
+
     const handleMemberLeft = (data: { roomId: number; userId: number }) => {
       setRooms((prev) =>
         prev.map((room) =>
@@ -143,6 +156,7 @@ export default function ChatPage() {
     socket.on('mention_notification', handleMentionNotification);
     socket.on('user_online_status', handleOnlineStatus);
     socket.on('room_created', handleRoomCreated);
+    socket.on('room_updated', handleRoomUpdated);
     socket.on('member_left', handleMemberLeft);
     socket.on('room_messages_cleared', handleMessagesCleared);
 
@@ -151,6 +165,7 @@ export default function ChatPage() {
       socket.off('mention_notification', handleMentionNotification);
       socket.off('user_online_status', handleOnlineStatus);
       socket.off('room_created', handleRoomCreated);
+      socket.off('room_updated', handleRoomUpdated);
       socket.off('member_left', handleMemberLeft);
       socket.off('room_messages_cleared', handleMessagesCleared);
     };

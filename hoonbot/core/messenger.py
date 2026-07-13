@@ -1,6 +1,7 @@
 """Async client for the Huni Messenger bot API with persistent connection pool."""
 import logging
 import os
+import time
 from typing import Optional
 
 import httpx
@@ -18,8 +19,14 @@ _client: Optional[httpx.AsyncClient] = None
 # Cached bot identity from /api/bots/me
 _bot_info_cache: Optional[dict] = None
 
-# Room info cache: room_id -> {"name": str, "isGroup": bool}
+# Room info cache: room_id -> {"name": str, "isGroup": bool, "memberCount": int}
 _room_cache: dict[int, dict] = {}
+# The bot only receives message webhooks, not membership/room changes, so the
+# room cache is refreshed on this interval. Short enough that adding or removing
+# members flips the bot's auto-respond behavior (see is_bot_solo_room) within
+# seconds rather than persisting a stale member count.
+_room_cache_at: float = 0.0
+_ROOM_CACHE_TTL_SECONDS = 30.0
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -43,10 +50,11 @@ async def close_client() -> None:
 
 
 def set_api_key(key: str) -> None:
-    global _api_key, _bot_info_cache
+    global _api_key, _bot_info_cache, _room_cache_at
     _api_key = key
     _bot_info_cache = None
     _room_cache.clear()
+    _room_cache_at = 0.0
     config.MESSENGER_API_KEY = key
 
 
@@ -288,26 +296,39 @@ async def get_bot_info(refresh: bool = False) -> Optional[dict]:
     return None
 
 
-async def get_room_info(room_id: int) -> dict:
-    """Return room metadata (name, isGroup) for a given room ID.
-
-    Fetches all bot rooms on first cache miss and caches the results.
-    Falls back to {"name": str(room_id), "isGroup": False} if the room
-    cannot be resolved.
-    """
-    if room_id in _room_cache:
-        return _room_cache[room_id]
-
+async def _reload_room_cache() -> None:
+    """Refresh the room cache (name, isGroup, member count) from /api/rooms."""
+    global _room_cache_at
     bot_info = await get_bot_info()
-    if bot_info:
-        rooms = await get_rooms(bot_info["id"])
-        for room in rooms:
-            _room_cache[room["id"]] = {
-                "name": room.get("name") or str(room["id"]),
-                "isGroup": bool(room.get("isGroup", False)),
-            }
+    if not bot_info:
+        return
+    rooms = await get_rooms(bot_info["id"])
+    if not rooms:
+        return
+    fresh: dict[int, dict] = {}
+    for room in rooms:
+        fresh[room["id"]] = {
+            "name": room.get("name") or str(room["id"]),
+            "isGroup": bool(room.get("isGroup", False)),
+            "memberCount": len(room.get("members") or []),
+        }
+    _room_cache.clear()
+    _room_cache.update(fresh)
+    _room_cache_at = time.monotonic()
 
-    return _room_cache.get(room_id, {"name": str(room_id), "isGroup": False})
+
+async def get_room_info(room_id: int) -> dict:
+    """Return room metadata (name, isGroup, memberCount) for a given room ID.
+
+    Refreshes the whole cache from /api/rooms when the room is unknown or the
+    cache is older than _ROOM_CACHE_TTL_SECONDS, so membership changes are
+    picked up promptly. Falls back to a synthetic entry if the room cannot be
+    resolved (e.g., API unreachable, or a room the bot isn't a member of).
+    """
+    stale = (time.monotonic() - _room_cache_at) >= _ROOM_CACHE_TTL_SECONDS
+    if room_id not in _room_cache or stale:
+        await _reload_room_cache()
+    return _room_cache.get(room_id, {"name": str(room_id), "isGroup": False, "memberCount": 0})
 
 
 async def is_dm_room(room_id: int) -> bool:
@@ -318,11 +339,25 @@ async def is_dm_room(room_id: int) -> bool:
     "require @mention in unfamiliar rooms" behavior; the DM bypass only fires
     when we actually verified the room is not a group.
     """
-    if room_id not in _room_cache:
-        await get_room_info(room_id)
+    info = await get_room_info(room_id)
     if room_id not in _room_cache:
         return False
-    return not _room_cache[room_id].get("isGroup", True)
+    return not info.get("isGroup", True)
+
+
+async def is_bot_solo_room(room_id: int) -> bool:
+    """True when the room holds exactly the bot and one other user (2 members).
+
+    In such a room the bot answers every message with no @mention required —
+    the same behavior as the heartbeat home room and 1:1 DMs. The bot is only
+    ever a member of rooms it can see, so a 2-member room is always bot + one
+    human. Adding a third member (Messenger 'add members') reverts the room to
+    @mention-only automatically once the cache refreshes.
+    """
+    info = await get_room_info(room_id)
+    if room_id not in _room_cache:
+        return False
+    return info.get("memberCount", 0) == 2
 
 
 async def get_rooms(bot_user_id: int) -> list:

@@ -11,7 +11,7 @@ import config
 
 
 _DIRECTIVE_RE = re.compile(r"^\s*@([A-Za-z0-9_.:-]+)\s*(.*)$", re.DOTALL)
-_RESERVED = {"bot", "clear", "compact"}
+_RESERVED = {"bot", "clear", "compact", "stop"}
 
 
 def _estimate_tokens(text: str) -> int:

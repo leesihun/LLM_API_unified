@@ -167,24 +167,79 @@ router.post('/', (req: Request, res: Response) => {
   res.status(201).json(room);
 });
 
-// POST /rooms/:id/members
+// POST /rooms/:id/members — add one or more users to an existing room
 router.post('/:id/members', (req: Request, res: Response) => {
   const roomId = Number(req.params.id);
-  const { memberIds } = req.body;
+  const { memberIds, userId } = req.body;
 
-  if (!memberIds || !Array.isArray(memberIds)) {
-    res.status(400).json({ error: 'memberIds is required.' });
+  if (!memberIds || !Array.isArray(memberIds) || memberIds.length === 0) {
+    res.status(400).json({ error: 'memberIds is required (non-empty array).' });
     return;
   }
-  if (!queryOne('SELECT * FROM rooms WHERE id = ?', [roomId])) {
+  const room = queryOne('SELECT * FROM rooms WHERE id = ?', [roomId]);
+  if (!room) {
     res.status(404).json({ error: 'Room not found.' });
     return;
   }
-
-  for (const memberId of memberIds) {
-    run('INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', [roomId, memberId]);
+  // If a requester is supplied, they must already be a member to add others.
+  if (userId != null) {
+    const requester = queryOne(
+      'SELECT 1 FROM room_members WHERE room_id = ? AND user_id = ?',
+      [roomId, userId],
+    );
+    if (!requester) {
+      res.status(403).json({ error: 'Only room members can add others.' });
+      return;
+    }
   }
-  res.json({ success: true });
+
+  const existingIds = new Set(
+    queryAll('SELECT user_id FROM room_members WHERE room_id = ?', [roomId]).map(
+      (r: any) => r.user_id,
+    ),
+  );
+
+  const addedIds: number[] = [];
+  for (const raw of memberIds) {
+    const mid = Number(raw);
+    if (!mid || existingIds.has(mid)) continue;
+    if (!queryOne('SELECT 1 FROM users WHERE id = ?', [mid])) continue;
+    run('INSERT OR IGNORE INTO room_members (room_id, user_id) VALUES (?, ?)', [roomId, mid]);
+    addedIds.push(mid);
+  }
+
+  if (addedIds.length === 0) {
+    res.json({ success: true, added: [] });
+    return;
+  }
+
+  // A 1:1 room shows "the other member" as its title; once it holds more than
+  // two people that logic breaks, so promote it to a named group.
+  const totalMembers = queryOne(
+    'SELECT COUNT(*) as c FROM room_members WHERE room_id = ?',
+    [roomId],
+  ).c;
+  if (!room.is_group && totalMembers > 2) {
+    const names = queryAll(
+      'SELECT name FROM users WHERE id IN (SELECT user_id FROM room_members WHERE room_id = ?)',
+      [roomId],
+    ).map((u: any) => u.name);
+    run('UPDATE rooms SET is_group = 1, name = ? WHERE id = ?', [names.join(', '), roomId]);
+  }
+
+  // Notify everyone: newly added members receive the room (so it appears in
+  // their sidebar and they auto-join over the socket); existing members get an
+  // updated snapshot so their member list / title refreshes. Each payload is
+  // built per-recipient because unreadCount is per-user.
+  const allMemberIds = queryAll('SELECT user_id FROM room_members WHERE room_id = ?', [
+    roomId,
+  ]).map((r: any) => r.user_id);
+  for (const memberId of allMemberIds) {
+    const payload = buildRoomResponse(roomId, memberId);
+    emitToUser(memberId, addedIds.includes(memberId) ? 'room_created' : 'room_updated', payload);
+  }
+
+  res.json({ success: true, added: addedIds });
 });
 
 // GET /rooms/:id/messages

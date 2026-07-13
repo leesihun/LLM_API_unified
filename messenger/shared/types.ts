@@ -172,6 +172,7 @@ export interface ServerToClientEvents {
   user_stop_typing: (data: { roomId: number; userId: number }) => void;
   user_online_status: (data: { userId: number; online: boolean }) => void;
   room_created: (room: RoomWithDetails) => void;
+  room_updated: (room: RoomWithDetails) => void;
   mention_notification: (data: { message: MessageWithSender; roomName: string }) => void;
   reaction_updated: (data: { messageId: number; roomId: number; reactions: MessageReaction[] }) => void;
   message_pinned: (data: { roomId: number; pin: PinnedMessage }) => void;

@@ -30,6 +30,53 @@ function renderMath(tex: string, display: boolean): string {
   return escapeHtml(display ? `$$${tex}$$` : `$${tex}$`);
 }
 
+// Inline formatting applied to any raw (unescaped) text fragment: links,
+// inline code, bold, italic, @mentions. Escapes HTML first so this is the
+// single choke point every piece of user-supplied text passes through
+// before landing in dangerouslySetInnerHTML — nothing downstream re-injects
+// raw text.
+function applyInline(raw: string): string {
+  let s = escapeHtml(raw);
+  // [text](url) — scheme allowlist (http/https/mailto/relative) blocks
+  // javascript:/data: URIs; anything else is left as literal escaped text.
+  s = s.replace(
+    /\[([^\]]+)\]\((https?:\/\/[^\s)]+|mailto:[^\s)]+|\/[^\s)]*)\)/g,
+    (_m, label, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`
+  );
+  s = s.replace(/`([^`]+)`/g, '<code class="msg-inline-code">$1</code>');
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  s = s.replace(/(@\S+)/g, '<span class="mention-highlight">$1</span>');
+  return s;
+}
+
+function splitTableRow(line: string): string[] {
+  let t = line.trim();
+  if (t.startsWith('|')) t = t.slice(1);
+  if (t.endsWith('|')) t = t.slice(0, -1);
+  return t.split('|').map((c) => c.trim());
+}
+
+function isTableSeparatorRow(line: string): boolean {
+  const t = line.trim();
+  if (!t.includes('-') || !/^[-\s:|]+$/.test(t)) return false;
+  const cells = splitTableRow(t);
+  return cells.length > 0 && cells.every((c) => /^:?-+:?$/.test(c));
+}
+
+function renderTable(header: string[], rows: string[][]): string {
+  const thead = `<tr>${header.map((c) => `<th>${applyInline(c)}</th>`).join('')}</tr>`;
+  const tbody = rows
+    .map((r) => `<tr>${header.map((_, idx) => `<td>${applyInline(r[idx] ?? '')}</td>`).join('')}</tr>`)
+    .join('');
+  return `<table class="msg-table"><thead>${thead}</thead><tbody>${tbody}</tbody></table>`;
+}
+
+const HEADER_RE = /^\s{0,3}(#{1,6})\s+(.*)$/;
+const UL_RE = /^\s{0,3}[-*]\s+(.*)$/;
+const OL_RE = /^\s{0,3}\d+\.\s+(.*)$/;
+const QUOTE_RE = /^\s{0,3}>\s?(.*)$/;
+
 function formatMarkdown(text: string): string {
   if (!text) return '';
   const normalized = text
@@ -37,7 +84,9 @@ function formatMarkdown(text: string): string {
     .replace(/\\r\\n/g, '\n')
     .replace(/\\n/g, '\n');
 
-  // Collect protected blocks (rendered to final HTML)
+  // Collect protected blocks (rendered to final HTML), extracted from RAW
+  // text before anything is escaped so their delimiters (``` / $$ / $) are
+  // still recognizable. Content inside is escaped by the handlers themselves.
   const blocks: string[] = [];
   const placeholder = (idx: number) => `\x02BLOCK${idx}\x03`;
 
@@ -64,14 +113,74 @@ function formatMarkdown(text: string): string {
     return placeholder(idx);
   });
 
-  // Inline markdown per line
-  const result = processed.split('\n').map((line) => {
-    line = line.replace(/`([^`]+)`/g, '<code class="msg-inline-code">$1</code>');
-    line = line.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-    line = line.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    line = line.replace(/(@\S+)/g, '<span class="mention-highlight">$1</span>');
-    return line;
-  }).join('\n');
+  // Block-level markdown: tables, blockquotes, lists, headers. Each consumes
+  // a run of contiguous matching lines and emits one HTML chunk; everything
+  // else falls through to plain inline formatting. All user text is escaped
+  // via applyInline — nothing here writes raw text into the output.
+  const lines = processed.split('\n');
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (line.includes('|') && i + 1 < lines.length && isTableSeparatorRow(lines[i + 1])) {
+      const header = splitTableRow(line);
+      let j = i + 2;
+      const rows: string[][] = [];
+      while (j < lines.length && lines[j].includes('|') && lines[j].trim() !== '') {
+        rows.push(splitTableRow(lines[j]));
+        j++;
+      }
+      out.push(renderTable(header, rows));
+      i = j - 1;
+      continue;
+    }
+
+    if (QUOTE_RE.test(line)) {
+      const quoted: string[] = [];
+      let j = i;
+      while (j < lines.length && QUOTE_RE.test(lines[j])) {
+        quoted.push(lines[j].replace(QUOTE_RE, '$1'));
+        j++;
+      }
+      out.push(`<blockquote class="msg-blockquote">${quoted.map(applyInline).join('<br>')}</blockquote>`);
+      i = j - 1;
+      continue;
+    }
+
+    if (UL_RE.test(line)) {
+      const items: string[] = [];
+      let j = i;
+      while (j < lines.length && UL_RE.test(lines[j])) {
+        items.push(lines[j].replace(UL_RE, '$1'));
+        j++;
+      }
+      out.push(`<ul class="msg-list">${items.map((it) => `<li>${applyInline(it)}</li>`).join('')}</ul>`);
+      i = j - 1;
+      continue;
+    }
+
+    if (OL_RE.test(line)) {
+      const items: string[] = [];
+      let j = i;
+      while (j < lines.length && OL_RE.test(lines[j])) {
+        items.push(lines[j].replace(OL_RE, '$1'));
+        j++;
+      }
+      out.push(`<ol class="msg-list">${items.map((it) => `<li>${applyInline(it)}</li>`).join('')}</ol>`);
+      i = j - 1;
+      continue;
+    }
+
+    const hMatch = line.match(HEADER_RE);
+    if (hMatch) {
+      const level = hMatch[1].length;
+      out.push(`<h${level} class="msg-heading">${applyInline(hMatch[2])}</h${level}>`);
+      continue;
+    }
+
+    out.push(applyInline(line));
+  }
+  const result = out.join('\n');
 
   // Restore protected blocks
   return result.replace(/\x02BLOCK(\d+)\x03/g, (_, i) => blocks[parseInt(i)]);
@@ -285,7 +394,7 @@ export default function MessageBubble({
             ) : (
               <>
                 {attachments.length === 0 && message.type === 'text' && (
-                  <p
+                  <div
                     className="whitespace-pre-wrap break-words msg-content"
                     dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content) }}
                   />
@@ -293,7 +402,7 @@ export default function MessageBubble({
                 {attachments.length > 0 && (
                   <div className="space-y-2">
                     {message.content && (
-                      <p
+                      <div
                         className="whitespace-pre-wrap break-words msg-content"
                         dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content) }}
                       />
@@ -361,10 +470,10 @@ export default function MessageBubble({
                       </div>
                     </div>
                     {message.content && (
-                      <p
-                      className="mt-1 whitespace-pre-wrap break-words msg-content"
-                      dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content) }}
-                    />
+                      <div
+                        className="mt-1 whitespace-pre-wrap break-words msg-content"
+                        dangerouslySetInnerHTML={{ __html: formatMarkdown(message.content) }}
+                      />
                     )}
                   </div>
                 )}

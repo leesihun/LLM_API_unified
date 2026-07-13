@@ -169,7 +169,8 @@ async def handle_webhook(request: Request):
             logger.warning(f"[Webhook] Image message {msg_id} has no fileUrl; refusing to process as an image")
             is_home = room_id == config.MESSENGER_HOME_ROOM_ID
             mention_tag = f"@{config.MESSENGER_BOT_NAME}"
-            if room_id is not None and (is_home or mention_tag.lower() in content.lower()):
+            is_solo = await messenger.is_bot_solo_room(room_id) if room_id is not None else False
+            if room_id is not None and (is_home or is_solo or mention_tag.lower() in content.lower()):
                 asyncio.create_task(
                     messenger.send_message(
                         room_id,
@@ -188,7 +189,8 @@ async def handle_webhook(request: Request):
             logger.warning(f"[Webhook] File message {msg_id} has no fileUrl; refusing to process as a file")
             is_home = room_id == config.MESSENGER_HOME_ROOM_ID
             mention_tag = f"@{config.MESSENGER_BOT_NAME}"
-            if room_id is not None and (is_home or mention_tag.lower() in content.lower()):
+            is_solo = await messenger.is_bot_solo_room(room_id) if room_id is not None else False
+            if room_id is not None and (is_home or is_solo or mention_tag.lower() in content.lower()):
                 asyncio.create_task(
                     messenger.send_message(
                         room_id,
@@ -215,12 +217,14 @@ async def handle_webhook(request: Request):
 
     # Respond unconditionally in:
     #   - the configured home room, OR
-    #   - any 1-on-1 DM with the bot (positively confirmed isGroup=False).
+    #   - any room where the bot is alone with a single user (2 members total).
+    #     This covers 1-on-1 DMs and 2-member group rooms alike. Adding a third
+    #     member reverts the room to @mention-only once the cache refreshes.
     # Other rooms still require an explicit @mention.
     is_home = room_id == config.MESSENGER_HOME_ROOM_ID
-    is_dm = await messenger.is_dm_room(room_id)
+    is_solo = await messenger.is_bot_solo_room(room_id)
     mention_tag = f"@{config.MESSENGER_BOT_NAME}"
-    if not is_home and not is_dm and mention_tag.lower() not in content.lower():
+    if not is_home and not is_solo and mention_tag.lower() not in content.lower():
         return {"ok": True}
 
     # Strip @mention
@@ -311,6 +315,27 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
     start = time.monotonic()
     log_prefix = f"[Room {room_id}] [{sender_name}]"
     logger.info(f"{log_prefix} Processing: {content[:80]!r}")
+
+    # @stop: halt the in-flight response for this room (server-side + local task)
+    if "@stop" in content.lower():
+        active = _room_active_task.pop(room_id, None)
+        if active and not active.done():
+            active.cancel()
+        session_id = _get_session_id(room_id)
+        if session_id:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(
+                        f"{config.LLM_API_URL}/api/chat/sessions/{session_id}/stop",
+                        headers={"Authorization": f"Bearer {config.LLM_API_KEY}"},
+                    )
+                    resp.raise_for_status()
+            except Exception as e:
+                logger.warning(f"{log_prefix} @stop request to LLM API failed: {e}")
+        await messenger.stop_typing(room_id)
+        await messenger.send_message(room_id, "중지했습니다.")
+        logger.info(f"{log_prefix} Stopped by @stop command")
+        return
 
     # @clear: wipe session and return immediately
     if "@clear" in content.lower():
@@ -404,7 +429,7 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             count = _room_msg_count.get(room_id, 0) + 1
             _room_msg_count[room_id] = count
 
-            if count == config.MEMORY_FLUSH_THRESHOLD:
+            if config.MEMORY_FLUSH_THRESHOLD > 0 and count % config.MEMORY_FLUSH_THRESHOLD == 0:
                 user_content += f"\n\n{_MEMORY_FLUSH_HINT}"
                 logger.info(f"{log_prefix} Memory flush hint injected at message #{count}")
 
@@ -529,6 +554,11 @@ _TYPING_REFRESH_INTERVAL_SECONDS = 10
 # the strongest emphasis available inside one bubble.
 _ANSWER_DIVIDER = "──────────\n✅ **답변**"
 
+# How often the live draft bubble is updated while tokens stream in. Sends are
+# fire-and-forget/coalesced (see _process_streaming's flush pump) so this can
+# be low without ever blocking token consumption on a slow Messenger round trip.
+_DRAFT_EDIT_INTERVAL_SECONDS = 0.25
+
 def _format_tool_status(running_tools: dict[str, str]) -> str:
     """Return the typing-indicator text for the current set of running tools.
 
@@ -572,7 +602,7 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
     session_id_from_header: str | None = None
     draft_msg_id: int | None = None   # ID of the live text-draft message in chat
     last_draft_edit: float = 0.0
-    _DRAFT_EDIT_INTERVAL = 0.8
+    first_sent = False
 
     async def _refresh_typing() -> None:
         """Periodically re-fire the typing event so the indicator stays visible."""
@@ -581,6 +611,51 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
             await messenger.send_typing(room_id, status_text=_format_tool_status(running_tools))
 
     refresh_task = asyncio.create_task(_refresh_typing())
+
+    # Draft-bubble sends/edits are dispatched through a coalescing background
+    # pump instead of being awaited inline in the SSE read loop: a slow
+    # Messenger round trip used to stall token consumption for its full
+    # duration every time the interval elapsed. The pump keeps at most one
+    # HTTP call in flight and always carries the latest text — if new tokens
+    # arrive while a send is in flight, they simply replace `pending_text`
+    # and the pump picks them up on its next iteration instead of queuing
+    # redundant calls.
+    pending_text: str | None = None
+    flush_task: asyncio.Task | None = None
+
+    async def _flush_loop() -> None:
+        nonlocal draft_msg_id, pending_text, flush_task
+        while pending_text is not None:
+            text_to_send = pending_text
+            pending_text = None
+            try:
+                if draft_msg_id is None:
+                    draft_msg_id = await messenger.send_message_returning_id(
+                        room_id, text_to_send, reply_to_id
+                    )
+                else:
+                    await messenger.edit_message(draft_msg_id, text_to_send)
+            except Exception:
+                pass
+        flush_task = None
+
+    def _schedule_flush(text: str) -> None:
+        nonlocal pending_text, flush_task
+        pending_text = text
+        if flush_task is None or flush_task.done():
+            flush_task = asyncio.create_task(_flush_loop())
+
+    async def _settle_flush() -> None:
+        """Drain any in-flight/queued background flush before an authoritative
+        write (final settle, error/cancel marker) so it can't race a later
+        write and so draft_msg_id is populated if a send was in flight."""
+        nonlocal flush_task
+        if flush_task is not None:
+            try:
+                await flush_task
+            except Exception:
+                pass
+            flush_task = None
 
     try:
         client = get_client()
@@ -645,18 +720,23 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                 text = choices[0].get("delta", {}).get("content", "")
                 if text:
                     full_text += text
-                    now = time.monotonic()
-                    if now - last_draft_edit >= _DRAFT_EDIT_INTERVAL and full_text.strip():
-                        if draft_msg_id is None:
-                            draft_msg_id = await messenger.send_message_returning_id(
-                                room_id, full_text.strip(), reply_to_id
-                            )
-                        else:
-                            await messenger.edit_message(draft_msg_id, full_text.strip())
-                        last_draft_edit = now
+                    stripped = full_text.strip()
+                    if stripped:
+                        now = time.monotonic()
+                        if not first_sent:
+                            # First visible content — show it immediately, no
+                            # interval gate, so the bubble appears the instant
+                            # generation starts instead of up to one interval late.
+                            first_sent = True
+                            last_draft_edit = now
+                            _schedule_flush(stripped)
+                        elif now - last_draft_edit >= _DRAFT_EDIT_INTERVAL_SECONDS:
+                            last_draft_edit = now
+                            _schedule_flush(stripped)
 
     except httpx.ReadTimeout:
         logger.warning(f"{log_prefix} Stream read timeout after collecting {len(full_text)} chars")
+        await _settle_flush()
         if full_text.strip():
             msg = full_text.strip() + "\n\n⚠️ (응답이 시간 초과로 잘렸어요)"
             if draft_msg_id is not None:
@@ -665,10 +745,25 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
                 await messenger.send_message(room_id, msg, reply_to_id=reply_to_id)
             return full_text
         raise
+    except asyncio.CancelledError:
+        # Local task cancellation (e.g. @stop, or a new message superseding
+        # this one) — settle the draft with a marker instead of leaving it
+        # frozen mid-sentence with no indication anything happened.
+        await _settle_flush()
+        if draft_msg_id is not None:
+            try:
+                if full_text.strip():
+                    await messenger.edit_message(draft_msg_id, full_text.strip() + "\n\n⏹️ 중지됨")
+                else:
+                    await messenger.delete_message(draft_msg_id)
+            except Exception:
+                pass
+        raise
     except Exception:
         # Keep whatever already streamed — settle the draft with a warning
         # instead of deleting it (deletions leave a permanent "삭제된
         # 메시지입니다." placeholder in the client).
+        await _settle_flush()
         if draft_msg_id is not None:
             try:
                 if full_text.strip():
@@ -687,6 +782,10 @@ async def _process_streaming(room_id: int, llm_data: dict, headers: dict, existi
             await refresh_task
         except asyncio.CancelledError:
             pass
+
+    # Normal completion — drain any queued/in-flight background flush before
+    # the authoritative final write so it can't be overwritten by a stale one.
+    await _settle_flush()
 
     if session_id_from_header:
         result_like = {"x_session_id": session_id_from_header}

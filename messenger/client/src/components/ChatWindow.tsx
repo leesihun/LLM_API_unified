@@ -4,6 +4,7 @@ import axios from 'axios';
 import api, { getServerUrl, getUploadBaseUrl } from '../services/api';
 import MessageBubble from './MessageBubble';
 import MentionSuggestion from './MentionSuggestion';
+import AddMembersModal from './AddMembersModal';
 import type { User, RoomWithDetails, MessageWithSender, MessageReaction, PinnedMessage, MessageAttachment } from '../../../shared/types';
 
 interface ChatWindowProps {
@@ -38,6 +39,7 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
   const [isDragging, setIsDragging] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null); // 0-100 or null
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [showAddMembers, setShowAddMembers] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -731,6 +733,16 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
               </span>
             )}
           </button>
+          {/* Add members */}
+          <button
+            onClick={() => setShowAddMembers(true)}
+            className="p-2 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition"
+            title="사용자 추가"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+            </svg>
+          </button>
           {/* Leave room */}
           <button
             onClick={handleLeaveRoom}
@@ -1014,6 +1026,17 @@ export default function ChatWindow({ room, user, users, onlineUserIds, onLeaveRo
           </div>
         </div>
       </div>
+
+      {/* Add members modal */}
+      {showAddMembers && (
+        <AddMembersModal
+          room={room}
+          currentUser={user}
+          users={users}
+          onClose={() => setShowAddMembers(false)}
+          onAdded={() => setShowAddMembers(false)}
+        />
+      )}
     </div>
   );
 }
