@@ -14,6 +14,7 @@ from backend.core.llm_backend import (
 from backend.utils.stop_signal import check_stop
 from tools.schemas import TOOL_METADATA
 
+from backend.agent._cache import _CACHED_GOAL_MODE_PROMPT
 from backend.agent.logging_helpers import LoggingMixin
 from backend.agent.prompt_assembly import PromptMixin
 from backend.agent.tool_dispatch import DispatchMixin
@@ -46,13 +47,26 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         workspace_dir: Optional[str] = None,
         response_format: Optional[dict] = None,
         guided_json: Optional[dict] = None,
+        mode: str = "normal",
     ):
         self.model = model or config.VLLM_MODEL
         self.temperature = self._resolve_temperature(temperature)
         self.session_id = session_id
         self.username = username
         self.llm = llm_backend
-        self.max_iterations = config.AGENT_MAX_ITERATIONS
+        # Goal mode: an extensive, goal-focused run. Raises the iteration budget
+        # and enforces a plan->execute->verify done-gate (see _run_stream_body).
+        self.goal_mode = str(mode or "normal").lower() == "goal"
+        self.max_iterations = (
+            config.AGENT_GOAL_MAX_ITERATIONS if self.goal_mode
+            else config.AGENT_MAX_ITERATIONS
+        )
+        # Done-gate: consecutive no-progress refusals to let the agent stop with
+        # an incomplete todo list (capped by AGENT_GOAL_MAX_COMPLETION_BLOCKS).
+        # Reset whenever more todos complete, so a steadily-progressing long task
+        # is gated as long as it needs; only repeated stalled quits trip the cap.
+        self._completion_blocks = 0
+        self._last_gate_completed = 0
         self.enabled_tools = tools or config.AVAILABLE_TOOLS
         # Structured/guided decoding (opt-in, forwarded to vLLM on each call).
         self.response_format = response_format
@@ -275,6 +289,60 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
             "if you haven't. Avoid exploratory grep/search loops — converge "
             "fast on the specific files the task touches.</system-reminder>"
         )
+
+    # ------------------------------------------------------------------
+    # Goal mode (extensive, goal-focused run)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _goal_mode_preamble() -> str:
+        """The goal-mode instruction block, injected as its own system message."""
+        return _CACHED_GOAL_MODE_PROMPT
+
+    def _goal_completion_block(self) -> Optional[str]:
+        """Done-gate for goal mode. Called when the model tries to finish (no
+        tool calls). Returns a `<system-reminder>` string to force the loop to
+        continue, or None to allow completion.
+
+        The agent's own todo list is the definition of done: the run may only
+        finish once every todo is `completed`. A safety cap
+        (AGENT_GOAL_MAX_COMPLETION_BLOCKS) guarantees we eventually let it stop
+        even if it never converges, and max_iterations is the absolute backstop.
+        """
+        todos = self._session_todos or []
+        incomplete = [t for t in todos if t.get("status") != "completed"]
+
+        # Reset the stall counter whenever the model has completed more todos
+        # since the last block — the cap only guards against repeated quits that
+        # make no progress, not against a long task that keeps advancing.
+        completed = len(todos) - len(incomplete)
+        if completed > self._last_gate_completed:
+            self._completion_blocks = 0
+        self._last_gate_completed = completed
+
+        cap = max(0, getattr(config, "AGENT_GOAL_MAX_COMPLETION_BLOCKS", 3))
+        if self._completion_blocks >= cap:
+            return None
+
+        if not todos:
+            return (
+                "<system-reminder>Goal mode: you are trying to finish but have "
+                "not produced a plan yet. Call `todo_write` with a concrete, "
+                "verifiable checklist that fully covers the goal, then execute "
+                "it. Do not stop until every item is completed.</system-reminder>"
+            )
+        if incomplete:
+            open_items = "; ".join(
+                f"{t.get('id', '?')}: {t.get('content', '')}" for t in incomplete[:10]
+            )
+            return (
+                "<system-reminder>Goal mode: do NOT stop yet — "
+                f"{len(incomplete)} task(s) are still open: {open_items}. "
+                "Continue working through them (or update the list if the plan "
+                "changed), verify each one, and mark it completed. Only finish "
+                "once every task is completed.</system-reminder>"
+            )
+        return None
 
     # ------------------------------------------------------------------
     # Static helpers for view overlays
@@ -506,6 +574,13 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
         self._refresh_available_rag_collections()
         system_prompt = self._build_system_prompt()
         msgs: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        # Goal-mode preamble as its own system message after the (byte-stable,
+        # KV-cached) static prompt, so it can't be truncated by the dynamic
+        # context budget and doesn't disturb prefix-cache reuse.
+        if self.goal_mode:
+            preamble = self._goal_mode_preamble()
+            if preamble:
+                msgs.append({"role": "system", "content": preamble})
         dynamic_ctx = self._build_dynamic_context(attached_files)
         if dynamic_ctx:
             msgs.append({"role": "system", "content": dynamic_ctx})
@@ -591,6 +666,24 @@ class AgentLoop(LoggingMixin, CompactionMixin, DispatchMixin, FormattingMixin, P
                     ):
                         if isinstance(event, TextEvent):
                             yield event
+                # Goal-mode done-gate: refuse to finish while todos are still
+                # open. Record the model's attempted final answer so the loop
+                # stays coherent, inject the reminder, and continue instead of
+                # returning. Capped so it always eventually terminates.
+                if self.goal_mode:
+                    block = self._goal_completion_block()
+                    if block is not None:
+                        final_text = "".join(streamed_text_parts).strip()
+                        if final_text:
+                            msgs.append({"role": "assistant", "content": final_text})
+                        msgs.append({"role": "system", "content": block})
+                        self._completion_blocks += 1
+                        self._log(
+                            f"[AGENT] Goal-mode done-gate: blocking completion "
+                            f"({self._completion_blocks}/"
+                            f"{getattr(config, 'AGENT_GOAL_MAX_COMPLETION_BLOCKS', 3)})"
+                        )
+                        continue
                 self._log_agent_complete("LLM returned final text response (stream)", iteration + 1)
                 return
 

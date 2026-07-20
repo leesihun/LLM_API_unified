@@ -132,6 +132,14 @@ PROMPTS_LOG_MAX_LINES = 10_000
 # Agent Settings
 # ============================================================================
 AGENT_MAX_ITERATIONS = 100
+# Goal mode (request `mode="goal"`): an extensive, goal-focused run. Raises the
+# iteration budget and enforces a plan->execute->verify done-gate (see
+# backend/agent/loop.py). AGENT_GOAL_MAX_COMPLETION_BLOCKS caps how many times the
+# loop may refuse to let the agent stop with an incomplete todo list before it is
+# allowed to finish regardless (AGENT_GOAL_MAX_ITERATIONS is the absolute backstop).
+AGENT_GOAL_MAX_ITERATIONS = 250
+AGENT_GOAL_MAX_COMPLETION_BLOCKS = 3
+AGENT_GOAL_MODE_PROMPT = "agent/goal_mode.txt"
 # Wall-clock cap on a single subagent (`agent` tool) invocation. Prevents a stuck
 # sub-loop from blocking the parent's tool call indefinitely. AGENT_MAX_ITERATIONS
 # only bounds iteration count; this bounds total time.

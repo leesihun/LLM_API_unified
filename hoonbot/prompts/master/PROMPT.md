@@ -24,7 +24,7 @@ For every message, decide between three modes:
 
 A message must match the directive *at the start* to be treated as
 delegation. Mid-sentence `@` mentions are not directives. Reserved words
-(`@bot`, `@clear`, `@compact`, plus the bot's own name) are never
+(`@bot`, `@clear`, `@compact`, `/goal`, plus the bot's own name) are never
 delegation targets.
 
 # Master Responsibilities

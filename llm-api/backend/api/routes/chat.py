@@ -66,6 +66,7 @@ async def _parse_request(request: Request) -> dict:
         max_tokens = form.get("max_tokens")
         session_id = form.get("session_id") or None
         workspace = form.get("workspace") or None
+        mode = form.get("mode") or None
         response_format = form.get("response_format")
         guided_json = form.get("guided_json")
         files = [v for v in form.getlist("files") if isinstance(v, UploadFile) and v.filename]
@@ -86,6 +87,7 @@ async def _parse_request(request: Request) -> dict:
         max_tokens = body.get("max_tokens")
         session_id = body.get("session_id") or None
         workspace = body.get("workspace") or None
+        mode = body.get("mode") or None
         response_format = body.get("response_format")
         guided_json = body.get("guided_json")
         files = []
@@ -108,6 +110,7 @@ async def _parse_request(request: Request) -> dict:
         max_tokens=int(max_tokens) if max_tokens is not None else None,
         session_id=session_id,
         workspace=workspace,
+        mode=mode,
         files=files,
         response_format=_coerce_obj(response_format),
         guided_json=_coerce_obj(guided_json),
@@ -258,6 +261,7 @@ async def chat_completions(
         temp = parsed["temperature"] if parsed["temperature"] is not None else config.DEFAULT_TEMPERATURE
         session_id = parsed["session_id"]
         workspace = parsed["workspace"]
+        mode = parsed["mode"]
         response_format = parsed["response_format"]
         guided_json = parsed["guided_json"]
         files: List[UploadFile] = parsed["files"]
@@ -323,6 +327,7 @@ async def chat_completions(
             workspace_dir=effective_workspace,
             response_format=response_format,
             guided_json=guided_json,
+            mode=mode or "normal",
         )
 
         request_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"

@@ -33,12 +33,28 @@ _room_debounce: dict = {}
 # Per-room active processing task (set while process_message is running)
 _room_active_task: dict[int, asyncio.Task] = {}
 
+# Content/files of the turn currently being processed, kept so a follow-up that
+# interrupts an in-flight turn can be merged with it instead of discarding it.
+# Populated right before process_message runs; cleared when it finishes.
+_room_inflight: dict[int, dict] = {}
+
 # Per-room message counter (resets on new session)
 _room_msg_count: dict[int, int] = {}
 
 # Per-room persistent session data: {room_id: {"session_id": str, "created_at": str}}
 _SESSIONS_FILE = os.path.join(config.DATA_DIR, "room_sessions.json")
 _room_sessions: dict = {}
+
+# Per-room sticky goal-mode flag: {room_id: True}. Toggled by the /goal directive
+# and forwarded to the LLM API as mode="goal" on every turn while set.
+_GOAL_MODE_FILE = os.path.join(config.DATA_DIR, "room_goal_mode.json")
+_room_goal_mode: dict[int, bool] = {}
+
+# Leading `/goal` or `@goal` directive; group(1) is the remaining task text
+# (or "off"/"stop"/... to disable). Anchored at the start so the token can be
+# stripped and the rest processed as the task.
+_GOAL_DIRECTIVE_RE = re.compile(r"^\s*[/@]goal\b[ \t]*(.*)$", re.IGNORECASE | re.DOTALL)
+_GOAL_OFF_WORDS = {"off", "stop", "disable", "end", "끄기", "종료"}
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +124,36 @@ def _set_session_id(room_id: int, session_id: str) -> None:
     _save_room_sessions()
 
 
+# ---------------------------------------------------------------------------
+# Goal-mode persistence (sticky per-room; toggled by the /goal directive)
+# ---------------------------------------------------------------------------
+
+def _load_room_goal_mode() -> None:
+    global _room_goal_mode
+    try:
+        with open(_GOAL_MODE_FILE, "r", encoding="utf-8") as f:
+            raw = json.load(f)
+            _room_goal_mode = {int(k): bool(v) for k, v in raw.items() if v}
+        logger.info(f"[GoalMode] Loaded {len(_room_goal_mode)} room(s) in goal mode from disk")
+    except FileNotFoundError:
+        _room_goal_mode = {}
+    except Exception as e:
+        logger.warning(f"[GoalMode] Could not load goal-mode state: {e}")
+        _room_goal_mode = {}
+
+
+def _save_room_goal_mode() -> None:
+    try:
+        os.makedirs(os.path.dirname(_GOAL_MODE_FILE), exist_ok=True)
+        with open(_GOAL_MODE_FILE, "w", encoding="utf-8") as f:
+            json.dump({str(k): True for k, v in _room_goal_mode.items() if v}, f)
+    except Exception as e:
+        logger.warning(f"[GoalMode] Could not save goal-mode state: {e}")
+
+
 # Load on module import
 _load_room_sessions()
+_load_room_goal_mode()
 
 
 # ---------------------------------------------------------------------------
@@ -254,14 +298,27 @@ async def handle_webhook(request: Request):
 # ---------------------------------------------------------------------------
 
 def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: int | None = None, file_infos: list | None = None, reply_to_data: dict | None = None) -> None:
+    prior_content = ""
+    combined_files: list = []
+
     entry = _room_debounce.get(room_id)
     if entry and entry["task"] and not entry["task"].done():
+        # Follow-up arrived within the debounce window, before the turn began
+        # processing — merge with the still-pending content.
         entry["task"].cancel()
-        combined = entry["content"] + "\n" + content
+        prior_content = entry["content"]
         combined_files = list(entry.get("files") or [])
     else:
-        combined = content
-        combined_files = []
+        # Follow-up arrived while a turn was already being processed — merge
+        # with the interrupted turn's content so the earlier message isn't lost.
+        # (llm-api only persists a session at stream end, so a cancelled turn
+        # leaves no server-side record to continue from.)
+        inflight = _room_inflight.pop(room_id, None)
+        if inflight:
+            prior_content = inflight["content"]
+            combined_files = list(inflight.get("files") or [])
+
+    combined = f"{prior_content}\n{content}" if prior_content else content
 
     # Cancel any in-flight process_message task for this room
     active = _room_active_task.pop(room_id, None)
@@ -277,6 +334,12 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: in
         final = _room_debounce.pop(room_id, None)
         if final:
             _room_active_task[room_id] = asyncio.current_task()
+            # Stash the content now being processed so a follow-up that
+            # interrupts this turn can merge with it (see _schedule_debounced).
+            _room_inflight[room_id] = {
+                "content": final["content"],
+                "files": final.get("files") or [],
+            }
             try:
                 await process_message(
                     room_id, final["content"], final["sender"], final.get("msg_id"),
@@ -284,6 +347,7 @@ def _schedule_debounced(room_id: int, content: str, sender_name: str, msg_id: in
                 )
             finally:
                 _room_active_task.pop(room_id, None)
+                _room_inflight.pop(room_id, None)
 
     _room_debounce[room_id] = {
         "content": combined,
@@ -342,6 +406,9 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
         _room_sessions.pop(room_id, None)
         _room_msg_count.pop(room_id, None)
         _save_room_sessions()
+        # A reset also exits goal mode.
+        if _room_goal_mode.pop(room_id, None):
+            _save_room_goal_mode()
         await messenger.send_message(room_id, "컨텍스트가 초기화되었습니다. 새 대화를 시작하세요.")
         logger.info(f"{log_prefix} Session cleared by @clear command")
         return
@@ -378,6 +445,30 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
             await messenger.send_message(room_id, f"압축 중 오류 발생: {e}")
             logger.error(f"{log_prefix} @compact failed: {e}")
         return
+
+    # /goal: toggle sticky goal mode. `/goal off` disables; `/goal <task>` (or a
+    # bare `/goal`) enables and, when a task follows, processes it in goal mode.
+    goal_match = _GOAL_DIRECTIVE_RE.match(content)
+    if goal_match:
+        remainder = goal_match.group(1).strip()
+        if remainder.lower() in _GOAL_OFF_WORDS:
+            if _room_goal_mode.pop(room_id, None):
+                _save_room_goal_mode()
+            await messenger.send_message(room_id, "목표 모드를 껐어요.")
+            logger.info(f"{log_prefix} Goal mode disabled by /goal off")
+            return
+        _room_goal_mode[room_id] = True
+        _save_room_goal_mode()
+        if not remainder:
+            await messenger.send_message(
+                room_id,
+                "목표 모드를 켰어요. 완료할 목표를 알려주세요. 목표를 끝까지 추적해서 완수할게요. (끄려면 /goal off)",
+            )
+            logger.info(f"{log_prefix} Goal mode enabled (no task provided)")
+            return
+        # A task followed the directive — process it in goal mode.
+        content = remainder
+        logger.info(f"{log_prefix} Goal mode enabled with task: {content[:80]!r}")
 
     try:
         delegation = await try_submit_from_message(
@@ -455,6 +546,12 @@ async def process_message(room_id: int, content: str, sender_name: str, reply_to
                 "messages": json.dumps(messages),
             }
             logger.info(f"{log_prefix} Starting new session")
+
+        # Sticky goal mode (toggled by /goal) — forwarded as a form field the
+        # LLM API parses into AgentLoop(mode="goal").
+        if _room_goal_mode.get(room_id):
+            llm_data["mode"] = "goal"
+            logger.info(f"{log_prefix} Goal mode active — sending mode=goal")
 
         if config.STREAMING_ENABLED:
             reply = await _process_streaming(room_id, llm_data, headers, existing_session_id, log_prefix, reply_to_id, downloaded_files)

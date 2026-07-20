@@ -1,10 +1,12 @@
 """
 Heartbeat — proactive background loop with orchestrator pattern.
 
-Each tick runs three phases:
-  1. Planner  — LLM decomposes HEARTBEAT.md into discrete tasks with done_criteria
-  2. Executor — each task runs through the full agent loop (with tools), one by one
-  3. Validator — LLM checks which tasks didn't meet their done_criteria; retries once
+Each tick runs these phases:
+  1. Planner    — LLM decomposes HEARTBEAT.md into discrete tasks with done_criteria
+  2. Executor   — each task runs through the full agent loop (with tools), one by one
+  3. Validator  — LLM checks which tasks didn't meet their done_criteria; retries once
+  4. Summarizer — LLM synthesizes all task results into one concise TL;DR, appended
+                  at the end of the report; every tick posts an "alive + summary" bubble
 
 Active hours and LLM cooldown (on connection failure) are enforced.
 """
@@ -30,6 +32,7 @@ _llm_cooldown_until: float = 0.0
 
 _PLANNER_SYSTEM = config.read_prompt("heartbeat/planner_system.txt")
 _VALIDATOR_SYSTEM = config.read_prompt("heartbeat/validator_system.txt")
+_SUMMARY_SYSTEM = config.read_prompt("heartbeat/summary_system.txt")
 _TASK_EXECUTION_TEMPLATE = config.read_prompt("heartbeat/task_execution.txt")
 
 _OVERFLOW_KEYWORDS = (
@@ -130,12 +133,13 @@ def _is_heartbeat_ok(text: str) -> bool:
 
 
 def _compile_report(results: list[str]) -> str:
-    """Return the heartbeat report: only the LLM-produced findings.
+    """Return the detailed-findings block: only the LLM-produced findings.
 
     No "Task N:" headers and no code-generated System Review scaffolding — just
     the LLM's own summarized results, joined as-is. Results that are exactly
-    HEARTBEAT_OK (nothing to report) are dropped, so a fully healthy tick posts
-    nothing.
+    HEARTBEAT_OK (nothing to report) are dropped, so a fully healthy tick yields
+    an empty findings block — the tick still posts its Phase 5 summary (see
+    _assemble_report).
     """
     findings = [
         result.strip()
@@ -238,6 +242,46 @@ async def _validate_tasks(tasks: list[dict], results: list[str], headers: dict) 
     return []
 
 
+async def _summarize(tasks: list[dict], results: list[str], headers: dict) -> str:
+    """Phase 5: synthesize all task results into one concise TL;DR summary.
+
+    No tools — a single planner/validator-style sync call. Returns "" on
+    failure so the detailed findings still post without a summary.
+    """
+    items = []
+    for task, result in zip(tasks, results):
+        items.append(
+            f"Task {task.get('id', '?')}: {task['task']}\n"
+            f"Result: {result[:1200]}"
+        )
+    messages = [
+        {"role": "system", "content": _SUMMARY_SYSTEM},
+        {"role": "user", "content": "\n\n---\n\n".join(items)},
+    ]
+    payload = {"model": config.LLM_MODEL, "messages": json.dumps(messages)}
+    try:
+        text = await _llm_sync(payload, headers)
+        return text.strip()
+    except Exception as exc:
+        logger.warning(f"[Heartbeat] Summarizer failed ({exc}) — posting findings without summary")
+        return ""
+
+
+def _assemble_report(findings: str, summary: str) -> str:
+    """Combine detailed findings and the tick summary into the posted report.
+
+    The summary is always appended at the end under a `Summary` header. When
+    there are no detailed findings (a fully healthy tick), the report is just
+    the summary — so every tick still posts an "alive + summary" bubble.
+    """
+    summary = summary.strip()
+    findings = findings.strip()
+    summary_block = f"**Summary**\n\n{summary}" if summary else ""
+    if findings and summary_block:
+        return f"{findings}\n\n---\n\n{summary_block}"
+    return findings or summary_block
+
+
 # ---------------------------------------------------------------------------
 # Main tick
 # ---------------------------------------------------------------------------
@@ -287,8 +331,12 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
                 if task.get("id") in incomplete_ids:
                     results[i] = await _execute_task(task, context, tick_id, headers)
 
-        # Phase 4 — Compile report
-        full_text = _compile_report(results)
+        # Phase 4 — Compile detailed findings (HEARTBEAT_OK results dropped)
+        findings = _compile_report(results)
+
+        # Phase 5 — Summarize the whole tick and append it at the end
+        summary = await _summarize(tasks, results, headers)
+        full_text = _assemble_report(findings, summary)
 
     except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
         _llm_cooldown_until = asyncio.get_event_loop().time() + config.HEARTBEAT_LLM_COOLDOWN_SECONDS
@@ -304,10 +352,11 @@ async def _run_once(send_fn: Callable[[int, str], Awaitable[None]]) -> None:
         logger.error(f"[Heartbeat] Unexpected error ({type(exc).__name__}): {exc}", exc_info=True)
         return
 
-    reply = full_text.strip()
-    if not reply:
-        logger.info("[Heartbeat] No output — nothing to post")
-    elif config.MESSENGER_HOME_ROOM_ID < 0:
+    # Every tick posts an "alive + summary" bubble. If both findings and the
+    # summary came back empty (e.g. all tasks HEARTBEAT_OK and the summarizer
+    # failed), fall back to a minimal heartbeat line rather than staying silent.
+    reply = full_text.strip() or "**Summary**\n\nHEARTBEAT_OK — all systems nominal."
+    if config.MESSENGER_HOME_ROOM_ID < 0:
         logger.warning("[Heartbeat] Home room not resolved — skipping post")
     else:
         logger.info(f"[Heartbeat] Posting report ({len(reply)} chars) to room {config.MESSENGER_HOME_ROOM_ID}")

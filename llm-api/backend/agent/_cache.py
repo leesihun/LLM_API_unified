@@ -8,6 +8,15 @@ def _load_system_prompt() -> str:
     return config.read_prompt(config.AGENT_SYSTEM_PROMPT)
 
 
+def _load_goal_mode_prompt() -> str:
+    """Goal-mode preamble, read once. Empty string if the file is missing so
+    goal mode degrades to just the raised iteration budget rather than erroring."""
+    try:
+        return config.read_prompt(config.AGENT_GOAL_MODE_PROMPT)
+    except Exception:
+        return ""
+
+
 def _build_tool_schemas() -> List[Dict[str, Any]]:
     """Build tool schemas once at module load. Frozen order for cache stability."""
     from tools.schemas import TOOL_SCHEMAS
@@ -38,6 +47,7 @@ def _build_tool_schemas() -> List[Dict[str, Any]]:
 
 
 _CACHED_SYSTEM_PROMPT: str = _load_system_prompt()
+_CACHED_GOAL_MODE_PROMPT: str = _load_goal_mode_prompt()
 _CACHED_TOOL_SCHEMAS: List[Dict[str, Any]] = _build_tool_schemas()
 
 # {username: {"collections": [...], "expires_at": float}}
