@@ -84,6 +84,8 @@ The cluster is a master + N slaves over plain HTTP on the LAN. Roles are picked 
 
 **vLLM tool-call parser (critical):** vLLM only streams tool-call deltas when launched with `--enable-auto-tool-choice --tool-call-parser <parser>`. `<parser>` must match the served model family (Qwen3→`hermes`, Llama 3.x→`llama3_json`, Mistral→`mistral`). Without this, tool calls arrive as raw text and mid-output dispatch never fires.
 
+**vLLM reasoning parser (critical for reasoning models):** GLM-4.5/4.6/5.x, Qwen3-Thinking, and DeepSeek-R1 emit a `<think>...</think>` chain before the answer. Launch vLLM with `--reasoning-parser <parser>` (GLM→`glm45`, Qwen3→`qwen3`, DeepSeek-R1→`deepseek_r1`) so that chain is lifted into the `reasoning_content` delta field. Without it the `<think>` block streams inline in `content` — the model's raw thinking (full of draft Python) leaks straight into the user's answer, and the hoonbot heartbeat's non-streaming planner/summarizer parsing chokes on it. As a defense-in-depth safety net, `backend/core/llm_backend.py::_split_inline_reasoning` peels model-emitted inline `<think>...</think>` back out of the content stream and re-emits it as `ReasoningEvent` (preserved in history, never shown), so a missing/mismatched reasoning parser degrades gracefully instead of leaking. Prefer fixing the launch flag; the splitter is a backstop.
+
 The `AgentLoop` class (`backend/agent/loop.py`) is composed from five mixins — each in its own file under `backend/agent/`:
 
 | Mixin | File | Responsibility |

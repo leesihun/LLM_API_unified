@@ -9,7 +9,14 @@ A self-hosted, OpenAI-compatible LLM API server that wraps **vLLM** with a full 
 nano config.py
 
 # 2. Start vLLM separately (example: adjust model path)
-vllm serve /path/to/model --port 10000
+#    --enable-auto-tool-choice + --tool-call-parser are REQUIRED for tool calls
+#    to stream as structured deltas instead of raw text. On a reasoning model
+#    (GLM, Qwen3-Thinking, DeepSeek-R1) also pass --reasoning-parser so the
+#    <think>...</think> chain is lifted into reasoning_content instead of
+#    leaking into the visible answer. Match every parser to the served family.
+vllm serve /path/to/model --port 10000 \
+  --enable-auto-tool-choice --tool-call-parser hermes \
+  --reasoning-parser glm45          # GLM-4.5/4.6/5.x; qwen3 / deepseek_r1 otherwise
 
 # 3. Build/install dependencies and start the API
 ./start.sh --build

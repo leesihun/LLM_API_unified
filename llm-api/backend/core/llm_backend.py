@@ -90,6 +90,79 @@ class UsageEvent(StreamEvent):
 
 
 # ============================================================================
+# Inline reasoning extraction
+# ============================================================================
+#
+# Reasoning models (GLM, Qwen3-Thinking, DeepSeek-R1, ...) emit their chain of
+# thought as `<think>...</think>`. vLLM only lifts it into the separate
+# `reasoning_content` delta field when launched with a matching
+# `--reasoning-parser`; without that flag the think block arrives INLINE in the
+# `content` stream. Left alone it streams straight to the user (full of draft
+# code and deliberation) and pollutes the heartbeat planner/summariser parsing.
+# The splitter below peels inline think blocks back out of `content` so they can
+# be surfaced as ReasoningEvent (kept in history, never shown) exactly as if the
+# parser had done it — making the backend robust regardless of vLLM's flags.
+
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def _partial_tag_suffix(buf: str, tag: str) -> int:
+    """Length of the longest suffix of `buf` that is a proper prefix of `tag`.
+
+    Lets us hold back the tail of a delta that might be the start of a tag split
+    across SSE chunks (e.g. buf ends with "<thi", tag is "<think>")."""
+    for k in range(min(len(buf), len(tag) - 1), 0, -1):
+        if buf[-k:] == tag[:k]:
+            return k
+    return 0
+
+
+def _split_inline_reasoning(buf: str, in_think: bool) -> tuple[str, str, str, bool]:
+    """Split a running content buffer into (text, reasoning, carry, in_think).
+
+    `carry` is the unresolved tail (a possible partial tag) to prepend to the
+    next chunk; nothing is ever dropped. When no `<think>` tag is present this
+    is a passthrough (text == buf, carry == "") apart from holding back a
+    trailing partial-tag prefix by one chunk."""
+    text_parts: list[str] = []
+    reason_parts: list[str] = []
+    while buf:
+        if not in_think:
+            i_open = buf.find(_THINK_OPEN)
+            i_close = buf.find(_THINK_CLOSE)
+            # A dangling close (no matching open) means the open tag was injected
+            # into the prompt and the model streamed reasoning first, then closed
+            # it — treat everything up to the close as reasoning and drop the tag.
+            if i_close != -1 and (i_open == -1 or i_close < i_open):
+                reason_parts.append(buf[:i_close])
+                buf = buf[i_close + len(_THINK_CLOSE):]
+                continue
+            if i_open == -1:
+                # Hold back a trailing partial that could start EITHER tag (both
+                # begin with "<"), so a split tag isn't emitted as literal text.
+                keep = max(_partial_tag_suffix(buf, _THINK_OPEN),
+                           _partial_tag_suffix(buf, _THINK_CLOSE))
+                text_parts.append(buf[:len(buf) - keep] if keep else buf)
+                buf = buf[len(buf) - keep:] if keep else ""
+                break
+            text_parts.append(buf[:i_open])
+            buf = buf[i_open + len(_THINK_OPEN):]
+            in_think = True
+        else:
+            j = buf.find(_THINK_CLOSE)
+            if j == -1:
+                keep = _partial_tag_suffix(buf, _THINK_CLOSE)
+                reason_parts.append(buf[:len(buf) - keep] if keep else buf)
+                buf = buf[len(buf) - keep:] if keep else ""
+                break
+            reason_parts.append(buf[:j])
+            buf = buf[j + len(_THINK_CLOSE):]
+            in_think = False
+    return "".join(text_parts), "".join(reason_parts), buf, in_think
+
+
+# ============================================================================
 # vLLM Backend
 # ============================================================================
 
@@ -256,6 +329,11 @@ class VllmBackend:
         max_seen_idx: int = -1
         finish_reason = "stop"
         usage: Optional[dict] = None                # final token usage, if reported
+        # State for peeling inline <think>...</think> out of the content stream
+        # (see _split_inline_reasoning). think_buf carries a possible partial tag
+        # across chunks; in_think tracks whether we're inside a think block.
+        think_buf = ""
+        in_think = False
 
         async with self._client.stream(
             "POST",
@@ -302,9 +380,18 @@ class VllmBackend:
                 if "reasoning_content" in delta and delta["reasoning_content"]:
                     yield ReasoningEvent(content=delta["reasoning_content"])
 
-                # Text content — yield immediately
+                # Text content — peel any inline <think>...</think> back out so
+                # reasoning is surfaced as ReasoningEvent (kept in history, not
+                # shown) and only the real answer reaches the user as TextEvent.
                 if "content" in delta and delta["content"]:
-                    yield TextEvent(content=delta["content"])
+                    think_buf += delta["content"]
+                    text_out, reason_out, think_buf, in_think = _split_inline_reasoning(
+                        think_buf, in_think
+                    )
+                    if reason_out:
+                        yield ReasoningEvent(content=reason_out)
+                    if text_out:
+                        yield TextEvent(content=text_out)
 
                 # Tool call deltas
                 if "tool_calls" in delta:
@@ -375,6 +462,14 @@ class VllmBackend:
                                 yielded_indices.add(idx)
                             except json.JSONDecodeError:
                                 pass  # still accumulating
+
+        # Flush any held-back content tail (a partial tag that never completed,
+        # or reasoning left open because the stream ended mid-think).
+        if think_buf:
+            if in_think:
+                yield ReasoningEvent(content=think_buf)
+            else:
+                yield TextEvent(content=think_buf)
 
         # After the stream finishes, yield any tool calls not yet dispatched
         remaining: list[ToolCall] = []
